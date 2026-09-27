@@ -151,7 +151,7 @@ var ENTETES_DEVIS_ = [
   'TOTAL_HT_PONCTUEL', 'TOTAL_HT_MENSUEL', 'TOTAL_HT', 'TOTAL_TVA', 'TOTAL_TTC',
   'REMISE_PCT', 'STATUT', 'SIGNE', 'SIGNATAIRE', 'VALIDITE', 'LIEN_PDF', 'PHOTOS', 'NOTES',
   'RECU_LE', 'ID_APPAREIL', 'ID_DEVIS', 'OBJET', 'LOGEMENT_PLUS_2_ANS', 'TAUX_TVA', 'DELAI',
-  'MOTIF_REFUS', 'RELANCE_LE', 'DATE_STATUT', 'PREUVE_SIGNATURE'
+  'MOTIF_REFUS', 'RELANCE_LE', 'DATE_STATUT', 'PREUVE_SIGNATURE', 'NOTE_COMMERCIAL'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -654,26 +654,32 @@ function enregistrerStatut_(d, com) {
   var num = String(d.numero || '').trim();
   if (!num) return { ok: false, erreur: 'numéro manquant' };
 
+  var note = String(d.note || '');
   var statut = { SIGNE: 'SIGNE', RELANCE: 'A RELANCER', REFUSE: 'REFUSE' }[String(d.verdict || '')];
-  if (!statut) return { ok: false, erreur: 'résultat inconnu' };
+
+  // Le commercial peut n'envoyer qu'une note, sans avoir encore répondu :
+  // dans ce cas on n'écrit que la note et on ne touche pas au statut.
+  if (!statut && !note) return { ok: false, erreur: 'résultat inconnu' };
 
   var quand = d.quand ? new Date(Number(d.quand)) : new Date();
-  var v = {
+  var v = statut ? {
     STATUT: statut,
     DATE_STATUT: quand,
     MOTIF_REFUS: statut === 'REFUSE' ? String(d.motif || '') : '',
     RELANCE_LE: statut === 'A RELANCER' && d.relance ? new Date(d.relance + 'T09:00:00') : '',
-    SIGNE: statut === 'SIGNE' ? 'OUI' : 'NON'
-  };
+    SIGNE: statut === 'SIGNE' ? 'OUI' : 'NON',
+    NOTE_COMMERCIAL: note
+  } : { NOTE_COMMERCIAL: note };
   var trouve = majDevis_(num, v);
 
-  tracerServeur_(com ? com.nom : (d.nom || ''), 'RESULTAT ' + statut,
-                 v.MOTIF_REFUS || (d.relance ? 'relance le ' + d.relance : ''),
+  tracerServeur_(com ? com.nom : (d.nom || ''),
+                 statut ? ('RESULTAT ' + statut) : 'NOTE DU COMMERCIAL',
+                 statut ? (v.MOTIF_REFUS || (d.relance ? 'relance le ' + d.relance : '')) : note.slice(0, 120),
                  num, d.appareil || '');
 
   // Le devis n'est pas encore arrivé : l'appareil réessaiera au prochain envoi.
   if (!trouve) return { ok: false, erreur: 'devis introuvable dans le classeur' };
-  return { ok: true, statut: statut };
+  return { ok: true, statut: statut || '(note seule)' };
 }
 
 /** Compte les photos rattachées à un devis et l'écrit dans la colonne PHOTOS. */
@@ -927,7 +933,7 @@ var ENTETES_FACTURER_ = [
   'DATE_SIGNATURE', 'NUMERO', 'COMMERCIAL', 'CLIENT', 'TYPE_CLIENT',
   'SIRET_CLIENT', 'TVA_CLIENT', 'CONTACT', 'EMAIL', 'TELEPHONE',
   'ADRESSE', 'CP', 'VILLE', 'TAUX_TVA', 'TOTAL_HT', 'TOTAL_TVA', 'TOTAL_TTC',
-  'PRESTATIONS', 'LIEN_PDF', 'DEVIS_SIGNE', 'FACTURE'
+  'PRESTATIONS', 'NOTE_COMMERCIAL', 'LIEN_PDF', 'DEVIS_SIGNE', 'FACTURE'
 ];
 
 /** Lit l'onglet DEVIS sous forme d'objets, colonnes désignées par leur nom. */
@@ -1026,7 +1032,8 @@ function majAFacturer_() {
         ADRESSE: d.ADRESSE || '', CP: d.CP || '', VILLE: d.VILLE || '',
         TAUX_TVA: d.TAUX_TVA || '', TOTAL_HT: Number(d.TOTAL_HT) || 0,
         TOTAL_TVA: Number(d.TOTAL_TVA) || 0, TOTAL_TTC: Number(d.TOTAL_TTC) || 0,
-        PRESTATIONS: pres, LIEN_PDF: d.LIEN_PDF || '',
+        PRESTATIONS: pres, NOTE_COMMERCIAL: d.NOTE_COMMERCIAL || '',
+        LIEN_PDF: d.LIEN_PDF || '',
         DEVIS_SIGNE: d.PREUVE_SIGNATURE || '',
         FACTURE: deja[num] === true
       };
@@ -1041,10 +1048,13 @@ function majAFacturer_() {
     var cF = ENTETES_FACTURER_.indexOf('FACTURE') + 1;
     sh.getRange(2, cF, lignes.length, 1)
       .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
-    sh.getRange(2, ENTETES_FACTURER_.indexOf('PRESTATIONS') + 1, lignes.length, 1)
-      .setWrap(true).setVerticalAlignment('top');
+    [ 'PRESTATIONS', 'NOTE_COMMERCIAL' ].forEach(function (col) {
+      sh.getRange(2, ENTETES_FACTURER_.indexOf(col) + 1, lignes.length, 1)
+        .setWrap(true).setVerticalAlignment('top');
+    });
   }
   sh.setColumnWidth(ENTETES_FACTURER_.indexOf('PRESTATIONS') + 1, 340);
+  sh.setColumnWidth(ENTETES_FACTURER_.indexOf('NOTE_COMMERCIAL') + 1, 240);
   sh.setFrozenRows(1);
   return lignes.length;
 }
