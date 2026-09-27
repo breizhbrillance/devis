@@ -381,6 +381,15 @@
       </div>
 
       <div id="verdictFait" class="hide ok" style="margin-top:4px"></div>
+
+      <div id="blocNote" style="margin-top:14px">
+        <label for="verdictNote">Note perso <span style="font-weight:400;color:var(--mut)">(facultatif)</span></label>
+        <textarea id="verdictNote" rows="3" oninput="noteModifiee()"
+          placeholder="Ce que tu veux retenir : le contact à rappeler, la concurrence en place, l'accès au site…"></textarea>
+        <div class="mini">Pour toi et pour le bureau. N'apparaît jamais sur le devis remis au client.</div>
+        <button class="btn sec hide" id="bNote" style="margin-top:10px"
+                onclick="enregistrerNote(this)">Enregistrer la note</button>
+      </div>
     </div>
 
     <button class="btn sec" onclick="photosDernier()">Photos du site</button>
