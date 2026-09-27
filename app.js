@@ -268,7 +268,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v31';
+var VERSION_APP = 'v32';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1242,14 +1242,17 @@ function rendreLignes(){
         (rMax > 0
           ? '<div><label>Remise % (max '+nb(rMax)+')</label>'+
               '<input type="text" inputmode="decimal" autocomplete="off" value="'+
-                (l.rem||0)+(l.remMuet?' %':'')+'" oninput="setRemise('+i+',this.value,this)">'+
-              '<div id="plaf'+i+'" class="plafond'+(montrerPlafond(l)?'':' hide')+
-                '">Remise maximale accordée</div>'+
-            '</div>'
+                (l.rem||0)+(l.remMuet?' %':'')+'" oninput="setRemise('+i+',this.value,this)"></div>'
           : '<div><label>Remise</label><div class="fige">non autorisée</div></div>')+
         '<div><label>TVA %</label><div class="fige">'+nb(l.tva)+' %</div></div>'+
         '<div><label>Poste</label><input value="'+ech(l.categorie)+'" placeholder="Poste" oninput="setL('+i+',\'categorie\',this.value)"></div>'+
       '</div>'+
+      // Sur toute la largeur, jamais coincé dans une colonne : ce message peut
+      // être montré à un client, il doit se lire d'un coup d'œil.
+      (rMax > 0
+        ? '<div id="plaf'+i+'" class="plafond'+(montrerPlafond(l)?'':' hide')+
+            '">Remise maximale accordée</div>'
+        : '')+
       '<div class="ft"><span style="color:#6b7280">Total HT ligne</span><b id="tl'+i+'">'+
         eur(montantL(l))+'</b></div></div>';
   }).join('');
