@@ -70,7 +70,8 @@ var PDF = (function () {
         else if ((Number(l.qte) || 0) !== q || txt(l.unite) !== u) meme = false;
       });
       return {
-        titre: k + (meme && q && q !== 1 ? ' ( ' + nombre(q, 0) + ' ' + u + ' )' : ''),
+        // le poste passe en capitales, pas l'unité : « VITRERIE ( 24 m² ) »
+        titre: k.toUpperCase() + (meme && q && q !== 1 ? ' ( ' + nombre(q, 0) + ' ' + u + ' )' : ''),
         lignes: ls,
         sousTotal: Math.round(ls.reduce(function (s, l) { return s + montantLigne(l); }, 0) * 100) / 100
       };
@@ -205,7 +206,7 @@ var PDF = (function () {
     groupes.forEach(function (g) {
       // titre du poste
       police('bold', 8.6, MARQUE);
-      var tg = couper(g.titre.toUpperCase(), COL.des.l);
+      var tg = couper(g.titre, COL.des.l);
       var hG = 2.6 + tg.length * 4;
       // un titre de poste ne reste jamais seul en bas de page :
       // on exige la place d'au moins une prestation en dessous
