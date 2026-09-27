@@ -215,6 +215,21 @@ window.addEventListener('load', function(){
   window.addEventListener('online', function(){ etatReseau(); synchroniser(false); rafraichirConfig(); });
   window.addEventListener('offline', etatReseau);
   setInterval(function(){ if(navigator.onLine) synchroniser(false); }, 120000);
+
+  /* Filet de sécurité pour l'écran d'accueil d'un téléphone : l'application est
+     mise en veille puis reprise sans être rechargée. Si elle revient sur l'écran
+     de connexion avec une fenêtre restée ouverte, la page est inerte et, faute de
+     touche Échap, il n'y a aucun moyen de s'en sortir. On referme, et seulement
+     là : jamais pendant la saisie d'un devis, où la question est légitime. */
+  function debloquerSiConnexion(){
+    if(ETAPE !== 0) return;
+    if($('eCo').classList.contains('hide')) return;
+    if(document.querySelector('dialog[open]')) fermerDialogues();
+  }
+  window.addEventListener('pageshow', debloquerSiConnexion);
+  document.addEventListener('visibilitychange', function(){
+    if(!document.hidden) debloquerSiConnexion();
+  });
 });
 
 function demarrer(){
@@ -249,10 +264,18 @@ function demarrer(){
 /* ====================== CONNEXION ======================
    Écran séparé : une fois le commercial reconnu, il sort du parcours.
    Il revient à chaque ouverture de l'application. */
+/* Le numéro de version, affiché sur l'écran de connexion. Sur un iPhone, une
+   application posée sur l'écran d'accueil garde sa propre copie du site : elle
+   peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
+   repère, impossible de savoir laquelle tourne. */
+var VERSION_APP = 'v27';
+
 function ecranConnexion(msg){
   ETAPE = 0;
   fermerDialogues();      // sinon un dialogue resté ouvert gèle l'écran de connexion
   montrer('eCo');
+  var vv = $('versionApp');
+  if(vv) vv.textContent = 'Version ' + VERSION_APP;
   $('steps').classList.add('hide');
   $('bar').classList.add('hide');
   $('bHist').classList.add('hide');
