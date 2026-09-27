@@ -2,11 +2,16 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<!-- Sur iPhone, « black-translucent » fait passer la page SOUS la barre d'état :
+     sur plusieurs versions d'iOS, les touchers atterrissent alors décalés vers le
+     haut, et un champ ne prend plus le focus alors qu'un bouton plus bas répond
+     encore. « default » laisse iOS réserver la barre d'état ; on perd le bleu qui
+     remontait jusqu'en haut, on gagne des champs qui marchent. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#004C92">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Devis">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -199,13 +204,19 @@
   <section id="eCo" class="card hide">
     <h2>Qui établit les devis ?</h2>
     <label>Nom du commercial</label>
-    <input id="fCommercial" type="text" autocomplete="username" autocapitalize="characters"
+    <!-- Pas de autocomplete="username" / "current-password" : ce couple déclenche le
+         gestionnaire de mots de passe d'iOS, qui n'a pas d'endroit où s'afficher dans
+         une application posée sur l'écran d'accueil. Le champ reste alors muet au
+         toucher pendant que les boutons, eux, répondent encore. -->
+    <input id="fCommercial" type="text" autocomplete="off" autocapitalize="characters"
            autocorrect="off" spellcheck="false" placeholder="Ton nom, tel qu'au bureau"
+           onclick="this.focus()"
            onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('fCode').focus();}">
     <label>Code personnel</label>
     <div class="pw">
-      <input id="fCode" type="password" inputmode="text" autocomplete="current-password"
+      <input id="fCode" type="password" autocomplete="off"
              autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="••••••"
+             onclick="this.focus()"
              onkeydown="if(event.key==='Enter'){event.preventDefault();verifierCommercial(document.getElementById('bCo'));}">
       <button type="button" id="bOeil" onclick="basculerCode()" aria-label="Afficher le code">
         <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -491,11 +502,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=27"></script>
-<script src="jspdf.umd.min.js?v=27"></script>
-<script src="police.js?v=27"></script>
-<script src="logo.js?v=27"></script>
-<script src="pdf.js?v=27"></script>
-<script src="app.js?v=27"></script>
+<script src="config.js?v=28"></script>
+<script src="jspdf.umd.min.js?v=28"></script>
+<script src="police.js?v=28"></script>
+<script src="logo.js?v=28"></script>
+<script src="pdf.js?v=28"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>
