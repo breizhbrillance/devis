@@ -268,7 +268,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v29';
+var VERSION_APP = 'v30';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1154,11 +1154,19 @@ function appliquerSurface(){
   }
   fermerSurface();
 }
-function ajouterLibre(){
-  LIGNES.push({categorie:'Divers',designation:'',detail:'',qte:1,unite:'forfait',
-    pu:0,rem:0,tva:(TAUX||Number((CFG.reglages||{}).tva_defaut||20)),type:'PONCTUEL',reference:''});
-  rendreLignes(); sauverBrouillon();
-  setTimeout(function(){ var i=document.querySelectorAll('.ligne input'); if(i.length) i[i.length-7].focus(); },50);
+/* La ligne libre a été retirée : elle créait une prestation ET son prix hors
+   catalogue, ce qui vidait de son sens le verrouillage des tarifs. Une
+   prestation manquante s'ajoute au catalogue, au bureau. */
+
+/* Plafond de remise, fixé au bureau dans REGLAGES (remise_max). Zéro veut dire
+   « aucune remise ». Le classeur applique le même plafond à l'arrivée : l'écran
+   guide, le bureau tranche. */
+function remiseMax(){
+  var v = (CFG && CFG.reglages) ? CFG.reglages.remise_max : null;
+  if(v === undefined || v === null || String(v).trim() === '') return 0;
+  var n = Number(String(v).replace(',', '.'));
+  if(!isFinite(n) || n < 0) return 0;
+  return n > 100 ? 100 : n;
 }
 
 /* ====================== LIGNES ====================== */
@@ -1168,10 +1176,15 @@ function rendreLignes(){
     c.innerHTML='<div class="card"><div class="empty">Aucune prestation.<br>Ajoute une ligne depuis le catalogue.</div></div>';
     majBarre(); return;
   }
+  /* Ce que le catalogue possède — désignation, unité, prix, TVA, type — s'affiche
+     mais ne se saisit pas. Le commercial garde la main sur ce qui relève du
+     chantier : la quantité, le détail, le poste, et la remise dans la limite
+     fixée au bureau. */
+  var rMax = remiseMax();
   c.innerHTML = LIGNES.map(function(l,i){
     return '<div class="ligne">'+
       '<div class="t"><div style="flex:1">'+
-        '<input value="'+ech(l.designation)+'" placeholder="Désignation" oninput="setL('+i+',\'designation\',this.value)" style="font-weight:600;border:0;padding:0;font-size:15px">'+
+        '<div style="font-weight:600;font-size:15px">'+ech(l.designation)+'</div>'+
         '<input value="'+ech(l.detail)+'" placeholder="Détail (facultatif)" oninput="setL('+i+',\'detail\',this.value)" style="border:0;padding:2px 0 0;font-size:12.5px;color:#6b7280">'+
         '<span class="chip'+(l.type==='MENSUEL'?'':' p')+'">'+(l.type==='MENSUEL'?'Mensuel récurrent':'Ponctuel')+'</span>'+
       '</div><button class="x" onclick="supprL('+i+')">Suppr.</button></div>'+
@@ -1180,18 +1193,16 @@ function rendreLignes(){
           '<input type="number" inputmode="decimal" step="0.01" min="0" value="'+l.qte+'" style="flex:1;min-width:0" oninput="setL('+i+',\'qte\',this.value,this)">'+
           '<button class="btn sec" style="flex:0 0 44px;padding:9px 0;font-size:13px" title="Calculer une surface" onclick="ouvrirSurface('+i+')">m²</button>'+
         '</div></div>'+
-        '<div><label>Unité</label><input value="'+ech(l.unite)+'" oninput="setL('+i+',\'unite\',this.value)"></div>'+
-        '<div><label>P.U. HT</label><input type="number" inputmode="decimal" step="0.01" min="0" value="'+l.pu+'" oninput="setL('+i+',\'pu\',this.value,this)"></div>'+
+        '<div><label>Unité</label><div class="fige">'+ech(l.unite||'—')+'</div></div>'+
+        '<div><label>P.U. HT</label><div class="fige" id="pu'+i+'">'+eur(l.pu)+'</div></div>'+
       '</div>'+
       '<div class="g">'+
-        '<div><label>Remise %</label><input type="number" inputmode="decimal" step="0.5" min="0" max="100" value="'+(l.rem||0)+'" oninput="setL('+i+',\'rem\',this.value,this)"></div>'+
-        '<div><label>TVA %</label><input type="number" inputmode="decimal" step="0.1" min="0" value="'+l.tva+'" oninput="setL('+i+',\'tva\',this.value,this)"></div>'+
-        '<div><label>Type</label><select onchange="setL('+i+',\'type\',this.value)">'+
-          '<option value="PONCTUEL"'+(l.type==='PONCTUEL'?' selected':'')+'>Ponctuel</option>'+
-          '<option value="MENSUEL"'+(l.type==='MENSUEL'?' selected':'')+'>Mensuel</option></select></div>'+
+        (rMax > 0
+          ? '<div><label>Remise % (max '+nb(rMax)+')</label><input type="number" inputmode="decimal" step="0.5" min="0" max="'+rMax+'" value="'+(l.rem||0)+'" oninput="setL('+i+',\'rem\',this.value,this)"></div>'
+          : '<div><label>Remise</label><div class="fige">non autorisée</div></div>')+
+        '<div><label>TVA %</label><div class="fige">'+nb(l.tva)+' %</div></div>'+
+        '<div><label>Poste</label><input value="'+ech(l.categorie)+'" placeholder="Poste" oninput="setL('+i+',\'categorie\',this.value)"></div>'+
       '</div>'+
-      '<div class="g"><div><label>Poste (regroupement sur le devis)</label>'+
-        '<input value="'+ech(l.categorie)+'" placeholder="Remise en état des sols" oninput="setL('+i+',\'categorie\',this.value)"></div></div>'+
       '<div class="ft"><span style="color:#6b7280">Total HT ligne</span><b id="tl'+i+'">'+
         eur(montantL(l))+'</b></div></div>';
   }).join('');
@@ -1203,10 +1214,16 @@ function montantL(l){
 /* Un devis ne peut pas porter une quantité ou un prix négatif, ni une remise
    de plus de 100 % : une faute de frappe donnerait un total négatif au client. */
 function setL(i,k,v,el){
-  if(k==='qte'||k==='pu'||k==='tva'||k==='rem'){
+  // Le prix, la TVA, l'unité, la désignation et le type appartiennent au
+  // catalogue : aucun écran ne les modifie, et une tentative est ignorée.
+  if(k==='pu' || k==='tva' || k==='unite' || k==='designation' || k==='type') return;
+  if(k==='qte'||k==='rem'){
     var n = (v === '' ? 0 : Number(v)), borne = n;
     if(!isFinite(borne) || borne < 0) borne = 0;
-    if((k === 'rem' || k === 'tva') && borne > 100) borne = 100;
+    if(k === 'rem'){
+      var m = remiseMax();
+      if(borne > m) borne = m;
+    }
     // On ne réécrit le champ que si la valeur a vraiment été ramenée dans les
     // clous : sinon on empêcherait de taper « 0,5 », qui vaut 0 un instant.
     if(el && borne !== n) el.value = borne;
