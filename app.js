@@ -218,6 +218,7 @@ window.addEventListener('load', function(){
 });
 
 function demarrer(){
+  fermerDialogues();   // une page restaurée par le navigateur peut rouvrir sur un dialogue
   $('hSub').textContent = (CFG && CFG.reglages && CFG.reglages.societe_nom) || 'Devis sur place';
   $('premiere').classList.toggle('hide', !!CFG);
 
@@ -250,6 +251,7 @@ function demarrer(){
    Il revient à chaque ouverture de l'application. */
 function ecranConnexion(msg){
   ETAPE = 0;
+  fermerDialogues();      // sinon un dialogue resté ouvert gèle l'écran de connexion
   montrer('eCo');
   $('steps').classList.add('hide');
   $('bar').classList.add('hide');
@@ -338,18 +340,49 @@ function rafraichirConfig(btn){
    application installée sur l'écran d'accueil, confirm() peut ne rien afficher
    et répondre « non » tout seul — le bouton paraît alors cassé. */
 var CONF = null;
+
+/* Une question laissée sans réponse bloque tout le reste : on répond « non »
+   dès que le dialogue se referme autrement que par un de ses boutons — Échap,
+   retour arrière d'Android, ou un changement d'écran. */
+function repondreParDefaut(){
+  if(CONF){ var r = CONF; CONF = null; r(false); }
+}
+
+/* Referme tout ce qui peut recouvrir la page. Un <dialog> ouvert en showModal()
+   rend la page entière inerte : elle reste parfaitement visible, mais plus rien
+   n'y répond — ni les champs, ni les boutons. Appelé au démarrage et à chaque
+   retour à la connexion, pour qu'un écran ne puisse jamais rester gelé. */
+function fermerDialogues(){
+  ['dlg', 'dlgConf', 'dlgSurf'].forEach(function(id){
+    var d = $(id);
+    if(!d) return;
+    try{
+      if(d.open){ if(d.close) d.close(); else d.removeAttribute('open'); }
+    }catch(e){ d.removeAttribute('open'); }
+  });
+  var s = $('sigOverlay');
+  if(s) s.classList.add('hide');
+  repondreParDefaut();
+}
+
 function demander(titre, texte, libelleOui){
+  repondreParDefaut();                   // jamais deux questions en attente
   $('confTitre').textContent = titre;
   $('confTexte').textContent = texte;
   $('confOui').textContent = libelleOui || 'Oui';
   var d = $('dlgConf');
+  try{
+    if(d.open){ if(d.close) d.close(); else d.removeAttribute('open'); }
+  }catch(e){}
+  // même référence de fonction : le navigateur ne l'ajoute qu'une fois
+  d.addEventListener('close', repondreParDefaut);
   if(d.showModal) d.showModal(); else d.setAttribute('open','');
   return new Promise(function(res){ CONF = res; });
 }
 function repondreConf(oui){
   var d = $('dlgConf');
+  var r = CONF; CONF = null;             // avant la fermeture, qui déclenche « close »
   if(d.close) d.close(); else d.removeAttribute('open');
-  var r = CONF; CONF = null;
   if(r) r(oui);
 }
 
@@ -684,7 +717,13 @@ function verifierCommercial(btn){
   var reste = 0;
   try{ reste = Number(sessionStorage.getItem('bloqueJusqua') || 0) - Date.now(); }catch(e){}
   if(reste > 0) return erreur('Trop d\'essais. Réessaie dans ' + Math.ceil(reste/1000) + ' secondes.');
-  if(!codeConforme(code)) return refuser();
+  // Le format du code n'est pas un secret : la règle est écrite sous le champ.
+  // Dire « Nom ou code incorrect » ici ferait chercher une faute qui n'existe
+  // pas — et, au troisième essai, bloquerait pour rien.
+  if(!codeConforme(code)) return erreur(
+    'Ce code ne respecte pas la règle : au moins 4 caractères, dont un chiffre ' +
+    'et un caractère spécial (! ? * # & - _ …). Si ton code n\'en a pas, ' +
+    'demande au bureau de le corriger.');
 
   if(btn) occuper(btn, 'Vérification…');
   var suite = navigator.onLine ? connexionEnLigne(nom, code) : connexionHorsLigne(nom, code);
