@@ -488,6 +488,65 @@
   </div>
 </div>
 
+<!-- ====================== ESPACE PRESTATAIRE ======================
+       Deux écrans, et rien d'autre : le planning, et la fiche d'un chantier.
+       Un agent n'a ni catalogue, ni devis, ni tarif — son téléphone ne les
+       reçoit même pas. -->
+
+  <section id="eAg1" class="hide">
+    <div class="card">
+      <h2>Mon planning</h2>
+      <div class="mini" id="agQuand">—</div>
+      <button class="btn sec sm" style="margin-top:12px" id="bAgMaj"
+              onclick="chargerPlanning(this)">Actualiser</button>
+    </div>
+    <div id="agListe"></div>
+  </section>
+
+  <section id="eAg2" class="hide">
+    <div class="card">
+      <h2 id="agClient">Chantier</h2>
+      <div class="mini" id="agQuandCh">—</div>
+
+      <div id="agAdresse" style="margin-top:12px;font-size:16px;line-height:1.35"></div>
+      <button class="btn sec sm" style="margin-top:10px" onclick="itineraire()">Itinéraire</button>
+
+      <div id="agAcces" class="tvaInfo hide" style="margin-top:14px"></div>
+    </div>
+
+    <!-- Le pointage. Gros boutons : ça se touche avec des gants, dehors. -->
+    <div class="card">
+      <h3 style="margin-top:0">Pointage</h3>
+      <div id="agPointInfo" class="mini">Appuie en arrivant, puis en partant.</div>
+      <button class="btn" style="margin-top:12px;padding:18px;font-size:18px"
+              id="bAgArrive" onclick="pointer('arrivee', this)">J'arrive</button>
+      <button class="btn" style="margin-top:10px;padding:18px;font-size:18px"
+              id="bAgFini" onclick="pointer('depart', this)">J'ai terminé</button>
+      <div id="agDuree" class="mini hide" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Ce qu'il y a à faire</h3>
+      <div id="agTaches"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Un mot sur le chantier</h3>
+      <textarea id="agNote" rows="3" placeholder="Ce que le bureau doit savoir"
+                oninput="noteChantierModifiee()"></textarea>
+      <button class="btn sec sm hide" style="margin-top:10px" id="bAgNote"
+              onclick="enregistrerNoteChantier(this)">Enregistrer</button>
+
+      <button class="btn sec sm" style="margin-top:14px;color:var(--danger);border-color:var(--danger)"
+              onclick="ouvrirSignalement()">Signaler un problème</button>
+      <div id="agSignal" class="err hide" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <button class="btn sec" onclick="ecranPlanning()">Retour au planning</button>
+    </div>
+  </section>
+
 <dialog id="dlg">
   <div class="dlg-h">
     <input id="rech" placeholder="Rechercher une prestation…" oninput="rendreCatalogue()">
@@ -523,11 +582,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=33"></script>
-<script src="jspdf.umd.min.js?v=33"></script>
-<script src="police.js?v=33"></script>
-<script src="logo.js?v=33"></script>
-<script src="pdf.js?v=33"></script>
-<script src="app.js?v=33"></script>
+<script src="config.js?v=34"></script>
+<script src="jspdf.umd.min.js?v=34"></script>
+<script src="police.js?v=34"></script>
+<script src="logo.js?v=34"></script>
+<script src="pdf.js?v=34"></script>
+<script src="app.js?v=34"></script>
 </body>
 </html>
