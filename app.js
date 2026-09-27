@@ -450,6 +450,7 @@ function enregistrerVerdict(btn){
   DB.get(DERNIER.id).then(function(e){
     if(!e){ if(btn) libere(btn); return; }
     e.verdict = t; e.motif = motif; e.relance = relance;
+    e.note = val('verdictNote');
     e.verdictLe = Date.now(); e.verdictEnvoye = false;
     return DB.put(e).then(function(){
       DERNIER = e;
@@ -465,6 +466,33 @@ function enregistrerVerdict(btn){
     });
   }, function(){ if(btn) libere(btn); });
 }
+/* La note du commercial vit à côté du résultat : il peut l'écrire avant d'avoir
+   répondu, la compléter après, sans jamais rouvrir les trois choix. */
+function noteModifiee(){
+  var b = $('bNote');
+  if(!b) return;
+  var enregistree = (DERNIER && DERNIER.note) || '';
+  b.classList.toggle('hide', val('verdictNote') === enregistree.trim());
+}
+function enregistrerNote(btn){
+  if(!DERNIER) return;
+  var texte = val('verdictNote');
+  if(btn) occuper(btn, 'Enregistrement…');
+  DB.get(DERNIER.id).then(function(e){
+    if(!e){ if(btn) libere(btn); return; }
+    e.note = texte;
+    if(e.verdict) e.verdictEnvoye = false;      // la note repart avec le résultat
+    return DB.put(e).then(function(){
+      DERNIER = e;
+      if(btn) libere(btn);
+      tracer(texte ? 'NOTE ENREGISTREE' : 'NOTE EFFACEE', texte.slice(0,120), e.numero);
+      noteModifiee();
+      peindreVerdict();
+      synchroniser(false);
+    });
+  }, function(){ if(btn) libere(btn); });
+}
+
 function jjmmaa(iso){
   var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso||''));
   return m ? m[3]+'/'+m[2]+'/'+m[1] : String(iso||'');
@@ -474,6 +502,9 @@ function jjmmaa(iso){
 function peindreVerdict(){
   var f = $('verdictFait'), c = $('verdictChoix');
   if(!f || !c) return;
+  var champ = $('verdictNote');
+  if(champ && document.activeElement !== champ) champ.value = (DERNIER && DERNIER.note) || '';
+  noteModifiee();
   var v = DERNIER && DERNIER.verdict;
   if(!v){
     f.classList.add('hide');
@@ -1475,7 +1506,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       envoyerClient: envoi, statut: 'attente', cree: Date.now(),
       nom: moi.nom, code: moi.code, appareil: APPAREIL, pdfUrl: '',
       photos: [],           // prises plus tard, depuis « Mes devis »
-      verdict: '', motif: '', relance: '', verdictEnvoye: false
+      verdict: '', motif: '', relance: '', note: '', verdictEnvoye: false
     };
     DERNIER = enr;
     DB.put(enr).then(function(){
@@ -1566,7 +1597,7 @@ function synchroniser(manuel, btn){
   SYNC = true;                     // verrou posé tout de suite : deux appels rapprochés
   DB.tous().then(function(l){      // (retour du réseau + minuterie) n'enverraient pas deux fois
     var att = l.filter(function(x){
-      return x.statut==='attente' || (x.verdict && !x.verdictEnvoye) ||
+      return x.statut==='attente' || ((x.verdict || x.note) && !x.verdictEnvoye) ||
              (x.photos||[]).some(function(p){ return !p.envoye; });
     });
     if(!att.length){ SYNC = false; if(btn) libere(btn); etatReseau();
@@ -1594,14 +1625,16 @@ function envoyer(enr){
 /* Le résultat du rendez-vous part à part du devis : il est souvent saisi
    plus tard, parfois corrigé, et il ne doit jamais renvoyer tout le PDF. */
 function envoyerVerdict(enr){
-  if(!enr.verdict || enr.verdictEnvoye || enr.statut !== 'envoye') return Promise.resolve();
+  // une note seule vaut le voyage : c'est souvent elle qui dit pourquoi
+  if((!enr.verdict && !enr.note) || enr.verdictEnvoye || enr.statut !== 'envoye')
+    return Promise.resolve();
   return fetch(API_URL, {
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
     body: JSON.stringify({
       action:'statut', id:enr.id, nom:enr.nom, code:enr.code, appareil:enr.appareil,
       numero:enr.numero, verdict:enr.verdict, motif:enr.motif||'', relance:enr.relance||'',
-      quand: enr.verdictLe || Date.now()
+      note: enr.note||'', quand: enr.verdictLe || Date.now()
     })
   })
   .then(function(r){ return r.json(); })
@@ -1713,7 +1746,7 @@ function purger(){
     var vieux = l.filter(function(e){
       if(e.statut !== 'envoye') return false;
       if((e.photos||[]).some(function(p){ return !p.envoye; })) return false;
-      if(e.verdict && !e.verdictEnvoye) return false;
+      if((e.verdict || e.note) && !e.verdictEnvoye) return false;
       return Number(e.envoye || e.cree || 0) < limite;
     });
     if(!vieux.length) return;
@@ -1760,8 +1793,7 @@ function rendreHistorique(){
         detailVerdict(e)+'</span></div>'+
         '<div class="acts">'+
         '<button class="btn sec sm" onclick="partagerId(\''+e.id+'\', this)">PDF</button>'+
-        '<button class="btn sec'+(e.verdict?' sm':' sm')+'" onclick="ouvrirVerdict(\''+e.id+'\')">'+
-          (e.verdict?'Résultat':'Résultat ?')+'</button>'+
+        '<button class="btn sec sm" onclick="ouvrirVerdict(\''+e.id+'\')">Résultat</button>'+
         '<button class="btn sec sm" onclick="ouvrirPhotos(\''+e.id+'\', \''+
           (e.verdict==='SIGNE' && !sig ? 'SIGNE' : 'SITE')+'\')">Photos'+(ph?' ('+ph+')':'')+'</button>'+
         '<button class="btn sec sm" onclick="dupliquer(\''+e.id+'\', this)">Dupliquer</button>'+
@@ -1781,6 +1813,10 @@ function badgeVerdict(e){
   return '<span class="vb vb-r">À RELANCER</span>';
 }
 function detailVerdict(e){
+  var n = e.note ? '<br><i>« ' + ech(e.note) + ' »</i>' : '';
+  return detailEtat(e) + n;
+}
+function detailEtat(e){
   if(e.verdict === 'REFUSE' && e.motif) return '<br>Refusé : ' + ech(e.motif);
   if(e.verdict === 'RELANCE' && e.relance){
     var dû = (e.relance <= new Date().toISOString().slice(0,10));
