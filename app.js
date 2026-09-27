@@ -25,8 +25,10 @@ function $(id){ return document.getElementById(id); }
 function val(id){ var e=$(id); return e ? e.value.trim() : ''; }
 function ech(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+/* Espaces insécables : sans elles, « 1 200,00 € TTC » se coupe en fin de ligne
+   et le commercial lit « 1 200,00 » d'un côté, « € TTC » de l'autre. */
 function eur(n){ var v=(Math.round((Number(n)||0)*100)/100).toFixed(2).split('.');
-  return v[0].replace(/\B(?=(\d{3})+(?!\d))/g,' ')+','+v[1]+' €'; }
+  return v[0].replace(/\B(?=(\d{3})+(?!\d))/g,'\u202f')+','+v[1]+'\u00a0€'; }
 function erreur(m){ var e=$('erreur'); if(!m){e.classList.add('hide');return;}
   e.textContent=m; e.classList.remove('hide'); window.scrollTo(0,0); }
 
@@ -225,8 +227,15 @@ function demarrer(){
   } else {
     $('quiSuisJe').textContent = moi.nom;
     var b = lsj('brouillon');
-    if(b && b.lignes && b.lignes.length && confirm('Un devis non terminé a été retrouvé. Le reprendre ?')){
-      restaurer(b); etape(2);
+    if(b && b.lignes && b.lignes.length){
+      var cl = (b.client||{}).societe || (b.client||{}).contact || '';
+      apresConnexion();
+      demander('Reprendre le devis en cours ?',
+               'Un devis non terminé a été retrouvé' + (cl ? ' : ' + cl : '') + '.',
+               'Le reprendre').then(function(oui){
+        if(oui){ restaurer(b); etape(2); }
+        else { lsj('brouillon', null); }
+      });
     } else {
       apresConnexion();
     }
@@ -264,14 +273,20 @@ function basculerCode(){
 }
 
 function deconnexion(){
-  if(!confirm('Se déconnecter ? Les devis déjà enregistrés restent sur l\'appareil et partiront normalement.')) return;
-  tracer('DECONNEXION', '');
-  session(null);
-  ecranConnexion('');
+  demander('Se déconnecter ?',
+           'Les devis déjà enregistrés restent sur l\'appareil et partiront normalement.',
+           'Se déconnecter').then(function(oui){
+    if(!oui) return;
+    tracer('DECONNEXION', '');
+    session(null);
+    ecranConnexion('');
+  });
 }
 
 function reidentifier(raison){
-  if(ETAPE >= 3) return;          // devis en cours : on ne coupe rien, ce sera au prochain
+  // On ne coupe que pendant la saisie d'un devis (prestations et validation) :
+  // partout ailleurs, y compris « Mes devis », le commercial doit être prévenu.
+  if(ETAPE === 3 || ETAPE === 4) return;
   session(null);
   ecranConnexion(raison + ' Saisis de nouveau ton nom et ton code.');
 }
@@ -317,6 +332,25 @@ function rafraichirConfig(btn){
     }
     rangerConfig(d.config);
   }, function(){ if(btn) libere(btn); });
+}
+
+/* Une confirmation dans l'application, jamais celle du navigateur : dans une
+   application installée sur l'écran d'accueil, confirm() peut ne rien afficher
+   et répondre « non » tout seul — le bouton paraît alors cassé. */
+var CONF = null;
+function demander(titre, texte, libelleOui){
+  $('confTitre').textContent = titre;
+  $('confTexte').textContent = texte;
+  $('confOui').textContent = libelleOui || 'Oui';
+  var d = $('dlgConf');
+  if(d.showModal) d.showModal(); else d.setAttribute('open','');
+  return new Promise(function(res){ CONF = res; });
+}
+function repondreConf(oui){
+  var d = $('dlgConf');
+  if(d.close) d.close(); else d.removeAttribute('open');
+  var r = CONF; CONF = null;
+  if(r) r(oui);
 }
 
 /* ====================== NAVIGATION ====================== */
@@ -424,6 +458,8 @@ function enregistrerVerdict(btn){
              motif || (relance ? 'relance le ' + jjmmaa(relance) : ''), e.numero);
       annulerVerdict();
       peindreVerdict();
+      var f = $('verdictFait');
+      if(f && f.scrollIntoView) f.scrollIntoView({block:'center'});
       synchroniser(false);
       if(t === 'SIGNE') ouvrirPhotos(e.id, 'SIGNE');
     });
@@ -439,7 +475,13 @@ function peindreVerdict(){
   var f = $('verdictFait'), c = $('verdictChoix');
   if(!f || !c) return;
   var v = DERNIER && DERNIER.verdict;
-  if(!v){ f.classList.add('hide'); if(V_TYPE === '') c.classList.remove('hide'); return; }
+  if(!v){
+    f.classList.add('hide');
+    var a = $('verdictAide'); if(a) a.classList.remove('hide');
+    if(V_TYPE === '') c.classList.remove('hide');
+    return;
+  }
+  var c2 = $('verdictAide'); if(c2) c2.classList.add('hide');
   var t = 'Résultat : ' + libelleVerdict(v);
   if(v === 'REFUSE' && DERNIER.motif) t += ' — ' + DERNIER.motif;
   if(v === 'RELANCE' && DERNIER.relance) t += ' le ' + jjmmaa(DERNIER.relance);
@@ -453,6 +495,7 @@ function peindreVerdict(){
 }
 function modifierVerdict(){
   $('verdictFait').classList.add('hide');
+  var a = $('verdictAide'); if(a) a.classList.remove('hide');
   V_TYPE = '';
   $('verdictChoix').classList.remove('hide');
 }
@@ -508,6 +551,8 @@ function suivant(){
       if(!val('cContact')) return erreur('Indique le nom du client.');
       if(PLUS2ANS === null) return erreur('Indique si le logement a plus de deux ans : c\'est ce qui fixe le taux de TVA.');
     }
+    var mauvais = champsDouteux();
+    if(mauvais) return erreur(mauvais);
     sauverBrouillon(); return etape(3);
   }
   if(ETAPE===3){
@@ -515,6 +560,22 @@ function suivant(){
     sauverBrouillon(); return etape(4);
   }
   if(ETAPE===4) return enregistrer();
+}
+
+/* Une adresse e-mail fautive, c'est la copie du devis qui n'arrive jamais ;
+   un code postal à rallonge, c'est une erreur de frappe. On le dit une fois :
+   le message s'efface, un deuxième appui sur Continuer passe quand même. */
+var DOUTE_VU = '';
+function champsDouteux(){
+  var e = val('cEmail'), cp = val('cCp').replace(/\s/g,''), m = '';
+  if(e && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e))
+    m = 'Cette adresse e-mail a l\'air incomplète : ' + e + '. Corrige-la, ou laisse le champ vide.';
+  else if(cp && !/^\d{5}$/.test(cp))
+    m = 'Un code postal compte 5 chiffres — celui-ci en a ' + cp.length + '.';
+  if(!m){ DOUTE_VU = ''; return ''; }
+  if(DOUTE_VU === m){ DOUTE_VU = ''; return ''; }   // déjà signalé : on laisse passer
+  DOUTE_VU = m;
+  return m;
 }
 
 /* ====================== IDENTIFICATION ====================== */
@@ -1023,15 +1084,15 @@ function rendreLignes(){
       '</div><button class="x" onclick="supprL('+i+')">Suppr.</button></div>'+
       '<div class="g">'+
         '<div><label>Quantité</label><div style="display:flex;gap:5px">'+
-          '<input type="number" inputmode="decimal" step="0.01" value="'+l.qte+'" style="flex:1;min-width:0" oninput="setL('+i+',\'qte\',this.value)">'+
+          '<input type="number" inputmode="decimal" step="0.01" min="0" value="'+l.qte+'" style="flex:1;min-width:0" oninput="setL('+i+',\'qte\',this.value,this)">'+
           '<button class="btn sec" style="flex:0 0 44px;padding:9px 0;font-size:13px" title="Calculer une surface" onclick="ouvrirSurface('+i+')">m²</button>'+
         '</div></div>'+
         '<div><label>Unité</label><input value="'+ech(l.unite)+'" oninput="setL('+i+',\'unite\',this.value)"></div>'+
-        '<div><label>P.U. HT</label><input type="number" inputmode="decimal" step="0.01" value="'+l.pu+'" oninput="setL('+i+',\'pu\',this.value)"></div>'+
+        '<div><label>P.U. HT</label><input type="number" inputmode="decimal" step="0.01" min="0" value="'+l.pu+'" oninput="setL('+i+',\'pu\',this.value,this)"></div>'+
       '</div>'+
       '<div class="g">'+
-        '<div><label>Remise %</label><input type="number" inputmode="decimal" step="0.5" min="0" max="100" value="'+(l.rem||0)+'" oninput="setL('+i+',\'rem\',this.value)"></div>'+
-        '<div><label>TVA %</label><input type="number" inputmode="decimal" step="0.1" value="'+l.tva+'" oninput="setL('+i+',\'tva\',this.value)"></div>'+
+        '<div><label>Remise %</label><input type="number" inputmode="decimal" step="0.5" min="0" max="100" value="'+(l.rem||0)+'" oninput="setL('+i+',\'rem\',this.value,this)"></div>'+
+        '<div><label>TVA %</label><input type="number" inputmode="decimal" step="0.1" min="0" value="'+l.tva+'" oninput="setL('+i+',\'tva\',this.value,this)"></div>'+
         '<div><label>Type</label><select onchange="setL('+i+',\'type\',this.value)">'+
           '<option value="PONCTUEL"'+(l.type==='PONCTUEL'?' selected':'')+'>Ponctuel</option>'+
           '<option value="MENSUEL"'+(l.type==='MENSUEL'?' selected':'')+'>Mensuel</option></select></div>'+
@@ -1046,8 +1107,20 @@ function rendreLignes(){
 function montantL(l){
   return Math.round((Number(l.qte)||0)*(Number(l.pu)||0)*(1-(Number(l.rem)||0)/100)*100)/100;
 }
-function setL(i,k,v){
-  LIGNES[i][k] = (k==='qte'||k==='pu'||k==='tva'||k==='rem') ? (v===''?0:Number(v)) : v;
+/* Un devis ne peut pas porter une quantité ou un prix négatif, ni une remise
+   de plus de 100 % : une faute de frappe donnerait un total négatif au client. */
+function setL(i,k,v,el){
+  if(k==='qte'||k==='pu'||k==='tva'||k==='rem'){
+    var n = (v === '' ? 0 : Number(v)), borne = n;
+    if(!isFinite(borne) || borne < 0) borne = 0;
+    if((k === 'rem' || k === 'tva') && borne > 100) borne = 100;
+    // On ne réécrit le champ que si la valeur a vraiment été ramenée dans les
+    // clous : sinon on empêcherait de taper « 0,5 », qui vaut 0 un instant.
+    if(el && borne !== n) el.value = borne;
+    LIGNES[i][k] = borne;
+  } else {
+    LIGNES[i][k] = v;
+  }
   if(k==='type'){ rendreLignes(); }
   else{
     var l=LIGNES[i], t=$('tl'+i);
@@ -1183,8 +1256,8 @@ function ouvrirPhotos(id, type){
     $('steps').classList.add('hide');
     barreRetour();
     $('bHist').classList.remove('hide');
-    $('hTitre').textContent = 'Photos';
     var sig = (PHOTO_TYPE === 'SIGNE');
+    $('hTitre').textContent = sig ? 'Devis signé' : 'Photos du site';
     $('phTitre').textContent = sig ? 'Devis signé' : 'Photos du site';
     $('phBtn').textContent   = sig ? 'Photographier le devis signé' : 'Prendre des photos';
     $('phAide').textContent  = sig
@@ -1276,8 +1349,13 @@ function rendrePhotos(e){
   var att = ph.filter(function(p){ return !p.envoye; }).length;
   var etat = $('phEtat');
   if(!etat) return;
-  if(!ph.length) etat.textContent = 'Aucune photo pour ce devis.';
-  else if(!att) etat.textContent = ph.length + ' photo' + (ph.length>1?'s':'') + ' rangée' +
+  var sig = (PHOTO_TYPE === 'SIGNE');
+  var nom = function(n){ return sig ? ('page' + (n>1?'s':'') + ' du devis signé')
+                                    : ('photo' + (n>1?'s':'') + ' du site'); };
+  if(!ph.length) etat.textContent = sig
+    ? 'Pas encore de photo du devis signé.'
+    : 'Aucune photo pour ce devis.';
+  else if(!att) etat.textContent = ph.length + ' ' + nom(ph.length) + ' rangée' +
     (ph.length>1?'s':'') + ' dans le dossier Drive du devis.';
   else etat.textContent = att + ' photo' + (att>1?'s':'') + ' en attente d\'envoi' +
     (navigator.onLine ? ' — envoi en cours.' : ' — elles partiront au retour du réseau.');
@@ -1358,7 +1436,9 @@ function enregistrer(){
   var secours = setTimeout(function(){ debloquer(b); }, 30000);
   peindre().then(function(){
     try{ enregistrerSuite(b, envoi, moi, secours); }
-    catch(e){ debloquer(b, secours); erreur('Erreur inattendue : ' + e.message); }
+    catch(e){ debloquer(b, secours);
+      tracer('ERREUR', String(e && e.message || e));
+      erreur('Le devis n\'a pas pu être enregistré. Réessaie ; si ça recommence, préviens le bureau.'); }
   }, function(){ debloquer(b, secours); });
 }
 
@@ -1417,11 +1497,14 @@ function enregistrerSuite(b, envoi, moi, secours){
       synchroniser(false);
     }, function(e){
       debloquer(b, secours);
-      erreur('Le devis n\'a pas pu être enregistré sur l\'appareil : ' + (e && e.message || e));
+      tracer('ERREUR ENREGISTREMENT', String(e && e.message || e));
+      erreur('Le devis n\'a pas pu être enregistré sur l\'appareil. '+
+             'Vérifie qu\'il reste de la place, puis réessaie.');
     });
   }catch(e){
     debloquer(b, secours);
-    erreur('Erreur lors de la création du PDF : '+e.message);
+    tracer('ERREUR PDF', String(e && e.message || e));
+    erreur('Le PDF n\'a pas pu être créé. Réessaie ; si ça recommence, préviens le bureau.');
   }
 }
 
@@ -1587,7 +1670,9 @@ function envoyerDevis(enr){
     return DB.put(enr);
   })
   .catch(function(e){
-    enr.derniereErreur = String(e.message||e);
+    var m = String(e && e.message || e);
+    if(enr.derniereErreur !== m) tracer('ENVOI ECHOUE', m, enr.numero);
+    enr.derniereErreur = m;     // gardé pour le journal, jamais montré tel quel
     return DB.put(enr);
   });
 }
@@ -1600,8 +1685,19 @@ function majEtatDernier(){
     if($('e5').classList.contains('hide')) return;
     $('okEtat').textContent = e.statut==='envoye'
       ? 'Envoyé au bureau' + (e.envoyerClient ? ' et transmis au client.' : '.')
-      : 'En attente d\'envoi' + (e.derniereErreur ? ' (' + e.derniereErreur + ')' : '') + '.';
+      : attenteLisible(e);
   });
+}
+
+/* Le détail technique d'une panne (« Unexpected token < ... ») n'apprend rien
+   à un commercial et l'inquiète pour rien : il part au journal, et l'écran ne
+   dit que ce qui le concerne — c'est parti, ou ça partira tout seul. */
+function attenteLisible(e){
+  if(!navigator.onLine)
+    return 'Hors connexion : le devis part automatiquement dès que le réseau revient.';
+  if(e && e.derniereErreur)
+    return 'Le bureau n\'a pas répondu. Nouvelle tentative automatique, rien n\'est perdu.';
+  return 'Envoi au bureau en cours…';
 }
 
 /* ====================== PURGE ======================
@@ -1636,6 +1732,7 @@ function ouvrirHistorique(){
   ETAPE=6; montrer('e6');
   $('steps').classList.add('hide');
   barreRetour();
+  $('bHist').classList.add('hide');      // on y est déjà
   $('hTitre').textContent='Mes devis';
   var moi = session();
   $('quiSuisJe').textContent = (moi && moi.nom) || '—';
@@ -1657,8 +1754,8 @@ function rendreHistorique(){
         '<b>'+badgeVerdict(e)+ech(cl)+'</b>'+
         '<span><span class="pt '+(e.statut==='envoye'?'pt-ok':'pt-att')+'"></span>'+
         ech(e.numero)+' · '+d.toLocaleDateString('fr-FR')+' · '+eur(e.devis.totaux.ttc)+' TTC'+
-        (e.statut==='envoye'?'':' · à envoyer')+
-        (phAtt?' · '+phAtt+' photo'+(phAtt>1?'s':'')+' à envoyer':'')+
+        (e.statut==='envoye'?'':' \u00b7\u00a0à envoyer')+
+        (phAtt?' \u00b7\u00a0'+phAtt+'\u00a0photo'+(phAtt>1?'s':'')+' à envoyer':'')+
         (e.numeroPdf?' · renuméroté (PDF client : '+ech(e.numeroPdf)+')':'')+
         detailVerdict(e)+'</span></div>'+
         '<div class="acts">'+
@@ -1668,7 +1765,8 @@ function rendreHistorique(){
         '<button class="btn sec sm" onclick="ouvrirPhotos(\''+e.id+'\', \''+
           (e.verdict==='SIGNE' && !sig ? 'SIGNE' : 'SITE')+'\')">Photos'+(ph?' ('+ph+')':'')+'</button>'+
         '<button class="btn sec sm" onclick="dupliquer(\''+e.id+'\', this)">Dupliquer</button>'+
-        '<button class="btn sec sm" title="Renvoyer au bureau" onclick="renvoyer(\''+e.id+'\', this)">⟳</button>'+
+        (e.statut==='envoye' ? '' :
+          '<button class="btn sec sm" onclick="renvoyer(\''+e.id+'\', this)">Renvoyer</button>')+
         '</div></div>';
     }).join('');
   });
