@@ -54,6 +54,12 @@
   input,select,textarea{width:100%;padding:12px;font-size:16px;border:1px solid var(--line);
     border-radius:9px;background:#fff;color:var(--txt);font-family:inherit}
   input:focus,select:focus,textarea:focus{outline:2px solid var(--acc);outline-offset:-1px}
+  /* Une valeur qui vient du catalogue : elle se lit, elle ne se saisit pas.
+     Volontairement sans bordure d'un champ, pour qu'on ne tente pas d'y écrire. */
+  .fige{padding:12px;font-size:16px;border:1px solid transparent;border-radius:10px;
+        background:#f1f3f6;color:#374151;font-weight:600;white-space:nowrap;
+        overflow:hidden;text-overflow:ellipsis}
+  .ligne .g .fige{padding:9px;font-size:15px}
   textarea{min-height:80px;resize:vertical}
   .row{display:flex;gap:10px}.row>*{flex:1}
   button{font-family:inherit;font-size:16px;border:0;border-radius:10px;padding:13px 16px;cursor:pointer;
@@ -310,10 +316,14 @@
       <label>Objet du devis</label>
       <input id="fObjet" placeholder="Nettoyage maison fin de chantier" oninput="sauverBrouillon()">
       <div class="mini">S'imprime en titre, en haut du devis.</div>
+      <!-- Plus de « ligne libre » : tout ce qui est vendu existe au catalogue.
+           Si une prestation manque, elle s'ajoute au bureau et arrive sur tous
+           les appareils à la synchronisation suivante. -->
       <div class="row" style="margin-top:14px">
-        <button class="btn sm" style="flex:1" onclick="ouvrirCatalogue()">+ Catalogue</button>
-        <button class="btn sec sm" style="flex:1" onclick="ajouterLibre()">+ Ligne libre</button>
+        <button class="btn sm" style="flex:1" onclick="ouvrirCatalogue()">+ Ajouter une prestation</button>
       </div>
+      <div class="mini">Les prix viennent du catalogue de l'entreprise. Si une prestation
+        manque, demande-la au bureau : elle sera disponible à la prochaine mise à jour.</div>
     </div>
     <div id="lignes"></div>
   </section>
@@ -509,11 +519,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=29"></script>
-<script src="jspdf.umd.min.js?v=29"></script>
-<script src="police.js?v=29"></script>
-<script src="logo.js?v=29"></script>
-<script src="pdf.js?v=29"></script>
-<script src="app.js?v=29"></script>
+<script src="config.js?v=30"></script>
+<script src="jspdf.umd.min.js?v=30"></script>
+<script src="police.js?v=30"></script>
+<script src="logo.js?v=30"></script>
+<script src="pdf.js?v=30"></script>
+<script src="app.js?v=30"></script>
 </body>
 </html>
