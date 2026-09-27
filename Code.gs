@@ -101,7 +101,7 @@ function initialiser() {
   var ss = SpreadsheetApp.getActive();
 
   creerOnglet_(ss, SH.REGLAGES, ['CLE', 'VALEUR', 'COMMENTAIRE']);
-  creerOnglet_(ss, SH.CATALOGUE, ['CATEGORIE', 'DESIGNATION', 'DETAIL', 'UNITE', 'PU_HT', 'TVA', 'TYPE', 'ACTIF']);
+  creerOnglet_(ss, SH.CATALOGUE, ['CATEGORIE', 'DESIGNATION', 'DETAIL', 'UNITE', 'PU_HT', 'TVA', 'TYPE', 'ACTIF', 'REFERENCE']);
   creerOnglet_(ss, SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF']);
   creerOnglet_(ss, SH.DEVIS, ENTETES_DEVIS_);
   creerOnglet_(ss, SH.LIGNES, ENTETES_LIGNES_);
@@ -151,7 +151,8 @@ var ENTETES_DEVIS_ = [
   'TOTAL_HT_PONCTUEL', 'TOTAL_HT_MENSUEL', 'TOTAL_HT', 'TOTAL_TVA', 'TOTAL_TTC',
   'REMISE_PCT', 'STATUT', 'SIGNE', 'SIGNATAIRE', 'VALIDITE', 'LIEN_PDF', 'PHOTOS', 'NOTES',
   'RECU_LE', 'ID_APPAREIL', 'ID_DEVIS', 'OBJET', 'LOGEMENT_PLUS_2_ANS', 'TAUX_TVA', 'DELAI',
-  'MOTIF_REFUS', 'RELANCE_LE', 'DATE_STATUT', 'PREUVE_SIGNATURE', 'NOTE_COMMERCIAL'
+  'MOTIF_REFUS', 'RELANCE_LE', 'DATE_STATUT', 'PREUVE_SIGNATURE', 'NOTE_COMMERCIAL',
+  'CONTROLE_TARIF'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -201,6 +202,35 @@ function majStructure_() {
       en.push(h);
     });
   }
+  // Le catalogue porte une REFERENCE : c'est elle qui permet au classeur de
+  // retrouver le tarif officiel d'une ligne reçue. Elle est ajoutée à la fin,
+  // jamais insérée, et remplie automatiquement là où elle manque.
+  var shC = ss.getSheetByName(SH.CATALOGUE);
+  if (shC && shC.getLastColumn() > 0) {
+    var enC = shC.getRange(1, 1, 1, shC.getLastColumn()).getValues()[0]
+      .map(function (x) { return String(x).trim(); });
+    var iRef = enC.indexOf('REFERENCE');
+    if (iRef < 0) {
+      iRef = shC.getLastColumn();
+      shC.getRange(1, iRef + 1).setValue('REFERENCE')
+        .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+    }
+    if (shC.getLastRow() > 1) {
+      var nL = shC.getLastRow() - 1;
+      var plage = shC.getRange(2, iRef + 1, nL, 1);
+      var refs = plage.getValues();
+      var vus = {}, change = false;
+      refs.forEach(function (r) { var x = String(r[0]).trim(); if (x) vus[x] = true; });
+      for (var i = 0; i < nL; i++) {
+        if (String(refs[i][0]).trim()) continue;
+        var k = 1, cand;
+        do { cand = 'REF-' + ('000' + k).slice(-4); k++; } while (vus[cand]);
+        vus[cand] = true; refs[i][0] = cand; change = true;
+      }
+      if (change) plage.setValues(refs);
+    }
+  }
+
   var shL = ss.getSheetByName(SH.LIGNES);
   if (shL && shL.getLastColumn() > 0) {
     var enL = shL.getRange(1, 1, 1, shL.getLastColumn()).getValues()[0]
@@ -267,6 +297,7 @@ var REGLAGES_DEFAUT_ = [
   ['societe_tva', 'FR69991595711', 'N° TVA intracommunautaire — à faire confirmer par le comptable'],
   ['societe_rcs', 'RCS Vannes 000 000 000', ''],
   ['tva_defaut', '20', 'Taux de TVA par défaut en %'],
+  ['remise_max', '10', 'Remise maximale que le commercial peut accorder, en % — 0 pour l\'interdire'],
   ['validite_jours', '30', 'Durée de validité du devis en jours'],
   ['conditions_reglement', 'Paiement à 30 jours à réception de facture. Pénalités de retard : 3 fois le taux d\'intérêt légal. Indemnité forfaitaire de recouvrement : 40 €.', 'Bas de devis'],
   ['mentions_bas', 'Devis gratuit. Il doit être retourné daté et signé avec la mention « Bon pour accord ».', 'Bas de devis'],
@@ -510,6 +541,7 @@ function enregistrer_(d, com) {
   }
 
   var c = devis.client || {}, t = devis.totaux || {};
+  var controleTarif = controlerTarifs_(devis, reg);
   var v = {
     NUMERO: devis.numero, DATE: new Date(devis.date), COMMERCIAL: devis.commercial,
     CLIENT: c.societe || c.contact || '',
@@ -530,8 +562,13 @@ function enregistrer_(d, com) {
     OBJET: devis.objet || '',
     LOGEMENT_PLUS_2_ANS: (c.plus2ans === true ? 'OUI' : (c.plus2ans === false ? 'NON' : '')),
     TAUX_TVA: tauxPrincipal_(devis),
-    DELAI: devis.delai || ''
+    DELAI: devis.delai || '',
+    CONTROLE_TARIF: controleTarif
   };
+  if (controleTarif) {
+    tracerServeur_(devis.commercial || com.nom, 'ECART TARIF', controleTarif,
+                   devis.numero, d.appareil || '');
+  }
   shD.appendRow(en.map(function (h) { return v.hasOwnProperty(h) ? v[h] : ''; }));
 
   var shL = ss.getSheetByName(SH.LIGNES);
@@ -802,14 +839,16 @@ function lireReglages_() {
 function lireCatalogue_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CATALOGUE);
   if (!sh || sh.getLastRow() < 2) return [];
-  return sh.getRange(2, 1, sh.getLastRow() - 1, 8).getValues()
+  var large = Math.max(9, sh.getLastColumn());
+  return sh.getRange(2, 1, sh.getLastRow() - 1, large).getValues()
     .filter(function (r) { return String(r[1]).trim() && String(r[7]).toUpperCase() !== 'NON'; })
     .map(function (r) {
       return {
         categorie: String(r[0] || 'Divers'), designation: String(r[1]),
         detail: String(r[2] || ''), unite: String(r[3] || ''),
         pu: Number(r[4]) || 0, tva: Number(r[5]) || 20,
-        type: String(r[6] || '').toUpperCase() === 'MENSUEL' ? 'MENSUEL' : 'PONCTUEL'
+        type: String(r[6] || '').toUpperCase() === 'MENSUEL' ? 'MENSUEL' : 'PONCTUEL',
+        reference: String(r[8] || '').trim()
       };
     });
 }
@@ -866,6 +905,56 @@ function dossierDevis_(reg, date, commercial) {
 }
 
 /** Montant HT d'une ligne, remise de ligne déduite. */
+/**
+ * Compare chaque ligne reçue au tarif officiel du catalogue, via sa REFERENCE.
+ *
+ * On ne réécrit RIEN : si le client a signé le papier, le prix imprimé est celui
+ * qui a été convenu, et le classeur n'a pas à le contredire après coup. On se
+ * contente de dire ce qui ne colle pas, pour que le bureau tranche.
+ *
+ * Deux causes possibles à un écart, et elles se ressemblent de l'extérieur :
+ * un appareil resté longtemps hors connexion travaille avec un catalogue
+ * périmé ; ou quelqu'un a modifié le devis avant l'envoi.
+ */
+function controlerTarifs_(devis, reg) {
+  var lignes = (devis && devis.lignes) || [];
+  if (!lignes.length) return '';
+
+  var cat = {}, parNom = {};
+  lireCatalogue_().forEach(function (p) {
+    if (p.reference) cat[p.reference] = p;
+    parNom[normNom_(p.designation)] = p;
+  });
+
+  var max = Number(String(reg.remise_max === undefined ? 0 : reg.remise_max).replace(',', '.'));
+  if (!isFinite(max) || max < 0) max = 0;
+  if (max > 100) max = 100;
+
+  var ecarts = [];
+  lignes.forEach(function (l, i) {
+    var rang = 'ligne ' + (i + 1) + ' (' + (l.designation || 'sans nom') + ')';
+    var ref = String(l.reference || '').trim();
+    var p = ref ? cat[ref] : parNom[normNom_(l.designation || '')];
+
+    if (!p) {
+      ecarts.push(rang + ' : hors catalogue');
+    } else {
+      var attendu = Number(p.pu) || 0, recu = Number(l.pu) || 0;
+      if (Math.abs(attendu - recu) > 0.005) {
+        ecarts.push(rang + ' : prix ' + recu + ' au lieu de ' + attendu);
+      }
+    }
+
+    var rem = Number(l.rem) || 0;
+    if (rem > max + 0.001) {
+      ecarts.push(rang + ' : remise ' + rem + ' % au lieu de ' + max + ' % maximum');
+    }
+  });
+
+  if (!ecarts.length) return '';
+  return 'À VÉRIFIER — ' + ecarts.join(' ; ');
+}
+
 function montantLigne_(l) {
   return Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) *
                     (1 - (Number(l.rem) || 0) / 100) * 100) / 100;
