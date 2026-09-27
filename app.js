@@ -104,11 +104,14 @@ var DB = (function(){
   function ouvrir(){
     return new Promise(function(res,rej){
       if(db) return res(db);
-      var r = indexedDB.open('devis', 2);
+      var r = indexedDB.open('devis', 3);
       r.onupgradeneeded = function(){
         var d = r.result;
         if(!d.objectStoreNames.contains('devis')) d.createObjectStore('devis',{keyPath:'id'});
         if(!d.objectStoreNames.contains('journal')) d.createObjectStore('journal',{keyPath:'id'});
+        // Les chantiers de l'agent, gardés sur l'appareil pour que le planning
+        // s'affiche et que le pointage fonctionne sans réseau.
+        if(!d.objectStoreNames.contains('chantiers')) d.createObjectStore('chantiers',{keyPath:'id'});
       };
       r.onsuccess = function(){ db=r.result; res(db); };
       r.onerror = function(){ rej(r.error); };
@@ -132,7 +135,10 @@ var DB = (function(){
     suppr: function(id){ return tx('devis','readwrite', function(st){ return st.delete(id); }); },
     jPut:   function(o){  return tx('journal','readwrite', function(st){ return st.put(o); }); },
     jTous:  function(){   return tx('journal','readonly',  function(st){ return st.getAll(); }); },
-    jSuppr: function(id){ return tx('journal','readwrite', function(st){ return st.delete(id); }); }
+    jSuppr: function(id){ return tx('journal','readwrite', function(st){ return st.delete(id); }); },
+    cPut:  function(o){  return tx('chantiers','readwrite', function(st){ return st.put(o); }); },
+    cTous: function(){   return tx('chantiers','readonly',  function(st){ return st.getAll(); }); },
+    cGet:  function(id){ return tx('chantiers','readonly',  function(st){ return st.get(id); }); }
   };
 })();
 
@@ -207,7 +213,11 @@ window.addEventListener('load', function(){
   // Une version antérieure de l'application interrogeait le serveur en GET et
   // rangeait sa réponse comme configuration. Depuis que cette adresse ne répond
   // plus qu'un accusé de service, ce reste doit être écarté.
-  if(CFG && !(CFG.catalogue && CFG.reglages)){ CFG = null; lsj('cfg', null); }
+  // Un agent reçoit une configuration SANS catalogue : c'est voulu, et il ne
+  // faut surtout pas la jeter ici, sinon il repart sans savoir qui il est.
+  if(CFG && !(CFG.reglages && (CFG.catalogue || CFG.role === 'PRESTATAIRE'))){
+    CFG = null; lsj('cfg', null);
+  }
   if(CFG) alignerCompteurs();
   demarrer();
   purger();
@@ -268,7 +278,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v33';
+var VERSION_APP = 'v34';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -334,7 +344,18 @@ function poster(corps, delai){
 }
 
 function rangerConfig(cfg){
-  if(!cfg || !cfg.catalogue || !cfg.reglages) return;
+  if(!cfg || !cfg.reglages) return;
+  // La configuration d'un agent n'a pas de catalogue, et c'est voulu : elle
+  // doit quand même être rangée, sinon il n'a ni nom de société ni texte
+  // d'information.
+  if(cfg.role === 'PRESTATAIRE'){
+    CFG = cfg;
+    lsj('cfg', cfg);
+    $('hSub').textContent = cfg.reglages.societe_nom || 'Chantiers';
+    $('premiere').classList.add('hide');
+    return;
+  }
+  if(!cfg.catalogue) return;
   CFG = cfg;
   lsj('cfg', cfg);
   alignerCompteurs();
@@ -410,7 +431,7 @@ function repondreConf(oui){
 }
 
 /* ====================== NAVIGATION ====================== */
-var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7'];
+var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','eAg1','eAg2'];
 function montrer(id){
   ECRANS.forEach(function(k){ $(k).classList.toggle('hide', k!==id); });
 }
@@ -699,11 +720,11 @@ function verifLocal(nom){
   var v = lsj('verif') || {};
   return v[normNom(nom)] || null;
 }
-function poserVerif(nom, code){
+function poserVerif(nom, code, role){
   return sha256(normNom(nom)+'|'+code+'|'+selAppareil()).then(function(h){
     if(!h) return;
     var v = lsj('verif') || {};
-    v[normNom(nom)] = {nom:nom, h:h};
+    v[normNom(nom)] = {nom:nom, h:h, role:role || 'COMMERCIAL'};
     var cles = Object.keys(v);
     while(cles.length > 3) delete v[cles.shift()];   // trois commerciaux au plus par appareil
     lsj('verif', v);
@@ -759,7 +780,9 @@ function verifierCommercial(btn){
     }
     ECHECS = 0;
     try{ sessionStorage.removeItem('bloqueJusqua'); }catch(e){}
-    session({nom:r.nom, code:code});     // on retient l'orthographe du bureau, pas celle tapée
+    // On retient l'orthographe du bureau, pas celle tapée — et le rôle, qui
+    // décide de tout l'outil qui s'ouvre derrière.
+    session({nom:r.nom, code:code, role:r.role || 'COMMERCIAL'});
     tracer('CONNEXION', navigator.onLine ? 'en ligne' : 'hors connexion');
     $('quiSuisJe').textContent = r.nom;
     $('fCode').value = '';               // le code ne traîne pas à l'écran
@@ -778,8 +801,11 @@ function connexionEnLigne(nom, code){
       if(d && d.refus && /essais/i.test(String(d.erreur||''))) return {ok:false, attente:true, erreur:d.erreur};
       return {ok:false};
     }
+    var role = d.role || (d.config && d.config.role) || 'COMMERCIAL';
     rangerConfig(d.config);
-    return poserVerif(d.nom, code).then(function(){ return {ok:true, nom:d.nom}; });
+    return poserVerif(d.nom, code, role).then(function(){
+      return {ok:true, nom:d.nom, role:role};
+    });
   }, function(){
     return connexionHorsLigne(nom, code);     // réseau capricieux : on retombe sur le local
   });
@@ -789,7 +815,7 @@ function connexionHorsLigne(nom, code){
   var v = verifLocal(nom);
   if(!v) return Promise.resolve({ok:false, premiere:true});
   return sha256(normNom(nom)+'|'+code+'|'+selAppareil()).then(function(h){
-    return (h && h === v.h) ? {ok:true, nom:v.nom} : {ok:false};
+    return (h && h === v.h) ? {ok:true, nom:v.nom, role:v.role || 'COMMERCIAL'} : {ok:false};
   });
 }
 
@@ -934,7 +960,8 @@ function versionInformation(){
 
 function ecranAccord(){
   var t = texteInformation();
-  if(!t){ etape(1); return; }          // rien à afficher : on ne bloque personne
+  // Rien à afficher : on ne bloque personne, mais chacun repart chez soi.
+  if(!t){ if(estAgent()) ecranPlanning(); else etape(1); return; }
   ETAPE = 0;
   montrer('eAccord');
   $('steps').classList.add('hide');
@@ -952,11 +979,13 @@ function accepterInformation(btn){
   try{ sessionStorage.setItem('accord', versionInformation()); }catch(e){}
   tracer('INFORMATION ACCEPTEE', 'version ' + versionInformation()).then(function(){
     if(btn) libere(btn);
+    if(estAgent()){ ecranPlanning(); return synchroniser(false); }
     TYPE = null; PLUS2ANS = null; TAUX = null; majType();
     etape(1);
     synchroniser(false);
   }, function(){
     if(btn) libere(btn);
+    if(estAgent()) return ecranPlanning();
     etape(1);
   });
 }
@@ -965,7 +994,11 @@ function accepterInformation(btn){
 function apresConnexion(){
   var v = null;
   try{ v = sessionStorage.getItem('accord'); }catch(e){}
-  if(v === versionInformation()) { TYPE = null; PLUS2ANS = null; TAUX = null; majType(); return etape(1); }
+  if(v === versionInformation()){
+    if(estAgent()) return ecranPlanning();
+    TYPE = null; PLUS2ANS = null; TAUX = null; majType();
+    return etape(1);
+  }
   ecranAccord();
 }
 
@@ -1720,6 +1753,14 @@ function etatReseau(nb, msg, classe){
 
 var SYNC = false;
 function synchroniser(manuel, btn){
+  // Un agent n'a pas de devis à envoyer : pour lui, se synchroniser veut dire
+  // remonter ses pointages et rafraîchir son planning.
+  if(estAgent()){
+    if(btn) libere(btn);
+    return pousserChantiers().then(function(){
+      if(navigator.onLine) chargerPlanning();
+    });
+  }
   if(SYNC){ if(btn) libere(btn); return; }
   if(btn) occuper(btn, 'Envoi…');
   if(!navigator.onLine){
@@ -2021,6 +2062,353 @@ function dupliquer(id, btn){
     sauverBrouillon();
     etape(2);
     erreur('');
+  });
+}
+
+/* ====================== ESPACE PRESTATAIRE ======================
+   Un agent voit son planning, ouvre une fiche, pointe son arrivée et son
+   départ, coche ce qu'il a fait. Tout fonctionne sans réseau : l'heure est
+   celle de l'appareil, prise au moment du geste, et l'envoi part dès que le
+   réseau revient. C'est le choix assumé — sur un chantier en sous-sol, un
+   pointage impossible serait pire qu'un pointage horodaté par le téléphone. */
+
+var CHANTIER = null;          // le chantier ouvert à l'écran
+
+function estAgent(){
+  var m = session();
+  return !!(m && m.role === 'PRESTATAIRE');
+}
+
+/* ---- le planning ---- */
+
+function ecranPlanning(){
+  ETAPE = 0;
+  fermerDialogues();
+  montrer('eAg1');
+  $('steps').classList.add('hide');
+  $('bar').classList.add('hide');
+  $('bHist').classList.add('hide');
+  $('hTitre').textContent = 'Mon planning';
+  erreur('');
+  window.scrollTo(0,0);
+  peindrePlanning();
+  if(navigator.onLine) chargerPlanning();
+}
+
+function chargerPlanning(btn){
+  var moi = session();
+  if(!moi) return;
+  if(!navigator.onLine){
+    if(btn) libere(btn);
+    return erreur('Hors connexion : voici le planning tel qu\'il était au dernier passage.');
+  }
+  if(btn) occuper(btn, 'Mise à jour…');
+  poster({action:'planning', nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
+    if(btn) libere(btn);
+    if(!d || !d.ok){
+      if(d && d.refus) return reidentifier('Ton accès a changé côté bureau.');
+      return erreur(attenteLisible());
+    }
+    // On garde ce qui n'est pas encore parti : le réseau ne doit jamais
+    // écraser un pointage fait sur le terrain et pas encore remonté.
+    return DB.cTous().then(function(locaux){
+      var attente = {};
+      (locaux || []).forEach(function(c){
+        if(c.aEnvoyer && Object.keys(c.aEnvoyer).length) attente[c.id] = c;
+      });
+      return (d.chantiers || []).reduce(function(p, c){
+        var garde = attente[c.id];
+        if(garde){
+          // Ce que le terrain a saisi et qui n'est pas encore remonté prime sur
+          // ce que le bureau renvoie : sinon un pointage fait en zone blanche
+          // serait effacé par le premier rafraîchissement.
+          c.aEnvoyer = garde.aEnvoyer;
+          ['arrivee','depart','minutes','faites','note','signalement','statut']
+            .forEach(function(k){
+              if(garde[k] !== undefined && garde[k] !== '' && garde[k] !== 0) c[k] = garde[k];
+            });
+        }
+        return p.then(function(){ return DB.cPut(c); });
+      }, Promise.resolve());
+    }).then(function(){
+      erreur('');
+      peindrePlanning();
+      pousserChantiers();
+    });
+  }, function(){
+    if(btn) libere(btn);
+    erreur(attenteLisible());
+  });
+}
+
+function jourLisible(iso){
+  var d = new Date(iso + 'T12:00:00');
+  if(isNaN(d.getTime())) return iso;
+  var a = new Date(); a.setHours(12,0,0,0);
+  var diff = Math.round((d - a) / 86400000);
+  var txt = d.toLocaleDateString('fr-FR', {weekday:'long', day:'numeric', month:'long'});
+  if(diff === 0) return 'Aujourd\'hui — ' + txt;
+  if(diff === 1) return 'Demain — ' + txt;
+  return txt.charAt(0).toUpperCase() + txt.slice(1);
+}
+
+function peindrePlanning(){
+  DB.cTous().then(function(l){
+    l = l || [];
+    var c = $('agListe');
+    if(!l.length){
+      c.innerHTML = '<div class="card"><div class="empty">Aucun chantier pour le moment.<br>' +
+                    'Il apparaîtra ici dès que le bureau te l\'aura affecté.</div></div>';
+      $('agQuand').textContent = '—';
+      return;
+    }
+    var aujourdhui = new Date().toISOString().slice(0,10);
+    var reste = l.filter(function(x){ return x.date >= aujourdhui && x.statut !== 'FAIT'; }).length;
+    $('agQuand').textContent = reste
+      ? reste + ' chantier' + (reste>1?'s':'') + ' à venir'
+      : 'Rien à venir pour l\'instant';
+
+    /* À venir d'abord, du plus proche au plus lointain : c'est ce qu'on ouvre
+       son téléphone pour savoir. Le passé ensuite, du plus récent au plus
+       ancien, pour retrouver le chantier d'hier sans faire défiler un mois. */
+    var futurs = l.filter(function(x){ return x.date >= aujourdhui; })
+                  .sort(function(a,b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    var passes = l.filter(function(x){ return x.date < aujourdhui; })
+                  .sort(function(a,b){ return a.date > b.date ? -1 : (a.date < b.date ? 1 : 0); });
+
+    function carte(x){
+      return '<div class="card" style="cursor:pointer;margin-bottom:10px" onclick="ouvrirChantier(\'' +
+               ech(x.id) + '\')">' +
+               '<div style="display:flex;gap:10px;align-items:baseline">' +
+                 '<b style="flex:1;font-size:16px">' + ech(x.client || 'Chantier') + '</b>' +
+                 badgeChantier(x) +
+               '</div>' +
+               '<div class="mini" style="margin-top:4px">' +
+                 (x.heure ? ech(x.heure) + ' · ' : '') + ech(x.ville || '') +
+               '</div>' +
+               (x.aEnvoyer && Object.keys(x.aEnvoyer).length
+                 ? '<div class="mini" style="color:var(--warn);margin-top:4px">' +
+                   'Pointage en attente d\'envoi</div>' : '') +
+             '</div>';
+    }
+    function bloc(liste){
+      var jour = '', h = '';
+      liste.forEach(function(x){
+        if(x.date !== jour){
+          jour = x.date;
+          h += '<div class="cat">' + ech(jourLisible(jour)) + '</div>';
+        }
+        h += carte(x);
+      });
+      return h;
+    }
+
+    var h = bloc(futurs);
+    if(passes.length){
+      h += '<div class="cat" style="margin-top:18px;opacity:.7">Déjà passés</div>' + bloc(passes);
+    }
+    c.innerHTML = h;
+  });
+}
+
+/* Mêmes pastilles que côté commercial : un seul vocabulaire visuel dans l'outil. */
+function badgeChantier(x){
+  var s = String(x.statut || 'PLANIFIE');
+  if(s === 'FAIT')     return '<span class="vb vb-s">FAIT</span>';
+  if(s === 'PROBLEME') return '<span class="vb vb-x">PROBLÈME</span>';
+  if(s === 'EN COURS') return '<span class="vb vb-r">EN COURS</span>';
+  return '<span class="vb vb-a">À FAIRE</span>';
+}
+
+/* ---- la fiche d'un chantier ---- */
+
+function ouvrirChantier(id){
+  DB.cGet(id).then(function(c){
+    if(!c) return;
+    CHANTIER = c;
+    ETAPE = 0;
+    montrer('eAg2');
+    $('hTitre').textContent = 'Chantier';
+    erreur('');
+    window.scrollTo(0,0);
+    peindreChantier();
+  });
+}
+
+function peindreChantier(){
+  var c = CHANTIER;
+  if(!c) return;
+  $('agClient').textContent = c.client || 'Chantier';
+  $('agQuandCh').textContent = jourLisible(c.date) + (c.heure ? ' · ' + c.heure : '');
+  $('agAdresse').innerHTML = ech(c.adresse || '') +
+    ((c.cp || c.ville) ? '<br>' + ech((c.cp||'') + ' ' + (c.ville||'')) : '');
+
+  var acc = $('agAcces');
+  if(String(c.acces || '').trim()){
+    acc.classList.remove('hide');
+    acc.innerHTML = '<b>Accès au site</b><br>' + ech(c.acces);
+  } else acc.classList.add('hide');
+
+  // pointage
+  var arr = Number(c.arrivee) || 0, dep = Number(c.depart) || 0;
+  $('bAgArrive').classList.toggle('hide', !!arr);
+  $('bAgFini').classList.toggle('hide', !arr || !!dep);
+  var info = $('agPointInfo');
+  if(!arr) info.textContent = 'Appuie en arrivant, puis en partant.';
+  else if(!dep) info.textContent = 'Arrivé à ' + heureLisible(arr) + '.';
+  else info.textContent = 'Arrivé à ' + heureLisible(arr) + ', parti à ' + heureLisible(dep) + '.';
+
+  // La durée s'affiche dès que le départ est pointé, même si elle est courte :
+  // un écran vide après « J'ai terminé » ferait croire que rien n'a marché.
+  var d = $('agDuree');
+  d.classList.toggle('hide', !(arr && dep));
+  if(arr && dep){
+    var mn = Number(c.minutes);
+    if(!isFinite(mn) || mn < 0) mn = Math.round((dep - arr)/60000);
+    d.textContent = 'Durée sur place : ' + dureeLisible(mn);
+  }
+
+  // tâches
+  var faites = c.faites || [];
+  var t = $('agTaches');
+  if(!(c.taches || []).length){
+    t.innerHTML = '<div class="empty">Aucun détail transmis pour ce chantier.</div>';
+  } else {
+    t.innerHTML = c.taches.map(function(x, i){
+      var cle = x.ref || ('i' + i);
+      var coche = faites.indexOf(cle) >= 0;
+      return '<label class="piece" style="display:flex;gap:12px;align-items:flex-start;' +
+               'padding:12px 0;border-bottom:1px solid var(--line)">' +
+               '<input type="checkbox" style="width:26px;height:26px;flex:none;margin-top:2px"' +
+                 (coche ? ' checked' : '') +
+                 ' onchange="cocherTache(\'' + ech(cle) + '\', this.checked)">' +
+               '<span style="flex:1">' +
+                 '<b style="display:block;font-size:15.5px">' + ech(x.designation) + '</b>' +
+                 (x.detail ? '<span class="mini" style="display:block">' +
+                             ech(x.detail) + '</span>' : '') +
+                 '<span class="mini" style="display:block;margin-top:2px">' +
+                   nb(x.qte) + ' ' + ech(x.unite || '') + '</span>' +
+               '</span></label>';
+    }).join('');
+  }
+
+  $('agNote').value = c.note || '';
+  $('bAgNote').classList.add('hide');
+
+  var sg = $('agSignal');
+  if(String(c.signalement || '').trim()){
+    sg.classList.remove('hide');
+    sg.textContent = 'Problème signalé : ' + c.signalement;
+  } else sg.classList.add('hide');
+}
+
+function heureLisible(t){
+  var d = new Date(Number(t));
+  return isNaN(d.getTime()) ? '—'
+       : ('0'+d.getHours()).slice(-2) + 'h' + ('0'+d.getMinutes()).slice(-2);
+}
+function dureeLisible(mn){
+  var h = Math.floor(mn/60), m = mn%60;
+  return (h ? h + ' h ' : '') + ('0'+m).slice(-2) + ' min';
+}
+
+/* ---- ce que l'agent renvoie ---- */
+
+function enAttente(c, champs){
+  c.aEnvoyer = c.aEnvoyer || {};
+  for(var k in champs){ if(champs.hasOwnProperty(k)) c.aEnvoyer[k] = champs[k]; }
+  return DB.cPut(c).then(function(){ pousserChantiers(); });
+}
+
+function pointer(quoi, btn){
+  var c = CHANTIER;
+  if(!c) return;
+  var t = Date.now();
+  if(quoi === 'arrivee'){
+    if(c.arrivee) return;
+    c.arrivee = t; c.statut = 'EN COURS';
+  } else {
+    if(!c.arrivee || c.depart) return;
+    c.depart = t; c.statut = 'FAIT';
+    c.minutes = Math.max(0, Math.round((t - c.arrivee)/60000));
+  }
+  vibrer(18);
+  var v = {}; v[quoi] = t;
+  enAttente(c, v).then(function(){
+    tracer(quoi === 'arrivee' ? 'CHANTIER ARRIVEE' : 'CHANTIER DEPART',
+           c.id + ' · ' + (c.client || ''), c.numero || '');
+    peindreChantier();
+  });
+}
+
+function cocherTache(cle, on){
+  var c = CHANTIER;
+  if(!c) return;
+  c.faites = c.faites || [];
+  var i = c.faites.indexOf(cle);
+  if(on && i < 0) c.faites.push(cle);
+  if(!on && i >= 0) c.faites.splice(i, 1);
+  enAttente(c, {faites: c.faites});
+}
+
+function noteChantierModifiee(){
+  var c = CHANTIER;
+  if(!c) return;
+  $('bAgNote').classList.toggle('hide', $('agNote').value === (c.note || ''));
+}
+
+function enregistrerNoteChantier(btn){
+  var c = CHANTIER;
+  if(!c) return;
+  c.note = $('agNote').value;
+  if(btn) occuper(btn, 'Enregistrement…');
+  enAttente(c, {note: c.note}).then(function(){
+    if(btn) libere(btn);
+    $('bAgNote').classList.add('hide');
+  });
+}
+
+function ouvrirSignalement(){
+  var c = CHANTIER;
+  if(!c) return;
+  demander('Signaler un problème ?',
+           'Le bureau sera prévenu et le chantier sera marqué à regarder. ' +
+           'Écris ce qui s\'est passé dans « Un mot sur le chantier » avant de valider.',
+           'Signaler').then(function(oui){
+    if(!oui) return;
+    var txt = ($('agNote').value || '').trim() || 'Problème signalé sans détail';
+    c.signalement = txt;
+    c.note = $('agNote').value;
+    if(c.statut !== 'FAIT') c.statut = 'PROBLEME';
+    enAttente(c, {signalement: txt, note: c.note}).then(function(){
+      tracer('CHANTIER SIGNALEMENT', txt.slice(0,120), c.numero || '');
+      peindreChantier();
+    });
+  });
+}
+
+/* ---- l'envoi différé ---- */
+
+function pousserChantiers(){
+  var moi = session();
+  if(!moi || !navigator.onLine) return Promise.resolve();
+  return DB.cTous().then(function(l){
+    var att = (l || []).filter(function(c){
+      return c.aEnvoyer && Object.keys(c.aEnvoyer).length;
+    });
+    if(!att.length) return;
+    return att.reduce(function(p, c){
+      return p.then(function(){
+        var corps = {action:'chantier', nom:moi.nom, code:moi.code,
+                     id:c.id, appareil:APPAREIL};
+        for(var k in c.aEnvoyer){ if(c.aEnvoyer.hasOwnProperty(k)) corps[k] = c.aEnvoyer[k]; }
+        return poster(corps).then(function(d){
+          if(!d || !d.ok) return;          // on réessaiera : rien n'est perdu
+          c.aEnvoyer = {};
+          return DB.cPut(c);
+        }, function(){ /* réseau : on garde pour plus tard */ });
+      });
+    }, Promise.resolve()).then(function(){ peindrePlanning(); });
   });
 }
 
