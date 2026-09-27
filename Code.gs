@@ -1000,6 +1000,22 @@ function majAFacturer_() {
   var ss = SpreadsheetApp.getActive();
   var sh = ss.getSheetByName(SH.FACTURER) || creerOnglet_(ss, SH.FACTURER, ENTETES_FACTURER_);
 
+  // L'onglet est entièrement reconstruit à chaque passage : sa ligne d'en-têtes
+  // doit donc suivre le script, sinon une colonne ajoutée décalerait toutes les
+  // valeurs écrites après elle. On la réécrit telle qu'elle doit être.
+  var enTete = sh.getLastColumn() > 0
+    ? sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim(); })
+    : [];
+  if (enTete.join('|') !== ENTETES_FACTURER_.join('|')) {
+    if (sh.getLastColumn() > ENTETES_FACTURER_.length) {
+      sh.getRange(1, ENTETES_FACTURER_.length + 1, 1, sh.getLastColumn() - ENTETES_FACTURER_.length)
+        .clearContent().setBackground(null);
+    }
+    sh.getRange(1, 1, 1, ENTETES_FACTURER_.length).setValues([ENTETES_FACTURER_])
+      .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+    sh.setFrozenRows(1);
+  }
+
   // mémoriser les cases déjà cochées avant de réécrire
   var deja = {};
   if (sh.getLastRow() > 1) {
