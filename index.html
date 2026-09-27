@@ -381,6 +381,13 @@
     </div>
     <button class="btn" onclick="partagerDernier(this)">Imprimer / envoyer le PDF</button>
 
+    <!-- Le devis est sorti, le client l'a lu : c'est le moment de le faire
+         signer. Le PDF est alors refait avec la signature dedans. -->
+    <div class="card" style="margin-top:14px">
+      <h2>Signature du client</h2>
+      <div id="blocSignature"></div>
+    </div>
+
     <div class="card" style="margin-top:14px">
       <h2>Résultat du rendez-vous</h2>
       <div class="mini" id="verdictAide" style="margin-top:0">À renseigner sur place, une fois le devis remis
@@ -481,6 +488,14 @@
     </div>
     <button class="btn sec sm" onclick="effacerTrait()">Effacer</button>
   </div>
+  <!-- Quand la signature est recueillie après coup, le nom du signataire n'a
+       pas encore été saisi : il se demande ici, devant le client. -->
+  <div id="soNomChamp" class="hide" style="margin-bottom:8px">
+    <label style="margin-top:0">Nom du signataire</label>
+    <input id="soSignataire" placeholder="Nom et qualité">
+  </div>
+  <div class="mini" style="margin:0 0 6px">En signant, le client accepte le devis :
+    la mention « Bon pour accord », son nom et l'heure s'impriment sous sa signature.</div>
   <canvas id="sig"></canvas>
   <div class="so-f">
     <button class="btn sec" style="flex:1" onclick="fermerSignature(false)">Annuler</button>
@@ -582,11 +597,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=34"></script>
-<script src="jspdf.umd.min.js?v=34"></script>
-<script src="police.js?v=34"></script>
-<script src="logo.js?v=34"></script>
-<script src="pdf.js?v=34"></script>
-<script src="app.js?v=34"></script>
+<script src="config.js?v=35"></script>
+<script src="jspdf.umd.min.js?v=35"></script>
+<script src="police.js?v=35"></script>
+<script src="logo.js?v=35"></script>
+<script src="pdf.js?v=35"></script>
+<script src="app.js?v=35"></script>
 </body>
 </html>
