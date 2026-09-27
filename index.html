@@ -71,7 +71,9 @@
   .ligne .g input,.ligne .g select{padding:9px;font-size:15px}
   .ligne .ft{display:flex;justify-content:space-between;align-items:center;margin-top:10px;
              border-top:1px dashed var(--line);padding-top:8px;font-size:14px}
-  .x{background:none;color:var(--danger);font-size:13px;padding:4px 6px}
+  .x{background:none;color:var(--danger);font-size:13.5px;padding:9px 10px;min-height:38px;
+     border-radius:8px;flex:0 0 auto}
+  .x:active{background:#FBE9E9}
   .chip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#E4EDF7;color:#004C92;margin-top:4px}
   .chip.p{background:#EEF1F5;color:#475569}
   .empty{text-align:center;color:var(--mut);font-size:14px;padding:22px 10px}
@@ -125,6 +127,12 @@
   .choix.on{border-color:var(--acc);background:#EAF2FB;box-shadow:inset 0 0 0 1px var(--acc)}
   .choix.on b{color:var(--acc-d)}
   .choix.on b::after{content:' ✓';color:var(--acc)}
+  #dlgConf{border:0;border-radius:14px;padding:0;max-width:330px;width:calc(100% - 32px);
+           box-shadow:0 12px 40px rgba(0,30,70,.25)}
+  #dlgConf::backdrop{background:rgba(10,25,45,.45)}
+  #dlgConf .conf{padding:20px}
+  #dlgConf h2{margin:0 0 8px;font-size:17px}
+  #dlgConf .mini{margin-top:0}
   .vb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.3px;border-radius:5px;
       padding:2px 6px;margin-right:6px;vertical-align:1px}
   .vb-s{background:#E3F4E8;color:#14612F}
@@ -341,8 +349,8 @@
 
     <div class="card" style="margin-top:14px">
       <h2>Résultat du rendez-vous</h2>
-      <div class="mini" style="margin-top:0">À renseigner sur place, une fois le devis remis au client.
-        Tu pourras le corriger plus tard depuis « Mes devis ».</div>
+      <div class="mini" id="verdictAide" style="margin-top:0">À renseigner sur place, une fois le devis remis
+        au client. Tu pourras le corriger plus tard depuis « Mes devis ».</div>
       <div id="verdictChoix">
         <button class="choix" onclick="verdict('SIGNE')">
           <b>Signé sur place</b><span>Tu photographies ensuite le devis signé.</span></button>
@@ -443,6 +451,17 @@
     <button class="btn sec sm" onclick="fermerCatalogue()">Fermer</button>
   </div>
   <div class="dlg-b" id="dlgB"></div>
+</dialog>
+
+<!-- CONFIRMATION — remplace les fenêtres du navigateur, qui n'apparaissent pas
+     dans toutes les applications et laissent alors le bouton sans effet -->
+<dialog id="dlgConf">
+  <div class="conf">
+    <h2 id="confTitre">Confirmer</h2>
+    <div id="confTexte" class="mini" style="margin:0 0 16px"></div>
+    <button class="btn" id="confOui" onclick="repondreConf(true)">Oui</button>
+    <button class="btn sec" style="margin-top:10px" onclick="repondreConf(false)">Annuler</button>
+  </div>
 </dialog>
 
 <!-- CALCULETTE DE SURFACE -->
