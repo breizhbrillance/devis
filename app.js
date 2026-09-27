@@ -268,7 +268,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v30';
+var VERSION_APP = 'v31';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1169,6 +1169,48 @@ function remiseMax(){
   return n > 100 ? 100 : n;
 }
 
+/* La remise s'écrit « 5 » ou « 5 % », au choix, et ce choix a un sens.
+   Le signe % est un interrupteur discret pour le commercial : avec le signe,
+   le rappel du plafond reste invisible ; sans le signe, il s'affiche sous le
+   champ et peut être montré au client pour appuyer la négociation.
+   Le client ne voit qu'un écran ou rien ; il ne peut pas deviner la manœuvre. */
+function lireRemise(txt){
+  var s = String(txt == null ? '' : txt).trim();
+  var muet = s.indexOf('%') >= 0;
+  var n = Number(s.replace(/%/g, '').replace(',', '.').trim());
+  if(!isFinite(n) || n < 0) n = 0;
+  return { valeur: n, muet: muet };
+}
+
+/* Le maximum dépend du chantier, pas du classeur : 10 % est le plafond absolu
+   de l'entreprise, mais sur un chantier serré le maximum réel est plus bas, et
+   c'est le commercial qui le sait. Le message est donc son affirmation à lui,
+   déclenchée par l'absence du signe %. Il s'affiche dès qu'une remise est
+   accordée ; à zéro il n'aurait aucun sens. */
+function montrerPlafond(l){
+  return (Number(l.rem) || 0) > 0 && !l.remMuet;
+}
+
+function peindrePlafond(i){
+  var e = $('plaf' + i);
+  if(e) e.classList.toggle('hide', !montrerPlafond(LIGNES[i]));
+}
+
+function setRemise(i, txt, el){
+  var r = lireRemise(txt), m = remiseMax();
+  var borne = r.valeur > m ? m : r.valeur;
+  LIGNES[i].rem = borne;
+  LIGNES[i].remMuet = r.muet;
+  // On ne réécrit le champ que si la valeur a vraiment été ramenée au plafond :
+  // sinon on empêcherait de taper « 0,5 » ou « 5 » avant son signe.
+  if(el && borne !== r.valeur) el.value = borne + (r.muet ? ' %' : '');
+  var t = $('tl' + i);
+  if(t) t.textContent = eur(montantL(LIGNES[i]));
+  peindrePlafond(i);
+  majBarre();
+  sauverBrouillon();
+}
+
 /* ====================== LIGNES ====================== */
 function rendreLignes(){
   var c = $('lignes');
@@ -1198,7 +1240,12 @@ function rendreLignes(){
       '</div>'+
       '<div class="g">'+
         (rMax > 0
-          ? '<div><label>Remise % (max '+nb(rMax)+')</label><input type="number" inputmode="decimal" step="0.5" min="0" max="'+rMax+'" value="'+(l.rem||0)+'" oninput="setL('+i+',\'rem\',this.value,this)"></div>'
+          ? '<div><label>Remise % (max '+nb(rMax)+')</label>'+
+              '<input type="text" inputmode="decimal" autocomplete="off" value="'+
+                (l.rem||0)+(l.remMuet?' %':'')+'" oninput="setRemise('+i+',this.value,this)">'+
+              '<div id="plaf'+i+'" class="plafond'+(montrerPlafond(l)?'':' hide')+
+                '">Remise maximale accordée</div>'+
+            '</div>'
           : '<div><label>Remise</label><div class="fige">non autorisée</div></div>')+
         '<div><label>TVA %</label><div class="fige">'+nb(l.tva)+' %</div></div>'+
         '<div><label>Poste</label><input value="'+ech(l.categorie)+'" placeholder="Poste" oninput="setL('+i+',\'categorie\',this.value)"></div>'+
