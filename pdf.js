@@ -46,6 +46,13 @@ var PDF = (function () {
     d = new Date(d);
     return 'Le ' + JOURS[d.getDay()] + ' ' + d.getDate() + ' ' + MOIS[d.getMonth()] + ' ' + d.getFullYear();
   }
+  /* Une signature recueillie sur l'écran vaut par le moment où elle est
+     donnée : la date seule ne suffit pas, l'heure fait partie de la preuve. */
+  function horodate(d) {
+    d = new Date(d);
+    if (isNaN(d.getTime())) return '';
+    return dateFr(d) + ' à ' + ('0' + d.getHours()).slice(-2) + 'h' + ('0' + d.getMinutes()).slice(-2);
+  }
   function txt(s) { return String(s == null ? '' : s).replace(/ /g, ' '); }
 
   function montantLigne(l) {
@@ -350,8 +357,12 @@ var PDF = (function () {
     police('normal', 7, GRIS);
     var mentionSig = txt(reg.mention_manuscrite).trim() || 'Bon pour accord';
     if (devis.signature) {
+      // La mention est portée par le document : le client ne la recopie pas,
+      // il l'accepte en signant. Ce qui doit apparaître en revanche, c'est le
+      // moment exact de la signature — c'est lui qui date l'accord, et il peut
+      // être postérieur à l'établissement du devis.
       doc.text('« ' + mentionSig + ' » — ' + txt(devis.signataire || c.contact || ''), xS + 3, y + 4.8);
-      doc.text('Le ' + dateFr(devis.date), xS + 3, y + 8.2);
+      doc.text('Signé le ' + horodate(devis.signeLe || devis.date), xS + 3, y + 8.2);
       try { doc.addImage(devis.signature, 'PNG', xS + 3, y + 9.6, wS - 6, hS - 12.6, undefined, 'FAST'); } catch (e) {}
     } else {
       doc.text('Date, signature du client précédée de la mention', xS + 3, y + 4.8);
