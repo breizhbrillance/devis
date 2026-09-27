@@ -278,7 +278,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v34';
+var VERSION_APP = 'v35';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -539,7 +539,7 @@ function enregistrerVerdict(btn){
       var f = $('verdictFait');
       if(f && f.scrollIntoView) f.scrollIntoView({block:'center'});
       synchroniser(false);
-      if(t === 'SIGNE') ouvrirPhotos(e.id, 'SIGNE');
+      if(t === 'SIGNE' && !estSigne(e)) ouvrirPhotos(e.id, 'SIGNE');
     });
   }, function(){ if(btn) libere(btn); });
 }
@@ -579,6 +579,7 @@ function jjmmaa(iso){
 function peindreVerdict(){
   var f = $('verdictFait'), c = $('verdictChoix');
   if(!f || !c) return;
+  peindreBlocSignature();
   var champ = $('verdictNote');
   if(champ && document.activeElement !== champ) champ.value = (DERNIER && DERNIER.note) || '';
   noteModifiee();
@@ -601,6 +602,29 @@ function peindreVerdict(){
   $('verdictRelance').classList.add('hide');
   $('verdictMotif').classList.add('hide');
 }
+/* Le bloc « Faire signer le client » de l'écran de fin : un bouton tant que
+   le devis n'est pas signé, l'horodatage une fois qu'il l'est. */
+function peindreBlocSignature(){
+  var z = $('blocSignature');
+  if(!z) return;
+  if(!DERNIER){ z.classList.add('hide'); return; }
+  z.classList.remove('hide');
+  if(estSigne(DERNIER)){
+    z.innerHTML = '<div class="ok" style="text-align:left">' +
+      '<b>Devis signé par le client</b><div class="mini" style="color:inherit;opacity:.85">' +
+      ech(signeLisible(DERNIER)) + ' La signature est dans le PDF' +
+      (DERNIER.statut === 'envoye' ? ', déjà remonté au bureau.'
+                                   : ' ; il repart au bureau au prochain envoi.') +
+      '</div><button class="btn sec sm" style="margin-top:10px" onclick="partagerDernier(this)">' +
+      'Envoyer le devis signé</button></div>';
+    return;
+  }
+  z.innerHTML = '<button class="btn" onclick="ouvrirSignatureDevis(\'' + ech(DERNIER.id) +
+    '\', this)">Faire signer le client</button>' +
+    '<div class="mini">Le client signe sur le téléphone. Le PDF est refait avec sa ' +
+    'signature et remplace le précédent — pas de photo du papier à prendre.</div>';
+}
+
 function modifierVerdict(){
   $('verdictFait').classList.add('hide');
   var a = $('verdictAide'); if(a) a.classList.remove('hide');
@@ -1390,16 +1414,112 @@ function signatureValide(){ return !!SIG.image; }
 
 /* Signature en plein écran : le téléphone est tendu au client. */
 function ouvrirSignature(){
+  SIG_APRES = null;
   $('soNom').textContent = val('fSignataire') || (lireClient().contact || lireClient().societe || '');
+  $('soNomChamp').classList.add('hide');
   $('sigOverlay').classList.remove('hide');
   setTimeout(function(){ initSignature(); if(SIG.image) redessiner(SIG.image); }, 30);
 }
 function fermerSignature(valider){
+  if(SIG_APRES) return fermerSignatureApres(valider);
   if(valider){
     SIG.image = SIG.vide ? '' : SIG.cv.toDataURL('image/png');
   }
   $('sigOverlay').classList.add('hide');
   majApercuSignature();
+}
+
+/* ====================== FAIRE SIGNER APRÈS COUP ======================
+   Le devis est sorti, imprimé, lu par le client — et c'est là qu'il signe.
+   L'application refabrique alors le PDF avec la signature dedans, remplace
+   celui qu'elle gardait, et le renvoie au bureau : le devis signé est
+   dématérialisé, sans photo de papier.
+
+   Le PDF est reconstruit à partir du devis enregistré, jamais retouché :
+   mêmes lignes, mêmes totaux, même numéro. Seuls s'ajoutent la signature,
+   le nom du signataire et l'heure. */
+var SIG_APRES = null;        // le devis en cours de signature, hors saisie
+
+function ouvrirSignatureDevis(id, btn){
+  if(btn) occuper(btn, '…');
+  DB.get(id).then(function(e){
+    if(btn) libere(btn);
+    if(!e) return;
+    if((e.devis||{}).signature)
+      return erreur('Ce devis est déjà signé. Pour recommencer, refais un devis.');
+    erreur('');
+    SIG_APRES = e;
+    var c = (e.devis||{}).client || {};
+    $('soNom').textContent = 'Devis ' + e.numero;
+    var champ = $('soNomChamp');
+    champ.classList.remove('hide');
+    $('soSignataire').value = (e.devis||{}).signataire || c.contact || c.societe || '';
+    SIG.image = '';
+    $('sigOverlay').classList.remove('hide');
+    setTimeout(function(){ initSignature(); }, 30);
+  }, function(){ if(btn) libere(btn); });
+}
+
+function fermerSignatureApres(valider){
+  var e = SIG_APRES;
+  var image = (valider && !SIG.vide) ? SIG.cv.toDataURL('image/png') : '';
+  $('sigOverlay').classList.add('hide');
+  $('soNomChamp').classList.add('hide');
+  SIG_APRES = null;
+  SIG.image = '';
+  if(!valider || !e) return;
+  if(!image) return erreur('Rien n\'a été tracé : le devis n\'a pas été signé.');
+  var nom = val('soSignataire');
+  if(!nom){
+    var c = (e.devis||{}).client || {};
+    nom = c.contact || c.societe || '';
+  }
+  appliquerSignature(e.id, image, nom);
+}
+
+function appliquerSignature(id, image, nom){
+  return DB.get(id).then(function(e){
+    if(!e) return;
+    e.devis.signature = image;
+    e.devis.signataire = nom;
+    e.devis.signeLe = Date.now();
+    try{
+      e.pdf = PDF.base64(e.devis, CFG.reglages);       // le PDF signé remplace l'autre
+      e.nomFichier = PDF.nomFichier(e.devis);
+    }catch(err){
+      tracer('ERREUR PDF', String(err && err.message || err), e.numero);
+      return erreur('Le devis signé n\'a pas pu être refabriqué. La signature n\'a pas été enregistrée.');
+    }
+    // Un client qui signe a accepté : le résultat n'a plus à être demandé.
+    e.verdict = 'SIGNE'; e.motif = ''; e.relance = '';
+    e.verdictLe = Date.now(); e.verdictEnvoye = false;
+    e.statut = 'attente';                              // le PDF signé repart au bureau
+    return DB.put(e).then(function(){
+      DERNIER = e;
+      var c = (e.devis||{}).client || {};
+      tracer('SIGNATURE CLIENT', nom || c.contact || c.societe || '', e.numero);
+      tracer('RESULTAT SIGNE', 'signé à l\'écran', e.numero);
+      erreur('');
+      if(ETAPE === 5){
+        // Le devis signé n'est plus celui que le bureau a reçu : l'écran doit
+        // le dire tout de suite, sans attendre la fin de l'envoi.
+        $('okEtat').textContent = attenteLisible(e);
+        peindreVerdict();
+      }
+      if(ETAPE === 6) rendreHistorique();
+      synchroniser(false);
+    });
+  });
+}
+
+/* L'état de la signature, sur l'écran de fin comme dans « Mes devis ». */
+function estSigne(e){ return !!(e && (e.devis||{}).signature); }
+function signeLisible(e){
+  var t = (e.devis||{}).signeLe;
+  if(!t) return 'Signé par le client.';
+  var d = new Date(t);
+  return 'Signé le ' + jjmmaa(d.toISOString().slice(0,10)) +
+         ' à ' + ('0'+d.getHours()).slice(-2) + 'h' + ('0'+d.getMinutes()).slice(-2) + '.';
 }
 function majApercuSignature(){
   var f = !!SIG.image;
@@ -1894,6 +2014,7 @@ function majEtatDernier(){
     $('okEtat').textContent = e.statut==='envoye'
       ? 'Envoyé au bureau' + (e.envoyerClient ? ' et transmis au client.' : '.')
       : attenteLisible(e);
+    peindreBlocSignature();       // « signé, pas encore remonté » ne doit pas rester affiché
   });
 }
 
@@ -1971,6 +2092,8 @@ function rendreHistorique(){
         '<button class="btn sec sm" onclick="ouvrirVerdict(\''+e.id+'\')">Résultat</button>'+
         '<button class="btn sec sm" onclick="ouvrirPhotos(\''+e.id+'\', \''+
           (e.verdict==='SIGNE' && !sig ? 'SIGNE' : 'SITE')+'\')">Photos'+(ph?' ('+ph+')':'')+'</button>'+
+        (estSigne(e) ? '' :
+          '<button class="btn sec sm" onclick="ouvrirSignatureDevis(\''+e.id+'\', this)">Signer</button>')+
         '<button class="btn sec sm" onclick="dupliquer(\''+e.id+'\', this)">Dupliquer</button>'+
         (e.statut==='envoye' ? '' :
           '<button class="btn sec sm" onclick="renvoyer(\''+e.id+'\', this)">Renvoyer</button>')+
@@ -1998,6 +2121,9 @@ function detailEtat(e){
     return '<br>' + (dû ? 'À relancer maintenant (prévu le ' : 'Relance prévue le ') +
            jjmmaa(e.relance) + (dû ? ')' : '');
   }
+  if(e.verdict === 'SIGNE' && estSigne(e)) return '<br>' + ech(signeLisible(e));
+  // La photo du papier n'a de sens que pour un devis signé sur papier : celui
+  // qui a été signé à l'écran porte déjà sa preuve dans son PDF.
   if(e.verdict === 'SIGNE' && !(e.photos||[]).some(function(p){ return p.t === 'SIGNE'; }))
     return '<br>Photo du devis signé manquante';
   return '';
@@ -2013,7 +2139,8 @@ function peindreRappels(l){
   var rel = l.filter(function(e){ return e.verdict === 'RELANCE' && e.relance && e.relance <= auj; });
   var sans = l.filter(function(e){ return !e.verdict && Number(e.cree||0) < hier; });
   var sig = l.filter(function(e){
-    return e.verdict === 'SIGNE' && !(e.photos||[]).some(function(p){ return p.t === 'SIGNE'; });
+    return e.verdict === 'SIGNE' && !estSigne(e) &&
+           !(e.photos||[]).some(function(p){ return p.t === 'SIGNE'; });
   });
   var t = [];
   if(rel.length)  t.push(rel.length + ' client' + (rel.length>1?'s à relancer':' à relancer') + ' aujourd\'hui.');
