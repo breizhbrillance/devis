@@ -268,7 +268,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v32';
+var VERSION_APP = 'v33';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1240,8 +1240,13 @@ function rendreLignes(){
       '</div>'+
       '<div class="g">'+
         (rMax > 0
-          ? '<div><label>Remise % (max '+nb(rMax)+')</label>'+
-              '<input type="text" inputmode="decimal" autocomplete="off" value="'+
+          // Pas d'inputmode : « decimal » ouvre le pavé numérique du téléphone,
+          // où le signe % n'existe pas — le commercial ne pourrait pas le taper.
+          // Et pas de plafond dans l'étiquette : cet écran peut être montré au
+          // client, il n'a pas à y lire jusqu'où l'entreprise peut descendre.
+          ? '<div><label>Remise %</label>'+
+              '<input type="text" id="rem'+i+'" autocomplete="off" autocapitalize="off" '+
+                'autocorrect="off" spellcheck="false" value="'+
                 (l.rem||0)+(l.remMuet?' %':'')+'" oninput="setRemise('+i+',this.value,this)"></div>'
           : '<div><label>Remise</label><div class="fige">non autorisée</div></div>')+
         '<div><label>TVA %</label><div class="fige">'+nb(l.tva)+' %</div></div>'+
