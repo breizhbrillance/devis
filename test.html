@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Test clavier">
+<meta name="theme-color" content="#004C92">
 <title>Test clavier</title>
 <style>
   *{box-sizing:border-box}
@@ -127,7 +131,14 @@ if(window.visualViewport){
 
 window.addEventListener('load', function(){
   H0 = hauteur();
-  log('mode : ' + (window.navigator.standalone ? 'ECRAN D ACCUEIL' : 'navigateur'));
+  var seul = (window.navigator.standalone === true) ||
+             (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  if(seul){
+    dire('Mode ECRAN D ACCUEIL. C est le bon test : touche les champs.', 'at');
+  } else {
+    dire('Mode NAVIGATEUR (Safari). Ce test ne prouve rien : ajoute la page a l ecran d accueil et rouvre-la depuis l icone.', 'ko');
+  }
+  log('mode : ' + (seul ? 'ECRAN D ACCUEIL' : 'navigateur'));
   log('hauteur au repos : ' + H0);
   log('ecran : ' + screen.width + 'x' + screen.height + ', fenetre : ' + innerWidth + 'x' + innerHeight);
   log('visualViewport : ' + (window.visualViewport ? 'oui' : 'non'));
