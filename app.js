@@ -215,7 +215,7 @@ window.addEventListener('load', function(){
   // plus qu'un accusé de service, ce reste doit être écarté.
   // Un agent reçoit une configuration SANS catalogue : c'est voulu, et il ne
   // faut surtout pas la jeter ici, sinon il repart sans savoir qui il est.
-  if(CFG && !(CFG.reglages && (CFG.catalogue || CFG.role === 'PRESTATAIRE'))){
+  if(CFG && !(CFG.reglages && (CFG.catalogue || CFG.role === 'PRESTATAIRE' || CFG.role === 'ADMIN'))){
     CFG = null; lsj('cfg', null);
   }
   if(CFG) alignerCompteurs();
@@ -278,7 +278,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v36';
+var VERSION_APP = 'v37';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -348,7 +348,7 @@ function rangerConfig(cfg){
   // La configuration d'un agent n'a pas de catalogue, et c'est voulu : elle
   // doit quand même être rangée, sinon il n'a ni nom de société ni texte
   // d'information.
-  if(cfg.role === 'PRESTATAIRE'){
+  if(cfg.role === 'PRESTATAIRE' || cfg.role === 'ADMIN'){
     CFG = cfg;
     lsj('cfg', cfg);
     $('hSub').textContent = cfg.reglages.societe_nom || 'Chantiers';
@@ -432,7 +432,7 @@ function repondreConf(oui){
 }
 
 /* ====================== NAVIGATION ====================== */
-var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','eAg1','eAg2'];
+var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','eAg1','eAg2','eAd1','eAd2'];
 function montrer(id){
   ECRANS.forEach(function(k){ $(k).classList.toggle('hide', k!==id); });
 }
@@ -986,7 +986,7 @@ function versionInformation(){
 function ecranAccord(){
   var t = texteInformation();
   // Rien à afficher : on ne bloque personne, mais chacun repart chez soi.
-  if(!t){ if(estAgent()) ecranPlanning(); else etape(1); return; }
+  if(!t){ if(estAdmin()) ecranAdmin(); else if(estAgent()) ecranPlanning(); else etape(1); return; }
   ETAPE = 0;
   montrer('eAccord');
   $('steps').classList.add('hide');
@@ -1004,12 +1004,14 @@ function accepterInformation(btn){
   try{ sessionStorage.setItem('accord', versionInformation()); }catch(e){}
   tracer('INFORMATION ACCEPTEE', 'version ' + versionInformation()).then(function(){
     if(btn) libere(btn);
+    if(estAdmin()){ ecranAdmin(); return chargerTableau(); }
     if(estAgent()){ ecranPlanning(); return synchroniser(false); }
     TYPE = null; PLUS2ANS = null; TAUX = null; majType();
     etape(1);
     synchroniser(false);
   }, function(){
     if(btn) libere(btn);
+    if(estAdmin()) return ecranAdmin();
     if(estAgent()) return ecranPlanning();
     etape(1);
   });
@@ -1020,6 +1022,7 @@ function apresConnexion(){
   var v = null;
   try{ v = sessionStorage.getItem('accord'); }catch(e){}
   if(v === versionInformation()){
+    if(estAdmin()) return ecranAdmin();
     if(estAgent()) return ecranPlanning();
     TYPE = null; PLUS2ANS = null; TAUX = null; majType();
     return etape(1);
@@ -1875,10 +1878,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=36';
+    sc.src = 'visionneuse.js?v=37';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=36';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=37';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -1995,6 +1998,13 @@ var SYNC = false;
 function synchroniser(manuel, btn){
   // Un agent n'a pas de devis à envoyer : pour lui, se synchroniser veut dire
   // remonter ses pointages et rafraîchir son planning.
+  if(estAdmin()){
+    // Un admin n'a rien à déposer : se synchroniser, pour lui, c'est
+    // rafraîchir ce qu'il regarde.
+    if(btn) libere(btn);
+    envoyerJournal();
+    return navigator.onLine ? chargerTableau() : Promise.resolve();
+  }
   if(estAgent()){
     if(btn) libere(btn);
     return pousserChantiers().then(function(){
@@ -2310,6 +2320,366 @@ function dupliquer(id, btn){
     etape(2);
     erreur('');
   });
+}
+
+/* ====================== ESPACE D'ADMINISTRATION ======================
+   Ce que font les autres, vu d'en haut : les devis de chaque commercial, les
+   chantiers de chaque prestataire, les chiffres. Tout arrive en un seul appel
+   et se garde sur l'appareil : sans réseau, l'écran reste lisible et dit
+   clairement de quand il date — un chiffre périmé qui s'annonce vaut mieux
+   qu'un écran vide. */
+var TABLEAU = null;           // le dernier tableau reçu du bureau
+var AD_ONGLET = 'devis';
+var AD_QUI = '';              // filtre : un nom, ou vide pour tout le monde
+var AD_FICHE = null;          // la fiche ouverte
+var AD_PRESTA = '';           // le prestataire choisi dans la planification
+
+function estAdmin(){ var m = session(); return !!(m && m.role === 'ADMIN'); }
+
+function ecranAdmin(){
+  ETAPE = 0;
+  fermerDialogues();
+  montrer('eAd1');
+  $('steps').classList.add('hide');
+  $('bar').classList.add('hide');
+  $('bHist').classList.add('hide');
+  $('hTitre').textContent = 'Le tableau';
+  erreur('');
+  window.scrollTo(0,0);
+  if(!TABLEAU) TABLEAU = lsj('tableau');
+  peindreTableau();
+  if(navigator.onLine) chargerTableau();
+}
+
+function chargerTableau(btn){
+  var moi = session();
+  if(!moi) return Promise.resolve();
+  if(!navigator.onLine){
+    if(btn) libere(btn);
+    erreur('Hors connexion : ce tableau est celui du dernier rafraîchissement.');
+    return Promise.resolve();
+  }
+  if(btn) occuper(btn, 'Mise à jour…');
+  return poster({action:'tableau', nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
+    if(btn) libere(btn);
+    if(!d || !d.ok){
+      if(d && d.refus) return reidentifier('Ton accès a changé côté bureau.');
+      return erreur(attenteLisible());
+    }
+    TABLEAU = d;
+    // Si l'appareil manque de place, tant pis pour le cache : l'écran, lui,
+    // s'affiche quand même.
+    try{ lsj('tableau', d); }catch(e){}
+    erreur('');
+    peindreTableau();
+    if(AD_FICHE) rouvrirFiche();
+  }, function(){
+    if(btn) libere(btn);
+    erreur(attenteLisible());
+  });
+}
+
+function quandLisible(ms){
+  var d = new Date(Number(ms));
+  if(isNaN(d.getTime())) return '—';
+  return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear()+
+         ' à '+('0'+d.getHours()).slice(-2)+'h'+('0'+d.getMinutes()).slice(-2);
+}
+function ligneCh(libelle, valeur, gros){
+  return '<div class="ch'+(gros?' gros':'')+'"><span'+(gros?'':' style="color:var(--mut)"')+'>'+
+         ech(libelle)+'</span><b>'+valeur+'</b></div>';
+}
+function badgeDevis(st){
+  st = String(st||'').toUpperCase();
+  if(st === 'SIGNE')      return '<span class="vb vb-s">SIGNÉ</span>';
+  if(st === 'REFUSE')     return '<span class="vb vb-x">REFUSÉ</span>';
+  if(st === 'A RELANCER') return '<span class="vb vb-r">À RELANCER</span>';
+  if(st === 'EXPIRE')     return '<span class="vb vb-a">EXPIRÉ</span>';
+  return '<span class="vb vb-a">REMIS</span>';
+}
+
+function ongletAdmin(quoi){
+  AD_ONGLET = quoi;
+  AD_QUI = '';
+  peindreTableau();
+}
+function filtreAdmin(nom){ AD_QUI = nom; peindreTableau(); }
+
+function peindreTableau(){
+  var t = TABLEAU;
+  $('adMaj').textContent = (t && t.maj)
+    ? 'Mis à jour le ' + quandLisible(t.maj)
+    : 'Jamais rafraîchi sur cet appareil.';
+  $('bOngDevis').classList.toggle('on', AD_ONGLET === 'devis');
+  $('bOngChantiers').classList.toggle('on', AD_ONGLET === 'chantiers');
+
+  if(!t){
+    $('adChiffres').innerHTML = '<div class="empty">Appuie sur « Actualiser » pour aller chercher ' +
+      'les devis et les chantiers.</div>';
+    $('adFiltres').innerHTML = ''; $('adListe').innerHTML = '';
+    return;
+  }
+
+  var c = t.chiffres || {};
+  var taux = c.nb ? Math.round(c.signes * 100 / c.nb) : 0;
+  $('adChiffres').innerHTML =
+    ligneCh('Devis établis', (c.nb||0) + '') +
+    ligneCh('Signés', (c.signes||0) + ' · ' + taux + ' %') +
+    ligneCh('Devisé', eur(c.ht||0) + ' HT') +
+    ligneCh('Signé', eur(c.htSigne||0) + ' HT', true) +
+    (c.mensuelSigne ? '<div class="mini">dont ' + eur(c.mensuelSigne) +
+      ' HT par mois en récurrent</div>' : '') +
+    '<div class="mini" style="margin-top:6px">Sur les ' + (t.fenetre||90) + ' derniers jours.</div>';
+
+  var noms = (AD_ONGLET === 'devis' ? (t.commerciaux||[]) : (t.prestataires||[])).slice();
+  if(AD_ONGLET === 'chantiers') noms.unshift('(non affectés)');
+  $('adFiltres').innerHTML = ['<span class="puce' + (AD_QUI===''?' on':'') +
+      '" onclick="filtreAdmin(\'\')">Tout le monde</span>']
+    .concat(noms.map(function(n){
+      return '<span class="puce' + (AD_QUI===n?' on':'') + '" onclick="filtreAdmin(\'' +
+             ech(n).replace(/'/g,'&#39;') + '\')">' + ech(n) + '</span>';
+    })).join('');
+
+  $('adListe').innerHTML = AD_ONGLET === 'devis' ? listeDevisAdmin(t) : listeChantiersAdmin(t);
+}
+
+function listeDevisAdmin(t){
+  var l = (t.devis||[]).filter(function(d){ return !AD_QUI || d.commercial === AD_QUI; });
+  if(!l.length) return '<div class="card"><div class="empty">Aucun devis sur la période.</div></div>';
+  var parCom = (t.parCommercial||[]).filter(function(x){ return !AD_QUI || x.nom === AD_QUI; });
+  var tete = AD_QUI && parCom.length
+    ? '<div class="card"><b>' + ech(AD_QUI) + '</b><div class="mini">' +
+      parCom[0].nb + ' devis · ' + parCom[0].signes + ' signés · ' +
+      eur(parCom[0].htSigne) + ' HT signés</div></div>'
+    : '';
+  return tete + l.map(function(d){
+    return '<div class="card" style="cursor:pointer;margin-bottom:10px" onclick="ficheDevis(\'' +
+      ech(d.numero) + '\')">' +
+      '<div style="display:flex;gap:10px;align-items:baseline">' +
+        '<b style="flex:1;font-size:15.5px">' + ech(d.client||'—') + '</b>' + badgeDevis(d.statut) +
+      '</div>' +
+      '<div class="mini" style="margin-top:4px">' + ech(d.numero) + ' · ' + jjmmaa(d.date) +
+        ' · ' + eur(d.ttc) + ' TTC</div>' +
+      '<div class="mini">' + ech(d.commercial) + (d.ville ? ' · ' + ech(d.ville) : '') + '</div>' +
+      (d.statut === 'REFUSE' && d.motif ? '<div class="mini">Refus : ' + ech(d.motif) + '</div>' : '') +
+      (d.statut === 'A RELANCER' && d.relance ? '<div class="mini">Relance le ' + jjmmaa(d.relance) + '</div>' : '') +
+    '</div>';
+  }).join('');
+}
+
+function listeChantiersAdmin(t){
+  var l = (t.chantiers||[]).filter(function(c){
+    if(!AD_QUI) return true;
+    if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
+    return c.prestataire === AD_QUI;
+  });
+  if(!l.length) return '<div class="card"><div class="empty">Aucun chantier.</div></div>';
+  var aFaire = l.filter(function(c){ return !c.date || !c.prestataire; }).length;
+  var tete = aFaire
+    ? '<div class="card" style="border-color:var(--warn)"><b>' + aFaire + ' chantier' +
+      (aFaire>1?'s':'') + ' à planifier</b><div class="mini">Sans date ou sans personne, ' +
+      'ils n\'apparaissent sur aucun téléphone.</div></div>'
+    : '';
+  return tete + l.map(function(c){
+    var manque = !c.date || !c.prestataire;
+    return '<div class="card" style="cursor:pointer;margin-bottom:10px" onclick="ficheChantier(\'' +
+      ech(c.id) + '\')">' +
+      '<div style="display:flex;gap:10px;align-items:baseline">' +
+        '<b style="flex:1;font-size:15.5px">' + ech(c.client||'Chantier') + '</b>' +
+        badgeChantier(c) +
+      '</div>' +
+      '<div class="mini" style="margin-top:4px">' +
+        (c.date ? jourLisible(c.date) + (c.heure ? ' · ' + ech(c.heure) : '') : 'Sans date') +
+        ' · ' + (c.prestataire ? ech(c.prestataire) : 'personne') + '</div>' +
+      (c.ville ? '<div class="mini">' + ech(c.ville) + '</div>' : '') +
+      (manque ? '<div class="mini" style="color:var(--warn)">À planifier</div>' : '') +
+      (c.signalement ? '<div class="mini" style="color:var(--rouge,#991b1b)">Problème signalé</div>' : '') +
+    '</div>';
+  }).join('');
+}
+
+/* ---- la fiche d'un devis ---- */
+
+function ficheDevis(numero){
+  var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === numero; })[0];
+  if(!d) return;
+  AD_FICHE = {type:'devis', cle:numero};
+  montrer('eAd2');
+  $('hTitre').textContent = 'Devis';
+  erreur(''); window.scrollTo(0,0);
+  peindreFicheDevis(d);
+}
+
+function peindreFicheDevis(d){
+  $('adFiche').innerHTML =
+    '<div class="card">' +
+      '<div style="display:flex;gap:10px;align-items:baseline">' +
+        '<b style="flex:1;font-size:17px">' + ech(d.client||'—') + '</b>' + badgeDevis(d.statut) +
+      '</div>' +
+      '<div class="mini" style="margin-top:6px">' + ech(d.numero) + ' · ' + jjmmaa(d.date) + '</div>' +
+      '<div class="mini">Établi par ' + ech(d.commercial) + (d.ville ? ' · ' + ech(d.ville) : '') + '</div>' +
+      '<div class="ch" style="margin-top:10px"><span style="color:var(--mut)">Total HT</span><b>' +
+        eur(d.ht) + '</b></div>' +
+      '<div class="ch gros"><span>Total TTC</span><span>' + eur(d.ttc) + '</span></div>' +
+      (d.note ? '<div class="mini" style="margin-top:8px">Note du commercial : ' + ech(d.note) + '</div>' : '') +
+      (d.pdf ? '<a class="btn sec" style="display:block;text-align:center;margin-top:12px;' +
+        'text-decoration:none" href="' + ech(d.pdf) + '" target="_blank" rel="noopener">' +
+        'Voir le devis (PDF)</a>' : '<div class="mini" style="margin-top:10px">Aucun PDF archivé.</div>') +
+    '</div>' +
+
+    '<div class="card">' +
+      '<h2>Corriger le résultat</h2>' +
+      '<div class="mini" style="margin-top:0">Ce que tu poses ici remplace ce qu\'a répondu le ' +
+        'commercial, et part au journal à ton nom.</div>' +
+      '<button class="choix" onclick="verdictAdmin(\'SIGNE\')"><b>Signé</b></button>' +
+      '<button class="choix" onclick="verdictAdmin(\'RELANCE\')"><b>À relancer</b>' +
+        '<span>Choisis la date ci-dessous.</span></button>' +
+      '<button class="choix" onclick="verdictAdmin(\'REFUSE\')"><b>Refusé</b>' +
+        '<span>Précise la raison ci-dessous.</span></button>' +
+      '<label>Date de relance</label>' +
+      '<input id="adRelance" type="date" value="' + ech(d.relance||'') + '">' +
+      '<label>Raison du refus</label>' +
+      '<input id="adMotif" placeholder="Trop cher, concurrent…" value="' + ech(d.motif||'') + '">' +
+    '</div>' +
+
+    '<button class="btn sec" onclick="retourTableau()">Retour au tableau</button>';
+}
+
+function verdictAdmin(type){
+  var f = AD_FICHE;
+  if(!f || f.type !== 'devis') return;
+  var moi = session();
+  var corps = {action:'statut', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+               numero:f.cle, verdict:type, quand:Date.now()};
+  if(type === 'RELANCE'){
+    corps.relance = val('adRelance');
+    if(!corps.relance) return erreur('Choisis une date de relance.');
+  }
+  if(type === 'REFUSE'){
+    corps.motif = val('adMotif');
+    if(!corps.motif) return erreur('Précise la raison du refus.');
+  }
+  if(!navigator.onLine) return erreur('Hors connexion : impossible de corriger un résultat maintenant.');
+  erreur('');
+  poster(corps).then(function(r){
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    tracer('RESULTAT ' + type, f.cle, f.cle);
+    // On met à jour la copie locale tout de suite : l'écran doit dire la
+    // vérité sans attendre le prochain rafraîchissement.
+    ((TABLEAU||{}).devis||[]).forEach(function(x){
+      if(x.numero !== f.cle) return;
+      x.statut = type === 'SIGNE' ? 'SIGNE' : (type === 'RELANCE' ? 'A RELANCER' : 'REFUSE');
+      x.motif = corps.motif || '';
+      x.relance = corps.relance || '';
+    });
+    try{ lsj('tableau', TABLEAU); }catch(e){}
+    rouvrirFiche();
+    chargerTableau();
+  }, function(){ erreur(attenteLisible()); });
+}
+
+/* ---- la fiche d'un chantier, et sa planification ---- */
+
+function ficheChantier(id){
+  var c = ((TABLEAU||{}).chantiers||[]).filter(function(x){ return x.id === id; })[0];
+  if(!c) return;
+  AD_FICHE = {type:'chantier', cle:id};
+  AD_PRESTA = c.prestataire || '';
+  montrer('eAd2');
+  $('hTitre').textContent = 'Chantier';
+  erreur(''); window.scrollTo(0,0);
+  peindreFicheChantier(c);
+}
+
+function peindreFicheChantier(c){
+  var gens = ((TABLEAU||{}).prestataires||[]);
+  $('adFiche').innerHTML =
+    '<div class="card">' +
+      '<div style="display:flex;gap:10px;align-items:baseline">' +
+        '<b style="flex:1;font-size:17px">' + ech(c.client||'Chantier') + '</b>' + badgeChantier(c) +
+      '</div>' +
+      (c.numero ? '<div class="mini" style="margin-top:6px">' + ech(c.numero) + '</div>' : '') +
+      '<div style="margin-top:8px">' + ech(c.adresse||'') +
+        ((c.cp||c.ville) ? '<br>' + ech((c.cp||'') + ' ' + (c.ville||'')) : '') + '</div>' +
+      (c.acces ? '<div class="ok" style="text-align:left;margin-top:10px"><b>Accès au site</b><br>' +
+        ech(c.acces) + '</div>' : '') +
+      (c.arrivee ? '<div class="mini" style="margin-top:10px">Arrivé à ' + heureLisible(c.arrivee) +
+        (c.depart ? ', parti à ' + heureLisible(c.depart) + ' · ' + dureeLisible(c.minutes) : '') +
+        '</div>' : '') +
+      (c.signalement ? '<div class="err" style="margin-top:10px">Problème signalé : ' +
+        ech(c.signalement) + '</div>' : '') +
+      (c.note ? '<div class="mini" style="margin-top:8px">Mot du prestataire : ' + ech(c.note) + '</div>' : '') +
+    '</div>' +
+
+    '<div class="card">' +
+      '<h2>Planifier</h2>' +
+      '<div class="mini" style="margin-top:0">Tant que la date et la personne ne sont pas posées, ' +
+        'le chantier n\'apparaît sur aucun téléphone.</div>' +
+      '<label>Date</label>' +
+      '<input id="adDate" type="date" value="' + ech(c.date||'') + '">' +
+      '<label>Heure</label>' +
+      '<input id="adHeure" type="time" value="' + ech(c.heure||'') + '">' +
+      '<label>Prestataire</label>' +
+      '<div class="row" style="flex-wrap:wrap;gap:6px">' +
+        gens.map(function(n){
+          return '<span class="puce' + (AD_PRESTA===n?' on':'') + '" onclick="choisirPresta(\'' +
+                 ech(n).replace(/'/g,'&#39;') + '\')">' + ech(n) + '</span>';
+        }).join('') +
+        '<span class="puce' + (AD_PRESTA===''?' on':'') + '" onclick="choisirPresta(\'\')">Personne</span>' +
+      '</div>' +
+      '<button class="btn" style="margin-top:14px" onclick="enregistrerPlanif(this)">Enregistrer</button>' +
+    '</div>' +
+
+    '<button class="btn sec" onclick="retourTableau()">Retour au tableau</button>';
+}
+
+/* On ne redessine pas la fiche : la date et l'heure déjà tapées seraient
+   effacées par les valeurs d'origine. Seules les pastilles changent d'état. */
+function choisirPresta(nom){
+  AD_PRESTA = nom;
+  Array.prototype.forEach.call($('adFiche').querySelectorAll('.puce'), function(e){
+    e.classList.toggle('on', e.textContent.trim() === (nom || 'Personne'));
+  });
+}
+
+function enregistrerPlanif(btn){
+  var f = AD_FICHE;
+  if(!f || f.type !== 'chantier') return;
+  if(!navigator.onLine) return erreur('Hors connexion : la planification a besoin du réseau.');
+  var moi = session();
+  erreur('');
+  if(btn) occuper(btn, 'Enregistrement…');
+  poster({action:'planifier', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+          id:f.cle, date:val('adDate'), heure:val('adHeure'), prestataire:AD_PRESTA}).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    tracer('CHANTIER PLANIFIE', AD_PRESTA + ' ' + val('adDate'), f.cle);
+    ((TABLEAU||{}).chantiers||[]).forEach(function(x){
+      if(x.id !== f.cle) return;
+      x.date = val('adDate'); x.heure = val('adHeure'); x.prestataire = AD_PRESTA;
+      x.statut = r.statut || x.statut;
+    });
+    try{ lsj('tableau', TABLEAU); }catch(e){}
+    retourTableau();
+    chargerTableau();
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+
+function rouvrirFiche(){
+  var f = AD_FICHE;
+  if(!f) return;
+  if(f.type === 'devis'){
+    var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === f.cle; })[0];
+    if(d) peindreFicheDevis(d);
+  } else {
+    var c = ((TABLEAU||{}).chantiers||[]).filter(function(x){ return x.id === f.cle; })[0];
+    if(c) peindreFicheChantier(c);
+  }
+}
+
+function retourTableau(){
+  AD_FICHE = null;
+  ecranAdmin();
 }
 
 /* ====================== ESPACE PRESTATAIRE ======================
