@@ -119,6 +119,15 @@
   .poPage{width:100%;height:auto;display:block;margin:0 auto 10px;background:#fff;
     box-shadow:0 1px 4px rgba(0,0,0,.18);border-radius:2px}
   .poPage:last-child{margin-bottom:0}
+  /* Les chiffres du tableau : lisibles d'un coup d'œil, sans couleur criarde. */
+  .ch{display:flex;justify-content:space-between;padding:6px 0;font-size:15px}
+  .ch b{font-size:16px}
+  .ch.gros{border-top:2px solid var(--txt);margin-top:6px;padding-top:10px;font-size:18px;font-weight:700}
+  .puce{display:inline-block;padding:6px 12px;border:1px solid var(--line);border-radius:999px;
+    background:#fff;font-size:13px;color:var(--mut);cursor:pointer}
+  .puce.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+  /* Les deux onglets du tableau : celui qu'on regarde se voit. */
+  .btn.sec.on{border-color:var(--acc);background:#EAF2FB;color:var(--acc-d);font-weight:700}
   /* À l'impression, il ne reste que les pages du devis : le système imprime
      ce qui est à l'écran, il faut donc n'y laisser que lui. */
   @media print{
@@ -550,7 +559,31 @@
   </div>
 </div>
 
-<!-- ====================== ESPACE PRESTATAIRE ======================
+<!-- ====================== ESPACE ADMIN ======================
+       Tout ce que les autres font, vu d'en haut : les devis de chaque
+       commercial, les chantiers de chaque prestataire, et les chiffres. -->
+
+  <section id="eAd1" class="hide">
+    <div class="card">
+      <h2>Le tableau</h2>
+      <div class="mini" id="adMaj">—</div>
+      <div id="adChiffres" style="margin-top:12px"></div>
+      <button class="btn sec sm" style="margin-top:12px" onclick="chargerTableau(this)">Actualiser</button>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <button class="btn sec sm" style="flex:1" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
+      <button class="btn sec sm" style="flex:1" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Chantiers</button>
+    </div>
+    <div id="adFiltres" class="row" style="flex-wrap:wrap;gap:6px;margin-top:10px"></div>
+    <div id="adListe" style="margin-top:10px"></div>
+  </section>
+
+  <section id="eAd2" class="hide">
+    <div id="adFiche"></div>
+  </section>
+
+  <!-- ====================== ESPACE PRESTATAIRE ======================
        Deux écrans, et rien d'autre : le planning, et la fiche d'un chantier.
        Un agent n'a ni catalogue, ni devis, ni tarif — son téléphone ne les
        reçoit même pas. -->
@@ -644,11 +677,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=36"></script>
-<script src="jspdf.umd.min.js?v=36"></script>
-<script src="police.js?v=36"></script>
-<script src="logo.js?v=36"></script>
-<script src="pdf.js?v=36"></script>
-<script src="app.js?v=36"></script>
+<script src="config.js?v=37"></script>
+<script src="jspdf.umd.min.js?v=37"></script>
+<script src="police.js?v=37"></script>
+<script src="logo.js?v=37"></script>
+<script src="pdf.js?v=37"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>
