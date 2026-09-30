@@ -26,6 +26,16 @@
   :root{
     --bg:#f4f5f7; --card:#fff; --txt:#111827; --mut:#6b7280; --line:#e2e5ea;
     --acc:#004C92; --acc-d:#003A70; --danger:#b91c1c; --warn:#b45309; --ok:#15803d;
+    --acc-f:#EAF2FB; --acc-b:#B9D2EC; --acc-t:#00396E;
+  }
+  /* L'espace d'administration porte sa propre couleur. Ce n'est pas un
+     ornement : le patron passe d'un outil à l'autre dans la même application,
+     et doit savoir au premier regard lequel il a sous les yeux. Le rouge est
+     volontairement plus sombre que celui des messages d'erreur, qui doivent
+     rester les plus visibles. */
+  body.admin{
+    --acc:#8C1D18; --acc-d:#6B1512;
+    --acc-f:#FBEDEC; --acc-b:#E8C3C0; --acc-t:#6B1512;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   /* manipulation : le défilement reste normal, mais le double-appui n'agrandit plus.
@@ -127,7 +137,7 @@
     background:#fff;font-size:13px;color:var(--mut);cursor:pointer}
   .puce.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
   /* Les deux onglets du tableau : celui qu'on regarde se voit. */
-  .btn.sec.on{border-color:var(--acc);background:#EAF2FB;color:var(--acc-d);font-weight:700}
+  .btn.sec.on{border-color:var(--acc);background:var(--acc-f);color:var(--acc-d);font-weight:700}
   /* À l'impression, il ne reste que les pages du devis : le système imprime
      ce qui est à l'écran, il faut donc n'y laisser que lui. */
   @media print{
@@ -157,7 +167,7 @@
   .tot{display:flex;justify-content:space-between;padding:7px 0;font-size:15px}
   .tot.big{border-top:2px solid var(--txt);margin-top:6px;padding-top:10px;font-size:19px;font-weight:700}
   .tot span:first-child{color:var(--mut)}
-  .ok{background:#EAF2FB;border:1px solid #B9D2EC;color:#00396E;border-radius:10px;padding:16px;text-align:center}
+  .ok{background:var(--acc-f);border:1px solid var(--acc-b);color:var(--acc-t);border-radius:10px;padding:16px;text-align:center}
   .err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:10px;padding:12px;margin-bottom:12px;font-size:14px}
   .hist{padding:12px 0;border-bottom:1px solid var(--line)}
   .hist .i{min-width:0}
@@ -183,7 +193,7 @@
   .choix b{display:block;font-size:16.5px;color:var(--txt)}
   .choix span{display:block;font-size:12.5px;color:var(--mut);margin-top:3px;line-height:1.4}
   .choix:active{transform:scale(.98);background:#f2f6fb}
-  .choix.on{border-color:var(--acc);background:#EAF2FB;box-shadow:inset 0 0 0 1px var(--acc)}
+  .choix.on{border-color:var(--acc);background:var(--acc-f);box-shadow:inset 0 0 0 1px var(--acc)}
   .choix.on b{color:var(--acc-d)}
   .choix.on b::after{content:' ✓';color:var(--acc)}
   #dlgConf{border:0;border-radius:14px;padding:0;max-width:330px;width:calc(100% - 32px);
@@ -205,9 +215,9 @@
   /* choix binaire compact — l'âge du logement, qui décide du taux de TVA */
   .bsel{background:#fff;border:1.5px solid var(--line);color:var(--txt);font-size:13.5px;
         padding:11px 6px;font-weight:500;line-height:1.3}
-  .bsel.on{border-color:var(--acc);background:#EAF2FB;color:var(--acc-d);font-weight:700}
+  .bsel.on{border-color:var(--acc);background:var(--acc-f);color:var(--acc-d);font-weight:700}
   .bsel:active{transform:scale(.97)}
-  .tvaInfo{background:#EAF2FB;border:1px solid #B9D2EC;color:#00396E;border-radius:9px;
+  .tvaInfo{background:var(--acc-f);border:1px solid var(--acc-b);color:var(--acc-t);border-radius:9px;
            padding:9px 11px;font-size:13px;margin-top:10px;line-height:1.45}
   /* suggestions : clients déjà connus + annuaire des entreprises */
   .sugg{border:1px solid var(--line);border-radius:10px;margin-top:5px;overflow:hidden;background:#fff}
@@ -677,11 +687,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=37"></script>
-<script src="jspdf.umd.min.js?v=37"></script>
-<script src="police.js?v=37"></script>
-<script src="logo.js?v=37"></script>
-<script src="pdf.js?v=37"></script>
-<script src="app.js?v=37"></script>
+<script src="config.js?v=38"></script>
+<script src="jspdf.umd.min.js?v=38"></script>
+<script src="police.js?v=38"></script>
+<script src="logo.js?v=38"></script>
+<script src="pdf.js?v=38"></script>
+<script src="app.js?v=38"></script>
 </body>
 </html>
