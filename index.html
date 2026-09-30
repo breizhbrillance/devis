@@ -111,6 +111,34 @@
   #sigOverlay{position:fixed;inset:0;z-index:60;background:#fff;display:flex;flex-direction:column;
     padding:calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom))}
   #sigOverlay.hide{display:none}
+  #pdfOverlay{position:fixed;inset:0;z-index:61;background:var(--bg);display:flex;flex-direction:column;
+    padding:calc(10px + env(safe-area-inset-top)) 12px calc(10px + env(safe-area-inset-bottom))}
+  #pdfOverlay.hide{display:none}
+  #poPages{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;background:#e9ecef;
+    border:1px solid var(--line);border-radius:12px;padding:8px}
+  .poPage{width:100%;height:auto;display:block;margin:0 auto 10px;background:#fff;
+    box-shadow:0 1px 4px rgba(0,0,0,.18);border-radius:2px}
+  .poPage:last-child{margin-bottom:0}
+  /* À l'impression, il ne reste que les pages du devis : le système imprime
+     ce qui est à l'écran, il faut donc n'y laisser que lui. */
+  @media print{
+    /* La réserve du bas d'écran (la barre des totaux) n'a rien à faire sur une
+       feuille : sans ça, elle ajoute une page blanche à chaque impression. */
+    html,body{padding:0;margin:0;background:#fff;height:auto}
+    body>*{display:none !important}
+    #pdfOverlay{display:block !important;position:static;padding:0;background:#fff}
+    #pdfOverlay .so-h, #pdfOverlay .so-f{display:none !important}
+    #poPages{overflow:visible;background:#fff;border:0;border-radius:0;padding:0;display:block;
+      line-height:0}
+    /* La hauteur commande, pas la largeur : une page calée sur la largeur
+       dépasse d'une fraction de point et entraîne une feuille blanche
+       derrière chaque page imprimée. */
+    .poPage{height:99.6vh;width:auto;max-width:100%;margin:0 auto;box-shadow:none;border-radius:0}
+    /* La coupure se pose AVANT chaque page sauf la première : rien après la
+       dernière, donc pas de feuille blanche en fin d'impression. */
+    .poPage + .poPage{break-before:page;page-break-before:always}
+    @page{margin:0;size:A4 portrait}
+  }
   .so-h{display:flex;align-items:center;gap:10px;margin-bottom:10px}
   .so-h b{font-size:15px}
   .so-h div>div{font-size:12.5px;color:var(--mut)}
@@ -379,7 +407,9 @@
       <div id="okTot" style="font-size:15px"></div>
       <div class="mini" id="okEtat" style="color:inherit;opacity:.85"></div>
     </div>
-    <button class="btn" onclick="partagerDernier(this)">Imprimer / envoyer le PDF</button>
+    <button class="btn" onclick="voirDernier(this)">Voir le devis</button>
+    <div class="mini" style="text-align:center">Il s'ouvre en plein écran, prêt à être montré,
+      imprimé ou envoyé.</div>
 
     <!-- Le devis est sorti, le client l'a lu : c'est le moment de le faire
          signer. Le PDF est alors refait avec la signature dedans. -->
@@ -480,6 +510,23 @@
 </div>
 
 <!-- SIGNATURE PLEIN ÉCRAN -->
+<!-- Le devis à l'écran, dans l'application : rien à télécharger pour le
+     montrer au client. -->
+<div id="pdfOverlay" class="hide">
+  <div class="so-h">
+    <div>
+      <b>Le devis</b>
+      <div id="poNum"></div>
+    </div>
+    <button class="btn sec sm" onclick="fermerPdf()">Fermer</button>
+  </div>
+  <div id="poPages"></div>
+  <div class="so-f">
+    <button class="btn sec" style="flex:1" onclick="partagerVu(this)">Envoyer</button>
+    <button class="btn" style="flex:1.2" onclick="imprimerVu()">Imprimer</button>
+  </div>
+</div>
+
 <div id="sigOverlay" class="hide">
   <div class="so-h">
     <div>
@@ -597,11 +644,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=35"></script>
-<script src="jspdf.umd.min.js?v=35"></script>
-<script src="police.js?v=35"></script>
-<script src="logo.js?v=35"></script>
-<script src="pdf.js?v=35"></script>
-<script src="app.js?v=35"></script>
+<script src="config.js?v=36"></script>
+<script src="jspdf.umd.min.js?v=36"></script>
+<script src="police.js?v=36"></script>
+<script src="logo.js?v=36"></script>
+<script src="pdf.js?v=36"></script>
+<script src="app.js?v=36"></script>
 </body>
 </html>
