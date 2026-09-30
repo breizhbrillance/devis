@@ -278,7 +278,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v37';
+var VERSION_APP = 'v38';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -435,6 +435,9 @@ function repondreConf(oui){
 var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','eAg1','eAg2','eAd1','eAd2'];
 function montrer(id){
   ECRANS.forEach(function(k){ $(k).classList.toggle('hide', k!==id); });
+  // La couleur suit le métier, pas l'écran : on la pose ici, seul endroit par
+  // lequel passent tous les changements d'écran.
+  try{ document.body.classList.toggle('admin', estAdmin()); }catch(e){}
 }
 /* La barre du bas ne garde que le bouton Retour sur les écrans hors parcours :
    « Mes devis » et les photos ne doivent jamais être une impasse. */
@@ -1878,10 +1881,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=37';
+    sc.src = 'visionneuse.js?v=38';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=37';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=38';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
