@@ -5,6 +5,9 @@
 /* ====================== ÉTAT ====================== */
 var CFG = null;            // {reglages, catalogue, commerciaux, sel, maj}
 var LIGNES = [];
+/* Une seule remise, sur le devis entier : le commercial negocie un prix, pas
+   quatorze. Elle est reportee sur chaque ligne au moment ou elle change. */
+var REMISE = {valeur:0, muet:false};
 var ETAPE = 1;
 var TYPE = null;           // 'PRO' ou 'PART' — choisi au début de chaque devis
 var PLUS2ANS = null;       // particulier : logement de plus de deux ans (true/false)
@@ -278,7 +281,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v38';
+var VERSION_APP = 'v39';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -487,8 +490,7 @@ function verdict(t){
   $('verdictRelance').classList.toggle('hide', t !== 'RELANCE');
   $('verdictMotif').classList.toggle('hide', t !== 'REFUSE');
   if(t === 'RELANCE'){
-    var d = new Date(Date.now() + 7*86400000);
-    $('fRelance').value = d.toISOString().slice(0,10);
+    $('fRelance').value = isoJour(Date.now() + 7*86400000);
   }
   if(t === 'REFUSE'){
     $('fMotif').value = '';
@@ -670,7 +672,7 @@ function etape(n){
   if(n===1) majType();
   if(n<=2) majBarre();          // le total du bas suit le devis en cours, pas le précédent
   if(n===3) rendreLignes();
-  if(n===4){ calculer(); majApercuSignature(); }
+  if(n===4){ ecranRemise(); calculer(); majApercuSignature(); }
   window.scrollTo(0,0);
 }
 function suivant(){
@@ -1113,65 +1115,228 @@ function deduireTva(){
   sauverBrouillon();
 }
 
-/* ====================== CATALOGUE ====================== */
-function ouvrirCatalogue(){
-  var d=$('dlg'); $('rech').value=''; rendreCatalogue();
-  if(d.showModal) d.showModal(); else { d.setAttribute('open',''); d.style.position='fixed'; d.style.bottom='0'; d.style.zIndex='50'; }
-}
-function fermerCatalogue(){ var d=$('dlg'); if(d.close) d.close(); else d.removeAttribute('open'); }
-function ligneCatalogue(p, i){
-  return '<div class="item" onclick="ajouterCatalogue('+i+')">'+
-    '<span class="px">'+eur(p.pu)+'</span><b>'+ech(p.designation)+'</b><span>'+
-    ech(p.detail||'')+(p.unite?' · '+ech(p.unite):'')+
-    (p.type==='MENSUEL'?' · mensuel':'')+'</span></div>';
-}
-function rendreCatalogue(){
-  var q = $('rech').value.toLowerCase(), cats = {}, h='';
+/* ====================== PRESTATIONS ======================
+   Le catalogue n'est plus une fenêtre où l'on va chercher : c'est la page
+   elle-même. Une catégorie par bloc, fermée par défaut. Le commercial ouvre
+   celle qui le concerne, pose une surface, un nombre de pièces ou coche un
+   forfait, et referme. Ce qui reste à zéro n'existe pas sur le devis : il n'a
+   donc rien à ajouter, et rien à supprimer.
 
-  // Les prestations les plus récemment utilisées d'abord : sur le terrain,
-  // c'est presque toujours l'une d'elles.
-  if(!q){
-    var f = lsj('favs') || {}, recents = [];
-    CFG.catalogue.forEach(function(p,i){ if(f[p.designation]) recents.push({p:p,i:i,t:f[p.designation]}); });
-    recents.sort(function(a,b){ return b.t - a.t; });
-    if(recents.length){
-      h += '<div class="cat">Récemment utilisées</div>';
-      recents.slice(0,5).forEach(function(o){ h += ligneCatalogue(o.p, o.i); });
-    }
+   Les lignes restent le seul modèle : cet écran les lit et les écrit, mais
+   c'est LIGNES que le brouillon, le PDF et le classeur reçoivent. */
+
+var GRP = {};        // catégories ouvertes, retenues par nom
+var CATS = [];       // noms des catégories, dans l'ordre du catalogue
+var CATP = {};       // prestations par catégorie
+
+function normTexte(s){
+  return String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+/* La clé d'une prestation : sa référence si le classeur en donne une, sinon sa
+   désignation. C'est elle qui relie une ligne déjà saisie à sa place dans la
+   liste, y compris quand le catalogue a bougé entre deux ouvertures. */
+function clePresta(p){
+  var r = String((p && p.reference) || '').trim();
+  return r ? 'R:' + r : 'D:' + normTexte(p && p.designation);
+}
+/* Un forfait se prend ou ne se prend pas : il n'a pas de quantité à saisir.
+   Une prestation sans unité est dans le même cas. */
+function estForfait(p){
+  var u = normTexte(p && p.unite);
+  return u === '' || u.indexOf('forfait') === 0;
+}
+function estSurface(p){
+  var u = normTexte(p && p.unite);
+  return u.indexOf('m2') === 0 || u.indexOf('m²') === 0;
+}
+function prestaDe(cle){
+  var c = (CFG && CFG.catalogue) || [];
+  for(var i = 0; i < c.length; i++){ if(clePresta(c[i]) === cle) return c[i]; }
+  return null;
+}
+function ligneDe(cle){
+  for(var i = 0; i < LIGNES.length; i++){ if(clePresta(LIGNES[i]) === cle) return LIGNES[i]; }
+  return null;
+}
+function qteDe(cle){ var l = ligneDe(cle); return l ? (Number(l.qte) || 0) : 0; }
+
+/* L'ordre des lignes suit le catalogue, pas l'ordre de saisie : le devis
+   imprimé se lit alors comme la liste que le client vient de voir remplir. */
+function ordonnerLignes(){
+  var rang = {};
+  ((CFG && CFG.catalogue) || []).forEach(function(p, i){ rang[clePresta(p)] = i; });
+  LIGNES.sort(function(a, b){
+    var x = rang[clePresta(a)], y = rang[clePresta(b)];
+    if(x === undefined) x = 99999;        // hors catalogue : rejeté à la fin
+    if(y === undefined) y = 99999;
+    return x - y;
+  });
+}
+
+/* Pose une quantité sur une prestation. Zéro retire la ligne : c'est la même
+   chose que ne l'avoir jamais saisie. */
+function poser(cle, qte){
+  qte = Number(qte) || 0;
+  if(qte < 0) qte = 0;
+  var l = ligneDe(cle);
+  if(!qte){ if(l) LIGNES.splice(LIGNES.indexOf(l), 1); return; }
+  if(l){ l.qte = qte; return; }
+  var p = prestaDe(cle);
+  if(!p) return;
+  LIGNES.push({categorie:p.categorie, designation:p.designation, detail:p.detail || '',
+    qte:qte, unite:p.unite, pu:p.pu, rem:REMISE.valeur, remMuet:REMISE.muet,
+    tva:(TAUX || p.tva), type:p.type, reference:p.reference || ''});
+  ordonnerLignes();
+}
+
+function rendreLignes(){
+  var c = $('lignes'), cat = (CFG && CFG.catalogue) || [];
+  CATS = []; CATP = {};
+  cat.forEach(function(p){
+    var k = String(p.categorie || '').trim() || 'Prestations';
+    if(!CATP[k]){ CATP[k] = []; CATS.push(k); }
+    CATP[k].push(p);
+  });
+  if(!cat.length){
+    c.innerHTML = '<div class="card"><div class="empty">Le catalogue est vide.<br>' +
+      'Synchronise l\'application pour le recevoir.</div></div>';
+    majBarre(); return;
   }
+  var h = '', rang = 0;
+  CATS.forEach(function(nom, k){
+    h += blocCategorie(nom, k, rang);
+    rang += CATP[nom].length;
+  });
+  h += blocHorsCatalogue();
+  c.innerHTML = h;
+  majBadges();
+  majBarre();
+}
 
-  CFG.catalogue.forEach(function(p,i){
-    if(q && (p.designation+' '+p.detail+' '+p.categorie).toLowerCase().indexOf(q)<0) return;
-    (cats[p.categorie]=cats[p.categorie]||[]).push({p:p,i:i});
-  });
-  Object.keys(cats).forEach(function(c){
-    h += '<div class="cat">'+ech(c)+'</div>';
-    cats[c].forEach(function(o){ h += ligneCatalogue(o.p, o.i); });
-  });
-  $('dlgB').innerHTML = h || '<div class="empty">Aucune prestation trouvée.</div>';
+function blocCategorie(nom, k, rang){
+  var h = '<div class="grp' + (GRP[nom] ? ' on' : '') + '" id="grp' + k + '">' +
+    '<button class="grpT" onclick="basculerGrp(' + k + ')">' +
+      '<span class="fl">\u203a</span>' +
+      '<span class="n">' + ech(nom) + '</span>' +
+      '<span class="cpt hide" id="cpt' + k + '"></span></button>' +
+    '<div class="grpC">';
+  CATP[nom].forEach(function(p, m){ h += lignePresta(p, rang + m); });
+  return h + '</div></div>';
 }
-function ajouterCatalogue(i){
-  var p = CFG.catalogue[i];
-  LIGNES.push({categorie:p.categorie,designation:p.designation,detail:p.detail,
-    qte:1,unite:p.unite,pu:p.pu,rem:0,tva:(TAUX||p.tva),type:p.type,reference:p.reference||''});
-  noterPresta(p);
-  fermerCatalogue(); rendreLignes(); sauverBrouillon();
+
+function lignePresta(p, i){
+  var cle = clePresta(p), l = ligneDe(cle), q = l ? (Number(l.qte) || 0) : 0, actif = q > 0;
+  var sous = eur(p.pu) + (estForfait(p) ? ' · forfait' : ' / ' + ech(p.unite)) +
+             (String(p.type).toUpperCase() === 'MENSUEL' ? ' · mensuel' : '');
+  if(estSurface(p)){
+    sous += ' · <button class="lienM2" onclick="ouvrirSurface(' + i + ')">calculer</button>';
+  }
+  var saisie = estForfait(p)
+    ? '<button class="coche' + (actif ? ' on' : '') + '" onclick="basculerForfait(' + i + ')">' +
+        (actif ? 'Inclus' : 'Ajouter') + '</button>'
+    : '<input class="q" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0" ' +
+        'value="' + (actif ? q : '') + '" oninput="setQte(' + i + ',this.value,this)">';
+  return '<div class="pres' + (actif ? ' on' : '') + '" id="pr' + i + '">' +
+    '<div class="d"><b>' + ech(p.designation) + '</b><span>' + sous + '</span></div>' +
+    saisie +
+    '<div class="tt" id="tt' + i + '">' + (actif ? eur(montantL(l)) : '—') + '</div></div>';
 }
-/* Mémorise l'usage d'une prestation, en ne gardant que les 12 dernières. */
-function noterPresta(p){
-  var f = lsj('favs') || {};
-  f[p.designation] = Date.now();
-  var g = {};
-  Object.keys(f).sort(function(a,b){ return f[b]-f[a]; }).slice(0,12)
-    .forEach(function(k){ g[k] = f[k]; });
-  lsj('favs', g);
+
+function basculerGrp(k){
+  var nom = CATS[k];
+  if(nom === undefined) return;
+  GRP[nom] = !GRP[nom];
+  var e = $('grp' + k);
+  if(e) e.classList.toggle('on', !!GRP[nom]);
+}
+
+/* On repeint la ligne touchée, jamais la liste entière : un rendu complet
+   referme le clavier du téléphone au milieu d'un nombre. */
+function rafraichirLigne(i){
+  var p = ((CFG && CFG.catalogue) || [])[i];
+  if(!p) return;
+  var l = ligneDe(clePresta(p)), q = l ? (Number(l.qte) || 0) : 0;
+  var r = $('pr' + i), tt = $('tt' + i);
+  if(r) r.classList.toggle('on', q > 0);
+  if(tt) tt.textContent = q > 0 ? eur(montantL(l)) : '—';
+  majBadges();
+}
+
+/* Le compteur d'une catégorie fermée est tout ce que le commercial voit d'elle :
+   il doit dire à la fois combien de lignes et combien d'argent. */
+function majBadges(){
+  CATS.forEach(function(nom, k){
+    var e = $('cpt' + k);
+    if(!e) return;
+    var n = 0, ht = 0;
+    (CATP[nom] || []).forEach(function(p){
+      var l = ligneDe(clePresta(p));
+      if(l && (Number(l.qte) || 0) > 0){ n++; ht += montantL(l); }
+    });
+    e.textContent = n ? (n + ' · ' + eur(Math.round(ht * 100) / 100)) : '';
+    e.classList.toggle('hide', !n);
+  });
+}
+
+function setQte(i, v, el){
+  var p = ((CFG && CFG.catalogue) || [])[i];
+  if(!p) return;
+  var n = (String(v).trim() === '' ? 0 : Number(String(v).replace(',', '.')));
+  if(!isFinite(n) || n < 0){ n = 0; if(el) el.value = ''; }
+  poser(clePresta(p), n);
+  rafraichirLigne(i);
+  majBarre(); sauverBrouillon();
+}
+
+function basculerForfait(i){
+  var p = ((CFG && CFG.catalogue) || [])[i];
+  if(!p) return;
+  var cle = clePresta(p);
+  poser(cle, qteDe(cle) > 0 ? 0 : 1);
+  var on = qteDe(cle) > 0, r = $('pr' + i);
+  var b = r ? r.querySelector('.coche') : null;
+  if(b){ b.classList.toggle('on', on); b.textContent = on ? 'Inclus' : 'Ajouter'; }
+  rafraichirLigne(i);
+  majBarre(); sauverBrouillon();
+}
+
+/* Un brouillon enregistré avant une refonte du catalogue peut porter des lignes
+   que le classeur ne propose plus. On ne les efface pas en silence : c'est le
+   devis d'un client. On les montre à part, avec de quoi les retirer. */
+function lignesHorsCatalogue(){
+  var connues = {};
+  ((CFG && CFG.catalogue) || []).forEach(function(p){ connues[clePresta(p)] = 1; });
+  return LIGNES.filter(function(l){ return !connues[clePresta(l)]; });
+}
+function blocHorsCatalogue(){
+  var hs = lignesHorsCatalogue();
+  if(!hs.length) return '';
+  var h = '<div class="grp hcat on" id="grpHors"><div class="grpT">' +
+    '<span class="n">Hors catalogue</span>' +
+    '<span class="cpt">' + hs.length + '</span></div><div class="grpC">';
+  hs.forEach(function(l){
+    h += '<div class="pres on"><div class="d"><b>' + ech(l.designation) + '</b>' +
+      '<span>' + nb(l.qte) + ' ' + ech(l.unite || '') + ' · ' + eur(l.pu) +
+      ' · ne figure plus au catalogue</span></div>' +
+      '<button class="coche on" onclick="retirerHors(' + LIGNES.indexOf(l) + ')">Retirer</button>' +
+      '<div class="tt">' + eur(montantL(l)) + '</div></div>';
+  });
+  return h + '</div></div>';
+}
+function retirerHors(i){
+  LIGNES.splice(i, 1);
+  rendreLignes(); sauverBrouillon();
 }
 
 /* ====================== CALCULETTE DE SURFACE ======================
    On mesure pièce par pièce, l'appli additionne : c'est là que les erreurs
    de multiplication faites debout dans un hall coûtent le plus cher. */
 function ouvrirSurface(i){
-  SURF = {ligne:i, pieces:[{nom:'',l:'',w:''},{nom:'',l:'',w:''}]};
+  var p = ((CFG && CFG.catalogue) || [])[i];
+  if(!p) return;
+  // On retient la prestation, pas son rang : le catalogue peut être rafraîchi
+  // en arrière-plan pendant que la calculette est ouverte.
+  SURF = {cle:clePresta(p), rang:i, pieces:[{nom:'',l:'',w:''},{nom:'',l:'',w:''}]};
   rendreSurface();
   var d = $('dlgSurf');
   if(d.showModal) d.showModal();
@@ -1209,12 +1374,18 @@ function nb(n){
 }
 function appliquerSurface(){
   var t = totalSurface();
-  if(SURF.ligne !== null && LIGNES[SURF.ligne]){
-    LIGNES[SURF.ligne].qte = t;
-    var det = SURF.pieces.filter(function(p){ return surfacePiece(p) > 0; })
-      .map(function(p){ return (p.nom ? p.nom+' ' : '') + nb(surfacePiece(p)) + ' m²'; }).join(', ');
-    if(det && !LIGNES[SURF.ligne].detail) LIGNES[SURF.ligne].detail = det;
-    rendreLignes(); sauverBrouillon();
+  if(SURF.cle){
+    poser(SURF.cle, t);
+    // Le détail pièce par pièce est la seule chose que le commercial n'aurait
+    // pas pu écrire lui-même : il s'imprime sous la désignation.
+    var l = ligneDe(SURF.cle);
+    if(l){
+      var det = SURF.pieces.filter(function(p){ return surfacePiece(p) > 0; })
+        .map(function(p){ return (p.nom ? p.nom+' ' : '') + nb(surfacePiece(p)) + ' m²'; }).join(', ');
+      if(det) l.detail = det;
+    }
+    rafraichirLigne(SURF.rang);
+    majBarre(); sauverBrouillon();
   }
   fermerSurface();
 }
@@ -1246,131 +1417,77 @@ function lireRemise(txt){
   return { valeur: n, muet: muet };
 }
 
-/* Le maximum dépend du chantier, pas du classeur : 10 % est le plafond absolu
-   de l'entreprise, mais sur un chantier serré le maximum réel est plus bas, et
-   c'est le commercial qui le sait. Le message est donc son affirmation à lui,
-   déclenchée par l'absence du signe %. Il s'affiche dès qu'une remise est
-   accordée ; à zéro il n'aurait aucun sens. */
-function montrerPlafond(l){
-  return (Number(l.rem) || 0) > 0 && !l.remMuet;
+/* La remise est reportée sur chaque ligne : le classeur, le PDF et la facture
+   calculent tous à partir des lignes, et ils doivent tomber sur le même chiffre
+   que l'écran du commercial. */
+function appliquerRemise(){
+  LIGNES.forEach(function(l){ l.rem = REMISE.valeur; l.remMuet = REMISE.muet; });
 }
-
-function peindrePlafond(i){
-  var e = $('plaf' + i);
-  if(e) e.classList.toggle('hide', !montrerPlafond(LIGNES[i]));
-}
-
-function setRemise(i, txt, el){
+function setRemiseGlobale(txt, el){
   var r = lireRemise(txt), m = remiseMax();
   var borne = r.valeur > m ? m : r.valeur;
-  LIGNES[i].rem = borne;
-  LIGNES[i].remMuet = r.muet;
+  REMISE.valeur = borne;
+  REMISE.muet = r.muet;
   // On ne réécrit le champ que si la valeur a vraiment été ramenée au plafond :
   // sinon on empêcherait de taper « 0,5 » ou « 5 » avant son signe.
   if(el && borne !== r.valeur) el.value = borne + (r.muet ? ' %' : '');
-  var t = $('tl' + i);
-  if(t) t.textContent = eur(montantL(LIGNES[i]));
-  peindrePlafond(i);
+  appliquerRemise();
+  // C'est calculer() qui repeint le récapitulatif, le rappel du plafond et la
+  // barre du bas : sans lui, le client lirait un total d'avant la remise.
+  calculer();
+}
+/* Le maximum dépend du chantier, pas du classeur : 10 % est le plafond absolu
+   de l'entreprise, mais sur un chantier serré le maximum réel est plus bas, et
+   c'est le commercial qui le sait. Le message est donc son affirmation à lui,
+   déclenchée par l'absence du signe %. */
+function montrerPlafond(){
+  return REMISE.valeur > 0 && !REMISE.muet;
+}
+function peindreRemise(){
+  var e = $('remHT');
+  if(e) e.textContent = eur(totaux().ht);
+  var p = $('plafG');
+  if(p) p.classList.toggle('hide', !montrerPlafond());
   majBarre();
-  sauverBrouillon();
+}
+/* Le bloc disparaît quand le bureau interdit toute remise : un champ grisé
+   invite à la demander, un bloc absent ne se remarque pas. */
+function ecranRemise(){
+  var c = $('cRem');
+  if(!c) return;
+  c.classList.toggle('hide', remiseMax() <= 0);
+  var e = $('remG');
+  if(e) e.value = REMISE.valeur + (REMISE.muet ? ' %' : '');
+  peindreRemise();
 }
 
-/* ====================== LIGNES ====================== */
-function rendreLignes(){
-  var c = $('lignes');
-  if(!LIGNES.length){
-    c.innerHTML='<div class="card"><div class="empty">Aucune prestation.<br>Ajoute une ligne depuis le catalogue.</div></div>';
-    majBarre(); return;
-  }
-  /* Ce que le catalogue possède — désignation, unité, prix, TVA, type — s'affiche
-     mais ne se saisit pas. Le commercial garde la main sur ce qui relève du
-     chantier : la quantité, le détail, le poste, et la remise dans la limite
-     fixée au bureau. */
-  var rMax = remiseMax();
-  c.innerHTML = LIGNES.map(function(l,i){
-    return '<div class="ligne">'+
-      '<div class="t"><div style="flex:1">'+
-        '<div style="font-weight:600;font-size:15px">'+ech(l.designation)+'</div>'+
-        '<input value="'+ech(l.detail)+'" placeholder="Détail (facultatif)" oninput="setL('+i+',\'detail\',this.value)" style="border:0;padding:2px 0 0;font-size:12.5px;color:#6b7280">'+
-        '<span class="chip'+(l.type==='MENSUEL'?'':' p')+'">'+(l.type==='MENSUEL'?'Mensuel récurrent':'Ponctuel')+'</span>'+
-      '</div><button class="x" onclick="supprL('+i+')">Suppr.</button></div>'+
-      '<div class="g">'+
-        '<div><label>Quantité</label><div style="display:flex;gap:5px">'+
-          '<input type="number" inputmode="decimal" step="0.01" min="0" value="'+l.qte+'" style="flex:1;min-width:0" oninput="setL('+i+',\'qte\',this.value,this)">'+
-          '<button class="btn sec" style="flex:0 0 44px;padding:9px 0;font-size:13px" title="Calculer une surface" onclick="ouvrirSurface('+i+')">m²</button>'+
-        '</div></div>'+
-        '<div><label>Unité</label><div class="fige">'+ech(l.unite||'—')+'</div></div>'+
-        '<div><label>P.U. HT</label><div class="fige" id="pu'+i+'">'+eur(l.pu)+'</div></div>'+
-      '</div>'+
-      '<div class="g">'+
-        (rMax > 0
-          // Pas d'inputmode : « decimal » ouvre le pavé numérique du téléphone,
-          // où le signe % n'existe pas — le commercial ne pourrait pas le taper.
-          // Et pas de plafond dans l'étiquette : cet écran peut être montré au
-          // client, il n'a pas à y lire jusqu'où l'entreprise peut descendre.
-          ? '<div><label>Remise %</label>'+
-              '<input type="text" id="rem'+i+'" autocomplete="off" autocapitalize="off" '+
-                'autocorrect="off" spellcheck="false" value="'+
-                (l.rem||0)+(l.remMuet?' %':'')+'" oninput="setRemise('+i+',this.value,this)"></div>'
-          : '<div><label>Remise</label><div class="fige">non autorisée</div></div>')+
-        '<div><label>TVA %</label><div class="fige">'+nb(l.tva)+' %</div></div>'+
-        '<div><label>Poste</label><input value="'+ech(l.categorie)+'" placeholder="Poste" oninput="setL('+i+',\'categorie\',this.value)"></div>'+
-      '</div>'+
-      // Sur toute la largeur, jamais coincé dans une colonne : ce message peut
-      // être montré à un client, il doit se lire d'un coup d'œil.
-      (rMax > 0
-        ? '<div id="plaf'+i+'" class="plafond'+(montrerPlafond(l)?'':' hide')+
-            '">Remise maximale accordée</div>'
-        : '')+
-      '<div class="ft"><span style="color:#6b7280">Total HT ligne</span><b id="tl'+i+'">'+
-        eur(montantL(l))+'</b></div></div>';
-  }).join('');
-  majBarre();
+/* ====================== MONTANTS ====================== */
+/* Montant brut d'une ligne, remise non déduite : c'est lui qu'on additionne
+   par poste, la remise se lisant ensuite en une seule ligne. */
+function brutL(l){
+  return Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) * 100) / 100;
 }
 function montantL(l){
-  return Math.round((Number(l.qte)||0)*(Number(l.pu)||0)*(1-(Number(l.rem)||0)/100)*100)/100;
+  return Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) *
+                    (1 - (Number(l.rem) || 0) / 100) * 100) / 100;
 }
-/* Un devis ne peut pas porter une quantité ou un prix négatif, ni une remise
-   de plus de 100 % : une faute de frappe donnerait un total négatif au client. */
-function setL(i,k,v,el){
-  // Le prix, la TVA, l'unité, la désignation et le type appartiennent au
-  // catalogue : aucun écran ne les modifie, et une tentative est ignorée.
-  if(k==='pu' || k==='tva' || k==='unite' || k==='designation' || k==='type') return;
-  if(k==='qte'||k==='rem'){
-    var n = (v === '' ? 0 : Number(v)), borne = n;
-    if(!isFinite(borne) || borne < 0) borne = 0;
-    if(k === 'rem'){
-      var m = remiseMax();
-      if(borne > m) borne = m;
-    }
-    // On ne réécrit le champ que si la valeur a vraiment été ramenée dans les
-    // clous : sinon on empêcherait de taper « 0,5 », qui vaut 0 un instant.
-    if(el && borne !== n) el.value = borne;
-    LIGNES[i][k] = borne;
-  } else {
-    LIGNES[i][k] = v;
-  }
-  if(k==='type'){ rendreLignes(); }
-  else{
-    var l=LIGNES[i], t=$('tl'+i);
-    if(t) t.textContent = eur(montantL(l));
-    majBarre();
-  }
-  sauverBrouillon();
-}
-function supprL(i){ LIGNES.splice(i,1); rendreLignes(); sauverBrouillon(); }
 
-/* ====================== TOTAUX ====================== */
 function totaux(){
-  var t = {htPonctuel:0,htMensuel:0,ht:0,tva:0,ttc:0,parTaux:{}};
+  var t = {htPonctuel:0,htMensuel:0,ht:0,brut:0,remise:0,tva:0,ttc:0,parTaux:{}};
   LIGNES.forEach(function(l){
     var b = montantL(l), taux = Number(l.tva)||0;
+    t.brut += brutL(l);
     if(String(l.type).toUpperCase()==='MENSUEL') t.htMensuel+=b; else t.htPonctuel+=b;
     t.tva += b*taux/100;
     t.parTaux[taux] = (t.parTaux[taux]||0) + b*taux/100;
   });
   t.ht=t.htPonctuel+t.htMensuel; t.ttc=t.ht+t.tva;
-  ['htPonctuel','htMensuel','ht','tva','ttc'].forEach(function(k){ t[k]=Math.round(t[k]*100)/100; });
+  // La remise affichée est la différence réelle entre le brut et le net, jamais
+  // un pourcentage appliqué au total : sinon l'arrondi du PDF et celui du
+  // classeur, qui calculent ligne à ligne, ne tomberaient pas sur le même euro.
+  t.remise = t.brut - t.ht;
+  ['htPonctuel','htMensuel','ht','brut','remise','tva','ttc']
+    .forEach(function(k){ t[k]=Math.round(t[k]*100)/100; });
   Object.keys(t.parTaux).forEach(function(k){ t.parTaux[k]=Math.round(t.parTaux[k]*100)/100; });
   return t;
 }
@@ -1380,7 +1497,7 @@ function calculer(){
   LIGNES.forEach(function(l){
     var k = String(l.categorie||'').trim() || 'Prestations';
     if(!postes[k]){ postes[k]=0; ordre.push(k); }
-    postes[k] += montantL(l);
+    postes[k] += brutL(l);
   });
   ordre.forEach(function(k){
     h += '<div class="tot"><span>'+ech(k)+'</span><b>'+eur(Math.round(postes[k]*100)/100)+'</b></div>';
@@ -1389,12 +1506,19 @@ function calculer(){
   if(t.htMensuel && t.htPonctuel){
     h+='<div class="tot"><span>dont abonnement mensuel HT</span><b>'+eur(t.htMensuel)+'</b></div>';
   }
+  // Les sous-totaux par poste sont bruts : la remise se lit ensuite, en une
+  // seule ligne, comme un client s'attend à la voir sur un devis.
+  if(t.remise > 0){
+    h+='<div class="tot"><span>Sous-total HT</span><b>'+eur(t.brut)+'</b></div>';
+    h+='<div class="tot"><span>Remise '+nb(REMISE.valeur)+' %</span><b>\u2212 '+eur(t.remise)+'</b></div>';
+  }
   h+='<div class="tot"><span>Total HT</span><b>'+eur(t.ht)+'</b></div>';
   Object.keys(t.parTaux).sort(function(a,b){return a-b;}).forEach(function(taux){
     h+='<div class="tot"><span>TVA '+taux+' %</span><b>'+eur(t.parTaux[taux])+'</b></div>';
   });
   h+='<div class="tot big"><span style="color:inherit">Total TTC</span><span>'+eur(t.ttc)+'</span></div>';
   $('recap').innerHTML = h;
+  peindreRemise();
   majBarre(); sauverBrouillon();
 }
 function majBarre(){
@@ -1527,7 +1651,7 @@ function signeLisible(e){
   var t = (e.devis||{}).signeLe;
   if(!t) return 'Signé par le client.';
   var d = new Date(t);
-  return 'Signé le ' + jjmmaa(d.toISOString().slice(0,10)) +
+  return 'Signé le ' + jjmmaa(isoJour(d)) +
          ' à ' + ('0'+d.getHours()).slice(-2) + 'h' + ('0'+d.getMinutes()).slice(-2) + '.';
 }
 function majApercuSignature(){
@@ -1701,10 +1825,26 @@ function lireClient(){
 }
 function sauverBrouillon(){
   lsj('brouillon', {client:lireClient(), lignes:LIGNES, objet:val('fObjet'),
-                    plus2ans:PLUS2ANS, taux:TAUX, delai:val('fDelai'), notes:val('fNotes')});
+                    plus2ans:PLUS2ANS, taux:TAUX, delai:val('fDelai'), notes:val('fNotes'),
+                    remise:{valeur:REMISE.valeur, muet:REMISE.muet}});
 }
 function restaurer(b){
   LIGNES = b.lignes||[];
+  REMISE = {valeur:0, muet:false};
+  if(b.remise && typeof b.remise === 'object'){
+    REMISE = {valeur:Number(b.remise.valeur)||0, muet:!!b.remise.muet};
+  } else {
+    // Un brouillon d'avant la remise unique portait un taux par ligne : on
+    // retient le plus fort, c'est celui que le client a en tête.
+    LIGNES.forEach(function(l){
+      var r = Number(l.rem)||0;
+      if(r > REMISE.valeur){ REMISE.valeur = r; REMISE.muet = !!l.remMuet; }
+    });
+  }
+  var mx = remiseMax();
+  if(REMISE.valeur > mx) REMISE.valeur = mx;
+  appliquerRemise();
+  ordonnerLignes();
   var c = b.client||{};
   TYPE = (c.type === 'PART') ? 'PART' : 'PRO';
   majType();
@@ -1788,7 +1928,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       lignes: LIGNES.slice(),
       objet: val('fObjet'),
       delai: val('fDelai'),
-      remise: 0,        // la remise est portée par chaque ligne
+      remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
       notes: val('fNotes'),
       signataire: val('fSignataire'),
       signature: SIG.image || '',
@@ -1881,10 +2021,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=38';
+    sc.src = 'visionneuse.js?v=39';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=38';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=39';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2250,7 +2390,7 @@ function detailVerdict(e){
 function detailEtat(e){
   if(e.verdict === 'REFUSE' && e.motif) return '<br>Refusé : ' + ech(e.motif);
   if(e.verdict === 'RELANCE' && e.relance){
-    var dû = (e.relance <= new Date().toISOString().slice(0,10));
+    var dû = (e.relance <= isoJour());
     return '<br>' + (dû ? 'À relancer maintenant (prévu le ' : 'Relance prévue le ') +
            jjmmaa(e.relance) + (dû ? ')' : '');
   }
@@ -2267,7 +2407,7 @@ function detailEtat(e){
 function peindreRappels(l){
   var z = $('rappels');
   if(!z) return;
-  var auj = new Date().toISOString().slice(0,10);
+  var auj = isoJour();
   var hier = new Date(Date.now() - 86400000).getTime();
   var rel = l.filter(function(e){ return e.verdict === 'RELANCE' && e.relance && e.relance <= auj; });
   var sans = l.filter(function(e){ return !e.verdict && Number(e.cree||0) < hier; });
@@ -2761,6 +2901,16 @@ function chargerPlanning(btn){
   });
 }
 
+/* La date du jour, à l'heure de la France et non à celle de Greenwich.
+   toISOString() renvoie la date UTC : entre minuit et deux heures du matin,
+   elle est encore celle de la veille. Un devis signé à 00h30 portait alors la
+   date du jour précédent, et le chantier d'hier remontait en tête du planning. */
+function isoJour(d){
+  d = d ? new Date(d) : new Date();
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) +
+         '-' + ('0' + d.getDate()).slice(-2);
+}
+
 function jourLisible(iso){
   var d = new Date(iso + 'T12:00:00');
   if(isNaN(d.getTime())) return iso;
@@ -2782,7 +2932,7 @@ function peindrePlanning(){
       $('agQuand').textContent = '—';
       return;
     }
-    var aujourdhui = new Date().toISOString().slice(0,10);
+    var aujourdhui = isoJour();
     var reste = l.filter(function(x){ return x.date >= aujourdhui && x.statut !== 'FAIT'; }).length;
     $('agQuand').textContent = reste
       ? reste + ' chantier' + (reste>1?'s':'') + ' à venir'
@@ -3036,6 +3186,8 @@ function pousserChantiers(){
 function nouveauDevis(){
   debloquer($('bSuiv'));
   LIGNES = [];
+  REMISE = {valeur:0, muet:false};
+  GRP = {};
   PHOTO_ID = null;
   cacherSugg();
   ['cSociete','cSiret','cTva','cContact','cTel','cEmail','cAdresse','cCp','cVille','fSignataire','fNotes','fObjet','fDelai']

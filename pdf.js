@@ -18,13 +18,15 @@ var PDF = (function () {
 
   /* Colonnes du tableau, en millimètres.
      g = bord gauche pour le texte aligné à gauche, d = bord droit pour les nombres. */
+  /* La remise n'a plus de colonne : elle est la même sur toutes les lignes, et
+     la répéter quatorze fois ne dit rien de plus qu'une ligne en bas de page.
+     Les 20 mm libérés vont à la désignation, qui en manquait. */
   var COL = {
     ref: { g: M + 2, l: 20 },
-    des: { g: 32, l: 43 },
-    qte: { d: 96 },
-    uni: { g: 99, l: 15 },
-    pu:  { d: 137 },
-    rem: { d: 157 },
+    des: { g: 32, l: 63 },
+    qte: { d: 114 },
+    uni: { g: 117, l: 15 },
+    pu:  { d: 155 },
     tva: { d: 173 },
     ht:  { d: R - 2 }
   };
@@ -55,6 +57,10 @@ var PDF = (function () {
   }
   function txt(s) { return String(s == null ? '' : s).replace(/ /g, ' '); }
 
+  /* Brut : quantité fois prix, remise non déduite. */
+  function brutLigne(l) {
+    return Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) * 100) / 100;
+  }
   function montantLigne(l) {
     return Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) *
                       (1 - (Number(l.rem) || 0) / 100) * 100) / 100;
@@ -80,7 +86,7 @@ var PDF = (function () {
         // le poste passe en capitales, pas l'unité : « VITRERIE ( 24 m² ) »
         titre: k.toUpperCase() + (meme && q && q !== 1 ? ' ( ' + nombre(q, 0) + ' ' + u + ' )' : ''),
         lignes: ls,
-        sousTotal: Math.round(ls.reduce(function (s, l) { return s + montantLigne(l); }, 0) * 100) / 100
+        sousTotal: Math.round(ls.reduce(function (s, l) { return s + brutLigne(l); }, 0) * 100) / 100
       };
     });
   }
@@ -190,7 +196,6 @@ var PDF = (function () {
       doc.text('Quantité', COL.qte.d, yy + 4.4, { align: 'right' });
       doc.text('Unité', COL.uni.g, yy + 4.4);
       doc.text('PU Vente', COL.pu.d, yy + 4.4, { align: 'right' });
-      doc.text('% Rem', COL.rem.d, yy + 4.4, { align: 'right' });
       doc.text('TVA', COL.tva.d, yy + 4.4, { align: 'right' });
       doc.text('Montant HT', COL.ht.d, yy + 4.4, { align: 'right' });
       ligneH(yy + 6.4);
@@ -256,10 +261,11 @@ var PDF = (function () {
         doc.text(nombre(l.qte, 2), COL.qte.d, yl, { align: 'right' });
         doc.text(couper(l.unite, COL.uni.l)[0] || '', COL.uni.g, yl);
         doc.text(eur(l.pu, 4), COL.pu.d, yl, { align: 'right' });
-        doc.text(nombre(l.rem || 0, 2), COL.rem.d, yl, { align: 'right' });
         doc.text(nombre(l.tva || 0, 2), COL.tva.d, yl, { align: 'right' });
         police('bold', 8.2);
-        doc.text(eur(montantLigne(l)), COL.ht.d, yl, { align: 'right' });
+        // Le montant de la ligne reste brut : la remise se déduit une fois, en
+        // bas, sous les yeux du client, et non quatorze fois en silence.
+        doc.text(eur(brutLigne(l)), COL.ht.d, yl, { align: 'right' });
 
         y += hL;
         ligneH(y);
@@ -287,13 +293,32 @@ var PDF = (function () {
     });
     ordreTaux.sort(function (a, b) { return a - b; });
 
-    var hBoite = 18 + ordreTaux.length * 5.4;
+    /* Le brut se recalcule à partir des lignes plutôt que de se lire dans les
+       totaux : un devis établi avant la remise unique n'a pas ce champ, et son
+       PDF doit continuer à sortir juste. */
+    var brutTotal = Math.round((devis.lignes || []).reduce(
+      function (s, l) { return s + brutLigne(l); }, 0) * 100) / 100;
+    var remiseEur = Math.round((brutTotal - (Number(t.ht) || 0)) * 100) / 100;
+    var remisePct = Number(devis.remise) || 0;
+    var avecRemise = remiseEur > 0.005;
+
+    var hBoite = 18 + ordreTaux.length * 5.4 + (avecRemise ? 10.8 : 0);
     if (y + hBoite + 10 > BAS_UTILE) { y = nouvellePage(); }
     y += 6;
 
     var xB = 118, wB = R - xB;
     fond(MARQUE); doc.rect(xB, y, wB, hBoite, 'F');
     var yt = y + 6.2;
+    if (avecRemise) {
+      police('normal', 9, [255, 255, 255]);
+      doc.text('Sous-total HT', xB + wB - 52, yt, { align: 'right' });
+      doc.text(eur(brutTotal), R - 4, yt, { align: 'right' });
+      yt += 5.4;
+      doc.text('Remise' + (remisePct ? ' ( ' + nombre(remisePct, 2) + ' % )' : ''),
+               xB + wB - 52, yt, { align: 'right' });
+      doc.text('- ' + eur(remiseEur), R - 4, yt, { align: 'right' });
+      yt += 5.4;
+    }
     police('normal', 9, [255, 255, 255]);
     doc.text('Total HT', xB + wB - 52, yt, { align: 'right' });
     doc.text(eur(t.ht), R - 4, yt, { align: 'right' });
@@ -476,6 +501,7 @@ var PDF = (function () {
     },
     nomFichier: nomFichier,
     montantLigne: montantLigne,
+    brutLigne: brutLigne,
     eur: eur,
     dateFr: dateFr
   };

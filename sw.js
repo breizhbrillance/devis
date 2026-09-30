@@ -1,19 +1,19 @@
 /* Service worker : met l'application en cache pour qu'elle démarre sans réseau.
    Après toute modification des fichiers, incrémenter VERSION pour forcer la mise à jour. */
 
-var VERSION = 'devis-v38';
+var VERSION = 'devis-v39';
 
 var FICHIERS = [
   './',
   'index.html',
-  'config.js?v=38',
-  'jspdf.umd.min.js?v=38',
-  'police.js?v=38',
-  'logo.js?v=38',
-  'pdf.js?v=38',
-  'visionneuse.js?v=38',
-  'visionneuse.worker.js?v=38',
-  'app.js?v=38',
+  'config.js?v=39',
+  'jspdf.umd.min.js?v=39',
+  'police.js?v=39',
+  'logo.js?v=39',
+  'pdf.js?v=39',
+  'visionneuse.js?v=39',
+  'visionneuse.worker.js?v=39',
+  'app.js?v=39',
   'manifest.webmanifest',
   'icon-192.png',
   'icon-512.png'
