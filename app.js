@@ -278,7 +278,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v35';
+var VERSION_APP = 'v36';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -406,6 +406,7 @@ function fermerDialogues(){
   });
   var s = $('sigOverlay');
   if(s) s.classList.add('hide');
+  if($('pdfOverlay') && !$('pdfOverlay').classList.contains('hide')) fermerPdf();
   repondreParDefaut();
 }
 
@@ -1399,7 +1400,7 @@ function majBarre(){
 }
 
 /* ====================== SIGNATURE ====================== */
-var SIG = {cv:null, ctx:null, dessine:false, vide:true, image:''};
+var SIG = {cv:null, ctx:null, dessine:false, vide:true, image:'', quand:0};
 function initSignature(){
   SIG.cv = $('sig');
   var r = SIG.cv.getBoundingClientRect(), d = window.devicePixelRatio||1;
@@ -1424,6 +1425,8 @@ function fermerSignature(valider){
   if(SIG_APRES) return fermerSignatureApres(valider);
   if(valider){
     SIG.image = SIG.vide ? '' : SIG.cv.toDataURL('image/png');
+    // L'heure compte autant que le trait : c'est elle qui date l'accord.
+    SIG.quand = SIG.image ? Date.now() : 0;
   }
   $('sigOverlay').classList.add('hide');
   majApercuSignature();
@@ -1550,7 +1553,7 @@ function brancherSignature(){
 }
 function effacerSignature(){
   if(SIG.ctx) SIG.ctx.clearRect(0,0,SIG.cv.width,SIG.cv.height);
-  SIG.vide = true; SIG.image = '';
+  SIG.vide = true; SIG.image = ''; SIG.quand = 0;
   majApercuSignature();
 }
 
@@ -1783,6 +1786,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       notes: val('fNotes'),
       signataire: val('fSignataire'),
       signature: SIG.image || '',
+      signeLe: SIG.image ? (SIG.quand || Date.now()) : 0,
       totaux: totaux()
     };
     var pdf64 = PDF.base64(devis, CFG.reglages);
@@ -1793,14 +1797,21 @@ function enregistrerSuite(b, envoi, moi, secours){
       envoyerClient: envoi, statut: 'attente', cree: Date.now(),
       nom: moi.nom, code: moi.code, appareil: APPAREIL, pdfUrl: '',
       photos: [],           // prises plus tard, depuis « Mes devis »
-      verdict: '', motif: '', relance: '', note: '', verdictEnvoye: false
+      // Un devis que le client a signé n'a pas de résultat à demander : il est
+      // signé, et l'application doit le dire comme le classeur l'enregistre.
+      verdict: devis.signature ? 'SIGNE' : '',
+      verdictLe: devis.signature ? Date.now() : 0,
+      motif: '', relance: '', note: '', verdictEnvoye: false
     };
     DERNIER = enr;
     DB.put(enr).then(function(){
       var cl = devis.client.societe || devis.client.contact || '';
       tracer('DEVIS CREE', cl + ' — ' + eur(devis.totaux.ttc) + ' TTC — TVA ' +
              (TAUX || '?') + ' %', devis.numero);
-      if(devis.signature) tracer('SIGNATURE CLIENT', devis.signataire || cl, devis.numero);
+      if(devis.signature){
+        tracer('SIGNATURE CLIENT', devis.signataire || cl, devis.numero);
+        tracer('RESULTAT SIGNE', 'signé à l\'écran', devis.numero);
+      }
       lsj('brouillon', null);
       chargerRepertoire();
       $('okNum').textContent = devis.numero;
@@ -1847,6 +1858,115 @@ function partager(enr){
   a.href=url; a.download=enr.nomFichier; document.body.appendChild(a); a.click();
   setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 4000);
 }
+/* ====================== VOIR LE DEVIS ======================
+   Le PDF s'ouvre dans l'application, en plein écran : le commercial le montre
+   au client sans rien télécharger ni quitter l'outil. C'est de là qu'on
+   imprime ou qu'on envoie — sur iPhone, l'impression passe obligatoirement par
+   la feuille de partage du système, aucune application web ne peut l'ouvrir
+   elle-même. */
+var PDF_VU = null, PDF_URL = null;
+
+/* Le moteur de rendu (pdf.js, Mozilla) pèse lourd : on ne le charge que la
+   première fois qu'on ouvre un devis, pas au démarrage. Il est en cache, donc
+   ce chargement marche aussi sans réseau. */
+var LECTEUR = null;
+function chargerLecteur(){
+  if(LECTEUR) return LECTEUR;
+  LECTEUR = new Promise(function(res, rej){
+    if(window.pdfjsLib) return res(window.pdfjsLib);
+    var sc = document.createElement('script');
+    sc.src = 'visionneuse.js?v=36';
+    sc.onload = function(){
+      if(!window.pdfjsLib) return rej(new Error('moteur absent'));
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=36';
+      res(window.pdfjsLib);
+    };
+    sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
+    document.head.appendChild(sc);
+  });
+  return LECTEUR;
+}
+
+/* Chaque page du devis est dessinée dans la page elle-même. C'est ce qui
+   permet au bouton « Imprimer » d'ouvrir la fenêtre d'impression du téléphone :
+   on imprime un écran, pas un fichier — un PDF dans un cadre n'est pas une
+   page imprimable, la commande resterait sans effet. */
+function ouvrirPdf(enr){
+  if(!enr || !enr.pdf) return erreur('Le PDF de ce devis n\'est pas disponible sur cet appareil.');
+  erreur('');
+  PDF_VU = enr;
+  $('poNum').textContent = enr.numero + (estSigne(enr) ? ' · signé' : '');
+  $('poPages').innerHTML = '<div class="empty">Ouverture du devis…</div>';
+  $('pdfOverlay').classList.remove('hide');
+  tracer('PDF AFFICHE', enr.nomFichier || '', enr.numero);
+  dessinerPdf(enr).catch(function(e){
+    $('poPages').innerHTML = '<div class="empty">Le devis n\'a pas pu être affiché ici.<br>' +
+      'Utilise « Imprimer ou envoyer » pour l\'ouvrir.</div>';
+    tracer('ERREUR VISIONNEUSE', String(e && e.message || e), enr.numero);
+  });
+}
+
+function dessinerPdf(enr){
+  return chargerLecteur().then(function(lib){
+    var bin = atob(enr.pdf), n = bin.length, u = new Uint8Array(n);
+    for(var i=0;i<n;i++) u[i] = bin.charCodeAt(i);
+    return lib.getDocument({data:u}).promise;
+  }).then(function(doc){
+    var z = $('poPages');
+    z.innerHTML = '';
+    // 180 points par pouce : assez fin pour être imprimé sans que la page
+    // pèse trop en mémoire sur un téléphone.
+    var echelle = 2.5;
+    var suite = Promise.resolve();
+    for(var n = 1; n <= doc.numPages; n++){
+      (function(num){
+        suite = suite.then(function(){
+          return doc.getPage(num).then(function(page){
+            var vue = page.getViewport({scale: echelle});
+            var cv = document.createElement('canvas');
+            cv.width = Math.round(vue.width); cv.height = Math.round(vue.height);
+            cv.className = 'poPage';
+            z.appendChild(cv);
+            return page.render({canvasContext: cv.getContext('2d'), viewport: vue}).promise;
+          });
+        });
+      })(n);
+    }
+    return suite;
+  });
+}
+
+function fermerPdf(){
+  $('pdfOverlay').classList.add('hide');
+  $('poPages').innerHTML = '';
+  if(PDF_URL){ try{ URL.revokeObjectURL(PDF_URL); }catch(e){} PDF_URL = null; }
+  PDF_VU = null;
+}
+
+/* Imprimer : la fenêtre d'impression du système s'ouvre sur les pages
+   dessinées ci-dessus, et sur elles seules (voir la règle @media print). */
+function imprimerVu(){
+  if(!PDF_VU) return;
+  tracer('PDF IMPRIME', PDF_VU.nomFichier || '', PDF_VU.numero);
+  window.print();
+}
+function voirDernier(btn){
+  if(btn) occuper(btn, 'Préparation…');
+  peindre().then(function(){ ouvrirPdf(DERNIER); if(btn) setTimeout(function(){ libere(btn); }, 400); });
+}
+function voirPdfId(id, btn){
+  if(btn) occuper(btn, '…');
+  DB.get(id).then(function(e){ ouvrirPdf(e); if(btn) setTimeout(function(){ libere(btn); }, 400); },
+                  function(){ if(btn) libere(btn); });
+}
+/* Envoyer : la feuille de partage du système — mail, messagerie, AirDrop. */
+function partagerVu(btn){
+  if(!PDF_VU) return;
+  if(btn) occuper(btn, '…');
+  partager(PDF_VU);
+  if(btn) setTimeout(function(){ libere(btn); }, 600);
+}
+
 function partagerDernier(btn){
   if(btn) occuper(btn, 'Préparation…');
   peindre().then(function(){ partager(DERNIER); if(btn) setTimeout(function(){ libere(btn); }, 600); });
@@ -2088,7 +2208,7 @@ function rendreHistorique(){
         (e.numeroPdf?' · renuméroté (PDF client : '+ech(e.numeroPdf)+')':'')+
         detailVerdict(e)+'</span></div>'+
         '<div class="acts">'+
-        '<button class="btn sec sm" onclick="partagerId(\''+e.id+'\', this)">PDF</button>'+
+        '<button class="btn sec sm" onclick="voirPdfId(\''+e.id+'\', this)">Voir le PDF</button>'+
         '<button class="btn sec sm" onclick="ouvrirVerdict(\''+e.id+'\')">Résultat</button>'+
         '<button class="btn sec sm" onclick="ouvrirPhotos(\''+e.id+'\', \''+
           (e.verdict==='SIGNE' && !sig ? 'SIGNE' : 'SITE')+'\')">Photos'+(ph?' ('+ph+')':'')+'</button>'+
