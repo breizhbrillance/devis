@@ -1,0 +1,14 @@
+{
+  "name": "devis-banc-essai",
+  "private": true,
+  "type": "module",
+  "description": "Banc d'essai de l'application de devis BREIZH BRILLANCE",
+  "scripts": {
+    "test": "node tous.mjs",
+    "test:classeur": "node tous.mjs classeur",
+    "test:appli": "node tous.mjs appli"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  }
+}
