@@ -109,6 +109,20 @@ T('le fichier porte le nom du devis',
 T('et il n\'est pas vide', part[0] && part[0].fichiers[0][2] > 5000, part);
 T('rien n\'a été téléchargé à la place',
   (await p.evaluate(()=>document.querySelectorAll('a[download]').length)) === 0);
+
+/* Un ordinateur sait parfois partager un fichier, mais sa feuille n'imprime
+   pas : notre bouton doit y rester, même quand le partage est possible. */
+await p.evaluate(()=>{
+  const vrai = window.matchMedia.bind(window);
+  window.matchMedia = (q) => /coarse/.test(q) ? {matches:false, media:q} : vrai(q);
+});
+await p.evaluate(()=>{ fermerPdf(); });
+await p.waitForTimeout(400);
+await p.evaluate(()=>ouvrirPdf(PDF_VU || DERNIER));
+await p.waitForTimeout(1200);
+T('sur un ordinateur qui sait partager, « Imprimer » reste quand même',
+  await p.isVisible('#pdfOverlay button:has-text("Imprimer")'));
+T('et « Partager » aussi', await p.isVisible('#pdfOverlay button:has-text("Partager")'));
 T('à l\'impression, seules les pages du devis restent', await p.evaluate(()=>{
   const r=[...document.styleSheets].flatMap(f=>{ try{return [...f.cssRules];}catch(e){return [];} })
     .filter(x=>x.media && String(x.media.mediaText).indexOf('print')>=0);
