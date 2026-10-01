@@ -115,6 +115,80 @@ T('sa remise est retrouvée depuis les lignes', /Sous-total HT/.test(vieux), vie
 T('sans taux affiché, puisque le devis ne le portait pas',
   /Remise/.test(vieux) && !/Remise\s*\(/.test(vieux), vieux.slice(-500));
 
+/* ---------- l'interlocuteur ne s'imprime pas chez un professionnel ---------- */
+const lire = (cl, sign, sig) => p.evaluate(async (o) => {
+  const lignes = [{categorie:'Vitrerie', reference:'REF-0001', designation:'Nettoyage de vitres',
+    detail:'', qte:10, unite:'m²', pu:2.5, rem:0, tva:20, type:'PONCTUEL'}];
+  const devis = {
+    numero:'DEV-2026-SL-0010', date:new Date().toISOString(),
+    validite:new Date(Date.now()+30*86400000).toISOString(), commercial:'SIMON LG',
+    client:o.cl, lignes:lignes, objet:'', delai:'sous 15 jours', remise:0, notes:'',
+    signataire:o.sign || '', signature:o.sig || '', signeLe:o.sig ? Date.now() : 0,
+    totaux:{ht:25, tva:5, ttc:30, htPonctuel:25, htMensuel:0, parTaux:{20:5}}
+  };
+  const b64 = PDF.base64(devis, CFG.reglages);
+  const bin = atob(b64.split(',').pop());
+  const oct = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) oct[i] = bin.charCodeAt(i);
+  const doc = await window.pdfjsLib.getDocument({data:oct}).promise;
+  let txt = '';
+  for(let n=1; n<=doc.numPages; n++){
+    const tc = await (await doc.getPage(n)).getTextContent();
+    txt += tc.items.map(i=>i.str).join(' ') + '\n';
+  }
+  return txt;
+}, {cl:cl, sign:sign, sig:sig});
+
+const pro = await lire({type:'PRO', societe:'MAIRIE DE PLOEREN', contact:'Mme Le Gall',
+  adresse:'1 place de la Mairie', cp:'56880', ville:'Ploeren',
+  siret:'21560177700015', tva:'', tel:'0297000000', email:'mairie@ploeren.bzh'});
+T('chez un professionnel, la société est imprimée', /MAIRIE DE PLOEREN/.test(pro));
+T('mais pas le nom de l\'interlocuteur', !/Le Gall/.test(pro), pro.slice(0, 700));
+T('l\'adresse du client reste', /place de la Mairie/.test(pro));
+T('son téléphone reste', /0297000000/.test(pro));
+T('son SIRET reste', /21560177700015/.test(pro));
+
+/* Chez un particulier, cette personne EST le client : elle doit rester. */
+const part = await lire({type:'PART', societe:'', contact:'Madame Hervé',
+  adresse:'3 allée des Chênes', cp:'56000', ville:'Vannes',
+  siret:'', tva:'', tel:'0600000000', email:''});
+T('chez un particulier, le nom du client est bien imprimé',
+  /Hervé/.test(part), part.slice(0, 700));
+T('et son adresse aussi', /allée des Chênes/.test(part));
+T('le bordereau de rétractation le nomme aussi',
+  (part.match(/Hervé/g) || []).length >= 2, (part.match(/Hervé/g) || []).length);
+
+/* Le signataire, lui, se nomme : c'est tout l'objet d'une signature.
+   Le bloc de signature n'apparaît que si le client a vraiment signé. */
+const trait = await p.evaluate(() => {
+  const c = document.createElement('canvas'); c.width = 200; c.height = 60;
+  const x = c.getContext('2d'); x.lineWidth = 3; x.beginPath();
+  x.moveTo(10, 40); x.lineTo(180, 20); x.stroke();
+  return c.toDataURL('image/png');
+});
+const signe = await lire({type:'PRO', societe:'MAIRIE DE PLOEREN', contact:'Mme Le Gall',
+  adresse:'1 place de la Mairie', cp:'56880', ville:'Ploeren',
+  siret:'', tva:'', tel:'', email:''}, 'Mme Le Gall, maire', trait);
+T('le nom du signataire s\'imprime quand il est renseigné',
+  /Le Gall, maire/.test(signe), signe.slice(-600));
+T('et le devis porte la mention « Bon pour accord »',
+  /Bon pour accord/.test(signe), signe.slice(-600));
+
+/* Sans nom de signataire saisi, la ligne de signature reprend l'interlocuteur :
+   c'est voulu, un devis signé doit nommer qui a signé. Mais il ne doit
+   apparaître QUE là, et jamais dans le bloc client en haut de page. */
+const signeSansNom = await lire({type:'PRO', societe:'MAIRIE DE PLOEREN', contact:'Mme Le Gall',
+  adresse:'1 place de la Mairie', cp:'56880', ville:'Ploeren',
+  siret:'', tva:'', tel:'', email:''}, '', trait);
+T('signé sans nom saisi : la ligne de signature nomme l\'interlocuteur',
+  /Bon pour accord\s*»\s*—\s*Mme Le Gall/.test(signeSansNom), signeSansNom.slice(-500));
+T('et il n\'apparaît qu\'une seule fois, nulle part ailleurs',
+  (signeSansNom.match(/Le Gall/g) || []).length === 1,
+  (signeSansNom.match(/Le Gall/g) || []).length);
+T('le bloc client, lui, ne porte que la société',
+  /PLOEREN\s+1 place de la Mairie/.test(signeSansNom.slice(0, 1200)),
+  signeSansNom.slice(0, 1200).slice(-300));
+
 await b.close();
 console.log('\n=== LE DEVIS IMPRIMÉ (v39) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
