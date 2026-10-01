@@ -159,7 +159,11 @@ var PDF = (function () {
     var droite = [];
     var nomClient = txt(c.societe).trim() || txt(c.contact).trim();
     if (nomClient) droite.push({ t: nomClient, b: true });
-    if (txt(c.societe).trim() && txt(c.contact).trim()) droite.push({ t: txt(c.contact) });
+    /* L'interlocuteur ne figure pas sur le devis quand le client est une
+       entreprise : le devis est adressé à la société, pas à la personne, et
+       celle-ci change plus souvent que le contrat. Chez un particulier,
+       en revanche, cette personne EST le client : elle reste, en tête de bloc
+       (voir nomClient ci-dessus). */
     if (txt(c.adresse).trim()) droite.push({ t: txt(c.adresse) });
     if ((txt(c.cp) + txt(c.ville)).trim()) droite.push({ t: (txt(c.cp) + ' ' + txt(c.ville)).trim() });
     if (txt(c.tel).trim()) droite.push({ t: 'Port. : ' + txt(c.tel) });
