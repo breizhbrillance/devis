@@ -281,7 +281,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v40';
+var VERSION_APP = 'v41';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -2021,10 +2021,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=40';
+    sc.src = 'visionneuse.js?v=41';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=40';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=41';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2102,6 +2102,12 @@ function fermerPdf(){
    deviner le matériel. */
 function partageFichierPossible(){
   try{
+    // Un ordinateur sait parfois « partager » un fichier — Chrome passe par la
+    // feuille du système — mais cette feuille-là n'imprime pas : elle envoie.
+    // Masquer notre bouton d'impression y laisserait l'utilisateur sans rien.
+    // Seul un appareil tactile offre vraiment l'ensemble enregistrer, imprimer,
+    // envoyer. Ailleurs, on garde notre propre bouton.
+    if(!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) return false;
     var f = new File([new Blob(['x'], {type:'application/pdf'})], 'x.pdf',
                      {type:'application/pdf'});
     return !!(navigator.canShare && navigator.canShare({files:[f]}));
