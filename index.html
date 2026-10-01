@@ -342,6 +342,28 @@
       <b>Particulier</b>
       <span>Chez lui, à son domicile.</span>
     </button>
+
+    <!-- La nature ne se pose que pour un professionnel : chez un particulier,
+         c'est toujours une intervention. Elle appartient au devis, pas aux
+         prestations — le même lavage de sols est ponctuel en fin de chantier
+         et mensuel en entretien. -->
+    <div id="blocNature" class="hide">
+      <h2 style="margin:20px 0 10px">De quoi s'agit-il ?</h2>
+      <button class="choix" id="chENT" onclick="choisirNature('ENTRETIEN')">
+        <b>Entretien des locaux</b>
+        <span>Passages réguliers. Le devis est mensualisé.</span>
+      </button>
+      <button class="choix" id="chCHA" onclick="choisirNature('CHANTIER')">
+        <b>Nettoyage de fin de chantier</b>
+        <span>Une intervention, facturée une fois.</span>
+      </button>
+      <div id="blocFreq" class="hide">
+        <label>Passages par mois</label>
+        <input id="fPassages" type="number" inputmode="numeric" min="1" max="31" step="1"
+               placeholder="4" oninput="setPassages(this.value)">
+        <div class="mini">Tu peux laisser vide : la question revient avant d'enregistrer le devis.</div>
+      </div>
+    </div>
   </section>
 
   <!-- ÉTAPE 2 : CLIENT -->
@@ -402,6 +424,16 @@
   <section id="e4" class="hide">
     <!-- La remise porte sur le devis entier, elle a donc sa place ici, à côté du
          total, et non plus sur chaque ligne. -->
+    <!-- Un contrat d'entretien sans fréquence n'a pas de montant mensuel, et
+         le classeur ne saurait pas combien de chantiers créer. On la redemande
+         ici, au dernier moment où elle peut encore être saisie. -->
+    <div class="card hide" id="cFreq">
+      <h2>Fréquence</h2>
+      <label>Passages par mois</label>
+      <input id="fPassages4" type="number" inputmode="numeric" min="1" max="31" step="1"
+             placeholder="4" oninput="setPassages(this.value, true)">
+      <div class="mini">Le devis sera mensualisé : prix par passage × nombre de passages.</div>
+    </div>
     <div class="card hide" id="cRem">
       <h2>Remise</h2>
       <div class="row">
@@ -721,11 +753,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=42"></script>
-<script src="jspdf.umd.min.js?v=42"></script>
-<script src="police.js?v=42"></script>
-<script src="logo.js?v=42"></script>
-<script src="pdf.js?v=42"></script>
-<script src="app.js?v=42"></script>
+<script src="config.js?v=43"></script>
+<script src="jspdf.umd.min.js?v=43"></script>
+<script src="police.js?v=43"></script>
+<script src="logo.js?v=43"></script>
+<script src="pdf.js?v=43"></script>
+<script src="app.js?v=43"></script>
 </body>
 </html>

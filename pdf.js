@@ -306,13 +306,29 @@ var PDF = (function () {
     var remisePct = Number(devis.remise) || 0;
     var avecRemise = remiseEur > 0.005;
 
-    var hBoite = 18 + ordreTaux.length * 5.4 + (avecRemise ? 10.8 : 0);
+    /* Un contrat d'entretien se chiffre au passage et se vend au mois : le
+       client doit lire les deux, sinon le montant mensuel tombe du ciel. */
+    var passages = Math.round(Number(devis.passages) || 0);
+    var entretien = String(devis.nature || '').toUpperCase() === 'ENTRETIEN' && passages > 0;
+    var parPassage = entretien ? Math.round((Number(t.ht) || 0) / passages * 100) / 100 : 0;
+
+    var hBoite = 18 + ordreTaux.length * 5.4 + (avecRemise ? 10.8 : 0)
+                 + (entretien ? 10.8 : 0);
     if (y + hBoite + 10 > BAS_UTILE) { y = nouvellePage(); }
     y += 6;
 
     var xB = 118, wB = R - xB;
     fond(MARQUE); doc.rect(xB, y, wB, hBoite, 'F');
     var yt = y + 6.2;
+    if (entretien) {
+      police('normal', 9, [255, 255, 255]);
+      doc.text('Prix d\'un passage HT', xB + wB - 52, yt, { align: 'right' });
+      doc.text(eur(parPassage), R - 4, yt, { align: 'right' });
+      yt += 5.4;
+      doc.text('Passages par mois', xB + wB - 52, yt, { align: 'right' });
+      doc.text(String(passages), R - 4, yt, { align: 'right' });
+      yt += 5.4;
+    }
     if (avecRemise) {
       police('normal', 9, [255, 255, 255]);
       doc.text('Sous-total HT', xB + wB - 52, yt, { align: 'right' });
@@ -324,7 +340,7 @@ var PDF = (function () {
       yt += 5.4;
     }
     police('normal', 9, [255, 255, 255]);
-    doc.text('Total HT', xB + wB - 52, yt, { align: 'right' });
+    doc.text(entretien ? 'Total mensuel HT' : 'Total HT', xB + wB - 52, yt, { align: 'right' });
     doc.text(eur(t.ht), R - 4, yt, { align: 'right' });
     yt += 5.4;
     ordreTaux.forEach(function (taux) {
@@ -333,8 +349,8 @@ var PDF = (function () {
       doc.text(eur(Math.round(parTaux[taux] * 100) / 100), R - 4, yt, { align: 'right' });
       yt += 5.4;
     });
-    police('bold', 12, [255, 255, 255]);
-    doc.text('Total TTC', xB + wB - 52, yt + 1.4, { align: 'right' });
+    police('bold', entretien ? 11 : 12, [255, 255, 255]);
+    doc.text(entretien ? 'Total TTC / mois' : 'Total TTC', xB + wB - 52, yt + 1.4, { align: 'right' });
     doc.text(eur(t.ttc), R - 4, yt + 1.4, { align: 'right' });
 
     /* ---------------- conditions de paiement, à gauche ---------------- */
