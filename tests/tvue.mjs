@@ -69,11 +69,46 @@ T('ce n\'est pas une page blanche', await p.evaluate(()=>{
   const c=document.querySelector('#poPages canvas'); const d=c.getContext('2d').getImageData(0,0,c.width,Math.min(600,c.height)).data;
   let n=0; for(let i=0;i<d.length;i+=40) if(d[i]<230) n++; return n>200; }));
 T('rien n\'a été téléchargé', (await p.evaluate(()=>document.querySelectorAll('a[download]').length)) === 0);
-T('un bouton « Imprimer » et un bouton « Envoyer »',
-  (await p.isVisible('#pdfOverlay button:has-text("Imprimer")')) &&
-  (await p.isVisible('#pdfOverlay button:has-text("Envoyer")')));
+/* Sur un ordinateur, la feuille de partage du système ne prend pas de fichier :
+   l'application doit alors offrir elle-même l'impression. */
+T('le bouton « Partager » est là', await p.isVisible('#pdfOverlay button:has-text("Partager")'));
+T('sans feuille de partage, « Imprimer » reste proposé',
+  await p.isVisible('#pdfOverlay button:has-text("Imprimer")'));
 const imprime = await p.evaluate(()=>{ let appele=false; window.print=function(){appele=true;}; imprimerVu(); return appele; });
 T('« Imprimer » ouvre bien la fenêtre d\'impression du système', imprime === true);
+T('et l\'aide dit ce que fait « Partager »',
+  /enregistre|envoie/i.test(await p.textContent('#poAide')), await p.textContent('#poAide'));
+
+/* Sur un téléphone, cette feuille existe : elle enregistre dans Fichiers,
+   imprime et envoie. L'application n'a plus à doubler le système. */
+await p.evaluate(()=>{
+  navigator.canShare = (d) => !!(d && d.files && d.files.length);
+  window.__partages = [];
+  navigator.share = (d) => { window.__partages.push({
+    titre: d.title,
+    fichiers: (d.files||[]).map(f => [f.name, f.type, f.size])
+  }); return Promise.resolve(); };
+});
+await p.evaluate(()=>{ fermerPdf(); });
+await p.waitForTimeout(400);
+await p.evaluate(()=>ouvrirPdf(PDF_VU || DERNIER));
+await p.waitForTimeout(1200);
+T('avec la feuille du système, « Imprimer » disparaît',
+  !(await p.isVisible('#pdfOverlay button:has-text("Imprimer")')));
+T('« Partager » reste, seul', await p.isVisible('#pdfOverlay button:has-text("Partager")'));
+T('et l\'aide annonce l\'enregistrement dans Fichiers',
+  /Fichiers/.test(await p.textContent('#poAide')), await p.textContent('#poAide'));
+
+await p.click('#pdfOverlay button:has-text("Partager")');
+await p.waitForTimeout(700);
+const part = await p.evaluate(()=>window.__partages);
+T('« Partager » ouvre la feuille du système', part.length === 1, part);
+T('elle reçoit bien un PDF', part[0] && part[0].fichiers[0][1] === 'application/pdf', part);
+T('le fichier porte le nom du devis',
+  part[0] && /^DEVIS-.*\.pdf$/i.test(part[0].fichiers[0][0]), part[0] && part[0].fichiers[0][0]);
+T('et il n\'est pas vide', part[0] && part[0].fichiers[0][2] > 5000, part);
+T('rien n\'a été téléchargé à la place',
+  (await p.evaluate(()=>document.querySelectorAll('a[download]').length)) === 0);
 T('à l\'impression, seules les pages du devis restent', await p.evaluate(()=>{
   const r=[...document.styleSheets].flatMap(f=>{ try{return [...f.cssRules];}catch(e){return [];} })
     .filter(x=>x.media && String(x.media.mediaText).indexOf('print')>=0);
