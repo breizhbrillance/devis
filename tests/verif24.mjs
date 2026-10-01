@@ -23,6 +23,7 @@ if(await p.isVisible('#eAccord')) { await p.click('#bAccord'); await p.waitForTi
 
 // 1. bornes sur les quantités
 await p.click('#chPRO'); await p.waitForTimeout(200);
+await p.click('#chCHA'); await p.waitForTimeout(300);
 await p.fill('#cSociete','SYNDIC ARMOR'); await p.fill('#cContact','Mme Le Gall');
 await p.fill('#cAdresse','12 rue Nicolazic'); await p.fill('#cCp','56000'); await p.fill('#cVille','VANNES');
 await p.click('#bSuiv'); await p.waitForTimeout(400);

@@ -25,6 +25,7 @@ await p.fill('#fCommercial','Simon LG'); await p.fill('#fCode','ab1!');
 await p.click('#bCo'); await p.waitForTimeout(900);
 if(await p.isVisible('#eAccord')){ await p.click('#bAccord'); await p.waitForTimeout(300); }
 await p.click('#chPRO'); await p.waitForTimeout(250);
+await p.click('#chCHA'); await p.waitForTimeout(300);
 await p.fill('#cSociete','SYNDIC ARMOR'); await p.fill('#cContact','Mme Le Gall');
 await p.fill('#cAdresse','12 rue'); await p.fill('#cCp','56000'); await p.fill('#cVille','VANNES');
 await p.click('#bSuiv'); await p.waitForTimeout(500);

@@ -18,6 +18,7 @@ await p.fill('#fCommercial','Simon LG'); await p.fill('#fCode','ab1!');
 await p.click('#bCo'); await p.waitForTimeout(900);
 if(await p.isVisible('#eAccord')){ await p.click('#bAccord'); await p.waitForTimeout(300); }
 await p.click('#chPRO'); await p.waitForTimeout(250);
+await p.click('#chCHA'); await p.waitForTimeout(300);
 await p.fill('#cSociete','MAIRIE DE TEST'); await p.fill('#cContact','Jean Test');
 await p.fill('#cAdresse','1 rue'); await p.fill('#cCp','56250'); await p.fill('#cVille','Monterblanc');
 await p.click('#bSuiv'); await p.waitForTimeout(500);
