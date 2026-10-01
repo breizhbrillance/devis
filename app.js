@@ -281,7 +281,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v39';
+var VERSION_APP = 'v40';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -2021,10 +2021,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=39';
+    sc.src = 'visionneuse.js?v=40';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=39';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=40';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2044,6 +2044,11 @@ function ouvrirPdf(enr){
   $('poNum').textContent = enr.numero + (estSigne(enr) ? ' · signé' : '');
   $('poPages').innerHTML = '<div class="empty">Ouverture du devis…</div>';
   $('pdfOverlay').classList.remove('hide');
+  var partageOk = partageFichierPossible();
+  $('poImpr').classList.toggle('hide', partageOk);
+  $('poAide').textContent = partageOk
+    ? 'Enregistre le devis dans Fichiers, l\'imprime ou l\'envoie.'
+    : 'Partager enregistre ou envoie le fichier.';
   tracer('PDF AFFICHE', enr.nomFichier || '', enr.numero);
   dessinerPdf(enr).catch(function(e){
     $('poPages').innerHTML = '<div class="empty">Le devis n\'a pas pu être affiché ici.<br>' +
@@ -2087,6 +2092,20 @@ function fermerPdf(){
   $('poPages').innerHTML = '';
   if(PDF_URL){ try{ URL.revokeObjectURL(PDF_URL); }catch(e){} PDF_URL = null; }
   PDF_VU = null;
+}
+
+/* La feuille de partage du système sait-elle recevoir un fichier ?
+   Sur iPhone et sur Android, oui : elle offre alors « Enregistrer dans
+   Fichiers », « Imprimer », le mail et AirDrop, et l'application n'a pas à
+   refaire ce travail. Sur un ordinateur, souvent non : il faut alors un vrai
+   bouton d'impression. On pose la question au navigateur plutôt que de
+   deviner le matériel. */
+function partageFichierPossible(){
+  try{
+    var f = new File([new Blob(['x'], {type:'application/pdf'})], 'x.pdf',
+                     {type:'application/pdf'});
+    return !!(navigator.canShare && navigator.canShare({files:[f]}));
+  }catch(e){ return false; }
 }
 
 /* Imprimer : la fenêtre d'impression du système s'ouvre sur les pages

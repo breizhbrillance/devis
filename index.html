@@ -574,9 +574,17 @@
     <button class="btn sec sm" onclick="fermerPdf()">Fermer</button>
   </div>
   <div id="poPages"></div>
+  <!-- Sur un téléphone, la feuille de partage du système fait déjà tout :
+       enregistrer dans Fichiers, imprimer, envoyer par mail. Un bouton
+       « Imprimer » dans l'application ne ferait que doubler ce que l'iPhone
+       propose déjà. Il n'apparaît donc que là où cette feuille n'existe pas,
+       c'est-à-dire sur un ordinateur. -->
   <div class="so-f">
-    <button class="btn sec" style="flex:1" onclick="partagerVu(this)">Envoyer</button>
-    <button class="btn" style="flex:1.2" onclick="imprimerVu()">Imprimer</button>
+    <button class="btn hide" id="poImpr" style="flex:1" onclick="imprimerVu()">Imprimer</button>
+    <button class="btn" style="flex:1.2" onclick="partagerVu(this)">Partager</button>
+  </div>
+  <div class="mini" id="poAide" style="padding:0 14px 12px;margin:0;text-align:center">
+    Enregistre le devis dans Fichiers, l'imprime ou l'envoie.
   </div>
 </div>
 
@@ -713,11 +721,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=39"></script>
-<script src="jspdf.umd.min.js?v=39"></script>
-<script src="police.js?v=39"></script>
-<script src="logo.js?v=39"></script>
-<script src="pdf.js?v=39"></script>
-<script src="app.js?v=39"></script>
+<script src="config.js?v=40"></script>
+<script src="jspdf.umd.min.js?v=40"></script>
+<script src="police.js?v=40"></script>
+<script src="logo.js?v=40"></script>
+<script src="pdf.js?v=40"></script>
+<script src="app.js?v=40"></script>
 </body>
 </html>
