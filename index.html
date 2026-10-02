@@ -454,9 +454,16 @@
     <div class="card">
       <h2>Récapitulatif</h2>
       <div id="recap"></div>
-      <label>Date ou délai d'intervention</label>
-      <input id="fDelai" placeholder="Semaine du 6 octobre, ou sous 15 jours après accord">
-      <div class="mini">Obligatoire sur un devis : le client doit savoir quand la prestation sera faite.</div>
+      <!-- C'était un texte libre. L'appli ne savait donc pas lire ce que le
+           commercial avait promis, et ne pouvait rien poser sur un planning.
+           La date se choisit maintenant dans un calendrier, et la phrase pour
+           le client passe à côté, où elle ne gêne personne. -->
+      <label>Intervention à partir du</label>
+      <input id="fDate" type="date">
+      <div class="mini">Obligatoire : le client doit savoir quand la prestation sera faite,
+        et c'est cette date qui sert à poser le chantier sur le planning.</div>
+      <label>Précision sur le délai (facultatif)</label>
+      <input id="fDelai" placeholder="Sur deux jours, de préférence en fin de semaine">
       <label>Précisions / conditions particulières</label>
       <textarea id="fNotes" placeholder="Fréquence de passage, horaires d'intervention, accès, produits fournis…"></textarea>
     </div>
@@ -757,11 +764,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=45"></script>
-<script src="jspdf.umd.min.js?v=45"></script>
-<script src="police.js?v=45"></script>
-<script src="logo.js?v=45"></script>
-<script src="pdf.js?v=45"></script>
-<script src="app.js?v=45"></script>
+<script src="config.js?v=46"></script>
+<script src="jspdf.umd.min.js?v=46"></script>
+<script src="police.js?v=46"></script>
+<script src="logo.js?v=46"></script>
+<script src="pdf.js?v=46"></script>
+<script src="app.js?v=46"></script>
 </body>
 </html>

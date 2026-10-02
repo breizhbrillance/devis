@@ -435,7 +435,19 @@ var PDF = (function () {
     police('normal', 7, GRIS);
     var infos = ['Devis valable jusqu\'au ' + dateFr(devis.validite),
                  'Établi par ' + txt(devis.commercial)];
-    if (txt(devis.delai).trim()) infos.push('Intervention : ' + txt(devis.delai));
+    /* La date d'intervention est une vraie date depuis la v46 ; la phrase du
+       commercial ne la remplace plus, elle la complète. Les devis d'avant ne
+       portent que la phrase : on l'imprime telle quelle. */
+    var dSouh = txt(devis.dateSouhaitee).trim();
+    var prec = txt(devis.delai).trim();
+    if (dSouh) {
+      // « 2026-10-06 » seul se lit en temps universel et peut reculer d'un jour :
+      // on l'ancre à minuit, heure locale.
+      infos.push('Intervention à partir du ' + dateFr(dSouh + 'T00:00:00') +
+                 (prec ? ' \u2014 ' + prec : ''));
+    } else if (prec) {
+      infos.push('Intervention : ' + prec);
+    }
     var yi = y + 4.8;
     infos.forEach(function (l) { doc.text(l, M + 4, yi); yi += 3.4; });
 

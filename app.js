@@ -287,7 +287,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v45';
+var VERSION_APP = 'v46';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -687,7 +687,11 @@ function etape(n){
   if(n===1) majType();
   if(n<=2) majBarre();          // le total du bas suit le devis en cours, pas le précédent
   if(n===3) rendreLignes();
-  if(n===4){ ecranRemise(); calculer(); majApercuSignature(); }
+  if(n===4){
+    ecranRemise(); calculer(); majApercuSignature();
+    // le calendrier ne propose pas de date déjà passée
+    var cd = $('fDate'); if(cd) cd.min = isoJour();
+  }
   window.scrollTo(0,0);
 }
 function suivant(){
@@ -723,6 +727,17 @@ function suivant(){
       $('cFreq').classList.remove('hide');
       var ch = $('fPassages4'); if(ch){ ch.focus(); }
       return erreur('Combien de passages par mois ? Le devis doit être mensualisé.');
+    }
+    // La date d'intervention commande le planning : sans elle, le chantier
+    // naîtrait sans jour et personne ne le verrait venir.
+    var dOk = val('fDate');
+    if(!dOk){
+      var cd = $('fDate'); if(cd) cd.focus();
+      return erreur('À partir de quand l\'intervention peut-elle commencer ?');
+    }
+    if(dOk < isoJour()){
+      var cd2 = $('fDate'); if(cd2) cd2.focus();
+      return erreur('La date d\'intervention est déjà passée.');
     }
     return enregistrer();
   }
@@ -1984,7 +1999,8 @@ function lireClient(){
 }
 function sauverBrouillon(){
   lsj('brouillon', {client:lireClient(), lignes:LIGNES, objet:val('fObjet'),
-                    plus2ans:PLUS2ANS, taux:TAUX, delai:val('fDelai'), notes:val('fNotes'),
+                    plus2ans:PLUS2ANS, taux:TAUX, dateSouhaitee:val('fDate'),
+                    delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
                     nature:NATURE, passages:PASSAGES});
 }
@@ -2016,6 +2032,7 @@ function restaurer(b){
   ['Societe','Siret','Tva','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
     $('c'+k).value = c[k.toLowerCase()]||''; });
   $('fObjet').value = b.objet||'';
+  $('fDate').value = b.dateSouhaitee||'';
   $('fDelai').value = b.delai||'';
   PLUS2ANS = (b.plus2ans === true || b.plus2ans === false) ? b.plus2ans : null;
   TAUX = b.taux || null;
@@ -2092,7 +2109,8 @@ function enregistrerSuite(b, envoi, moi, secours){
       client: lireClient(),
       lignes: LIGNES.slice(),
       objet: val('fObjet'),
-      delai: val('fDelai'),
+      dateSouhaitee: val('fDate'),   // c'est elle qui sert à planifier
+      delai: val('fDelai'),          // la phrase pour le client, rien de plus
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
       nature: NATURE || 'CHANTIER',   // 'ENTRETIEN' | 'CHANTIER' | 'REMISE'
       passages: estEntretien() ? PASSAGES : 0,
@@ -2188,10 +2206,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=45';
+    sc.src = 'visionneuse.js?v=46';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=45';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=46';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2649,6 +2667,8 @@ function dupliquer(id, btn){
       var o = {}; for(var k in l){ if(l.hasOwnProperty(k)) o[k] = l[k]; } return o;
     });
     $('fObjet').value = d.objet || '';
+    // La date d'un ancien devis n'a plus cours : on la laisse à choisir.
+    $('fDate').value = '';
     $('fDelai').value = d.delai || '';
     $('fNotes').value = d.notes || '';
     sauverBrouillon();
@@ -3383,7 +3403,7 @@ function nouveauDevis(){
   GRP = {};
   PHOTO_ID = null;
   cacherSugg();
-  ['cSociete','cSiret','cTva','cContact','cTel','cEmail','cAdresse','cCp','cVille','fSignataire','fNotes','fObjet','fDelai']
+  ['cSociete','cSiret','cTva','cContact','cTel','cEmail','cAdresse','cCp','cVille','fSignataire','fNotes','fObjet','fDelai','fDate']
     .forEach(function(id){ $(id).value=''; });
   $('fObjet').value = '';
   $('fEnvoi').checked = false;
