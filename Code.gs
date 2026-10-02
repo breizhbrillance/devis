@@ -394,8 +394,10 @@ var REGLAGES_DEFAUT_ = [
    'NON : les chantiers naissent « A PLANIFIER » et c\'est le bureau qui pose dates et salariés'],
   ['reliquat_ignore_min', '60',
    'Un reste de chantier plus court que cette durée (minutes) n\'ouvre pas une journée de plus : sous 8 h, une seule journée de 7 h'],
+  ['trajet_calcule', 'OUI',
+   'OUI : la route entre deux chantiers d\'une même journée est calculée par Google Maps, d\'une adresse à l\'autre. NON : on compte toujours trajet_minutes'],
   ['trajet_minutes', '30',
-   'Temps de route compté entre deux chantiers d\'une même journée, en minutes'],
+   'Temps de route compté, en minutes, quand l\'itinéraire ne peut pas être calculé (adresse manquante, Google Maps muet)'],
   ['travail_jours_feries', 'NON',
    'OUI : l\'appli pose aussi des chantiers les jours fériés'],
   ['banque_nom', 'CMB Saint Avé', 'Coordonnées bancaires imprimées sur le devis'],
@@ -1180,7 +1182,8 @@ function poserPlanning_(numero, qui, appareil) {
   var reg = lireReglages_();
   var dates = bilan.poses.map(function (p) {
     return '  · ' + isoJour_(p.date) + ' ' + p.heure + ' — ' + p.nom +
-           ' — ' + heuresLisibles_(p.minutes) + (p.id ? ' (' + p.id + ')' : '');
+           ' — ' + heuresLisibles_(p.minutes) + (p.id ? ' (' + p.id + ')' : '') +
+           (p.route ? ' — après ' + p.route + ' min de route depuis le chantier précédent' : '');
   }).join('\n');
 
   if (bilan.poses.length) {
@@ -1244,7 +1247,8 @@ function heuresLisibles_(min) {
  *    le jour est travaillé et dont la journée n'est pas déjà pleine.
  *
  * Depuis la v47 : rien n'est posé un jour férié ni pendant une absence (onglet
- * ABSENCES) ; un second chantier dans la journée compte son trajet ; les
+ * ABSENCES) ; un second chantier dans la journée compte la route calculée par
+ * Google Maps depuis le chantier précédent (forfait si le calcul échoue) ; les
  * passages d'un contrat suivent sa vraie fréquence ; un reste de moins d'une
  * heure n'ouvre pas une journée de plus ; et un devis qui n'est plus signé
  * rend ses créneaux.
@@ -1365,14 +1369,21 @@ function chargeActuelle_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
   var reg = lireReglages_();
   /* Le trajet et le calendrier voyagent avec la charge : tout ce qui cherche
-     un créneau les trouve au même endroit, sans relire le classeur. */
-  var charge = { jour: {}, semaine: {}, trajet: trajetMinutes_(reg), cal: calendrier_(reg) };
+     un créneau les trouve au même endroit, sans relire le classeur.
+     « lieu » retient, par salarié et par jour, l'adresse du dernier chantier
+     posé : c'est de là qu'il partira pour le suivant. */
+  var charge = { jour: {}, semaine: {}, lieu: {},
+                 trajet: trajetMinutes_(reg), calcule: trajetCalcule_(reg), routes: {},
+                 cal: calendrier_(reg) };
   if (!sh || sh.getLastRow() < 2) return charge;
   var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
   var en = v[0].map(function (x) { return String(x).trim(); });
   var iDate = en.indexOf('DATE'), iQui = en.indexOf('PRESTATAIRE');
   var iDur = en.indexOf('DUREE_PREVUE_MIN'), iStatut = en.indexOf('STATUT');
+  var iHeure = en.indexOf('HEURE');
+  var iAdr = en.indexOf('ADRESSE'), iCp = en.indexOf('CP'), iVille = en.indexOf('VILLE');
   if (iDate < 0 || iQui < 0) return charge;
+  var poses = [];
   for (var i = 1; i < v.length; i++) {
     var qui = normNom_(v[i][iQui]);
     var d = v[i][iDate];
@@ -1380,8 +1391,26 @@ function chargeActuelle_() {
     if (iStatut >= 0 && String(v[i][iStatut]).toUpperCase() === 'ANNULE') continue;
     var min = iDur >= 0 ? Number(v[i][iDur]) : 0;
     if (!isFinite(min) || min <= 0) min = 210;
-    reserver_(charge, qui, d, min);
+    var h = iHeure >= 0 ? v[i][iHeure] : '';
+    if (h instanceof Date) h = ('0' + h.getHours()).slice(-2) + ':' + ('0' + h.getMinutes()).slice(-2);
+    poses.push({ qui: qui, date: d, iso: isoJour_(d), heure: String(h || ''), min: min,
+                 adresse: adresseComplete_(iAdr >= 0 ? v[i][iAdr] : '', iCp >= 0 ? v[i][iCp] : '',
+                                           iVille >= 0 ? v[i][iVille] : ''),
+                 rang: i });
   }
+  /* Dans l'ordre de la journée, pour que la route se compte du chantier de
+     8 h vers celui de 14 h et non dans l'ordre où les lignes ont été écrites. */
+  poses.sort(function (a, b) {
+    if (a.iso !== b.iso) return a.iso < b.iso ? -1 : 1;
+    if (a.heure !== b.heure) return a.heure < b.heure ? -1 : 1;
+    return a.rang - b.rang;
+  });
+  /* Les journées passées n'ont plus de créneau à offrir : inutile d'interroger
+     Google Maps pour elles, le forfait suffit à compter la semaine en cours. */
+  var auj = isoJour_(new Date());
+  poses.forEach(function (p) {
+    reserver_(charge, p.qui, p.date, p.min, p.adresse, p.iso < auj);
+  });
   return charge;
 }
 
@@ -1389,10 +1418,9 @@ function chargeActuelle_() {
    Renvoie { date, heure, nom } ou null si rien ne se libère dans l'horizon.
    Le salarié retenu est le moins chargé de sa semaine parmi ceux qui peuvent :
    c'est ce qui égalise les plannings dès qu'il y a plus d'une personne. */
-function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
+function creneauPour_(minutes, depuis, gens, charge, prefere, horizon, adresse) {
   if (!gens.length) return null;
   var jour = new Date(depuis.getFullYear(), depuis.getMonth(), depuis.getDate(), 12, 0, 0);
-  var trajet = charge.trajet || 0;
   for (var pas = 0; pas < (horizon || 120); pas++) {
     var jSem = jour.getDay(), iso = isoJour_(jour), sem = cleSemaine_(jour);
     /* Un jour férié ou un jour de fermeture ne reçoit rien, pour personne. */
@@ -1402,9 +1430,10 @@ function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
       if (estAbsent_(charge.cal, g.cle, iso)) return false;
       var dejaJ = charge.jour[g.cle + '|' + iso] || 0;
       var dejaS = charge.semaine[g.cle + '|' + sem] || 0;
-      /* Un deuxième chantier dans la journée, c'est aussi une route à faire :
-         elle prend sur la journée et sur la semaine comme du travail. */
-      var route = dejaJ > 0 ? trajet : 0;
+      /* Un deuxième chantier dans la journée, c'est aussi une route à faire,
+         du chantier précédent jusqu'à celui-ci : elle prend sur la journée et
+         sur la semaine comme du travail. */
+      var route = dejaJ > 0 ? trajetEntre_(charge, charge.lieu[g.cle + '|' + iso], adresse) : 0;
       return (dejaJ + route + minutes <= g.capaciteJour) &&
              (dejaS + route + minutes <= g.capaciteSemaine);
     });
@@ -1428,7 +1457,9 @@ function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
          découpe pas à la minute dans la journée — le salarié s'organise — on
          donne un point de départ honnête. */
       var reste = charge.jour[choisi.cle + '|' + iso] || 0;
-      if (reste > 0) reste += trajet;          // il arrive après la route
+      var routeChoisie = reste > 0
+        ? trajetEntre_(charge, charge.lieu[choisi.cle + '|' + iso], adresse) : 0;
+      reste += routeChoisie;                   // il arrive après la route
       var debut = choisi.plages[0].debut;
       for (var p = 0; p < choisi.plages.length; p++) {
         var large = choisi.plages[p].fin - choisi.plages[p].debut;
@@ -1438,7 +1469,8 @@ function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
       return {
         date: new Date(jour.getTime()),
         heure: ('0' + Math.floor(debut / 60)).slice(-2) + ':' + ('0' + (debut % 60)).slice(-2),
-        nom: choisi.nom
+        nom: choisi.nom,
+        route: routeChoisie
       };
     }
     jour.setDate(jour.getDate() + 1);
@@ -1446,13 +1478,112 @@ function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
   return null;
 }
 
-function reserver_(charge, nom, date, minutes) {
+function reserver_(charge, nom, date, minutes, adresse, auForfait) {
   var k = normNom_(nom);
   var cj = k + '|' + isoJour_(date), cs = k + '|' + cleSemaine_(date);
-  /* S'il y a déjà un chantier ce jour-là, celui-ci coûte aussi le trajet. */
-  var route = (charge.jour[cj] || 0) > 0 ? (charge.trajet || 0) : 0;
+  /* S'il y a déjà un chantier ce jour-là, celui-ci coûte aussi la route pour
+     venir du précédent. */
+  var route = 0;
+  if ((charge.jour[cj] || 0) > 0) {
+    route = auForfait ? (charge.trajet || 0)
+                      : trajetEntre_(charge, charge.lieu ? charge.lieu[cj] : '', adresse);
+  }
   charge.jour[cj] = (charge.jour[cj] || 0) + route + minutes;
   charge.semaine[cs] = (charge.semaine[cs] || 0) + route + minutes;
+  if (charge.lieu) charge.lieu[cj] = adresse || '';
+}
+
+/* ---------- la route entre deux chantiers ---------- */
+
+/* L'interrupteur : NON ramène au forfait, sans interroger Google Maps. */
+function trajetCalcule_(reg) {
+  return String((reg && reg.trajet_calcule) || 'OUI').toUpperCase().trim() !== 'NON';
+}
+
+/* « 12 rue des Lilas », « 56000 », « Vannes » → « 12 rue des Lilas, 56000 Vannes, France ».
+   Sans rue ni ville, on ne rend rien : mieux vaut le forfait qu'un itinéraire
+   calculé vers le centre d'un département. */
+function adresseComplete_(adresse, cp, ville) {
+  var a = String(adresse === null || adresse === undefined ? '' : adresse).trim();
+  var c = String(cp === null || cp === undefined ? '' : cp).trim();
+  var v = String(ville === null || ville === undefined ? '' : ville).trim();
+  if (!a || (!c && !v)) return '';
+  return a + ', ' + (c + ' ' + v).trim() + ', France';
+}
+
+/* Deux adresses écrites un peu différemment sont la même porte. */
+function cleAdresse_(a) {
+  return String(a || '').toLowerCase().replace(/[^a-z0-9à-ÿ]+/g, ' ').trim();
+}
+
+/**
+ * Minutes de route en voiture d'une adresse à l'autre, par Google Maps,
+ * arrondies aux cinq minutes supérieures.
+ *
+ * Tout ce qui empêche le calcul — adresse manquante, Google Maps muet, quota
+ * atteint, résultat invraisemblable — ramène au forfait de REGLAGES : la
+ * planification ne doit jamais s'arrêter parce qu'un itinéraire manque.
+ */
+function trajetEntre_(charge, depuis, vers) {
+  var forfait = (charge && charge.trajet) || 0;
+  if (!depuis || !vers) return forfait;
+  var ka = cleAdresse_(depuis), kb = cleAdresse_(vers);
+  if (ka === kb) return 0;                           // même adresse : pas de route
+  if (!charge || !charge.calcule) return forfait;
+  var cle = ka + ' > ' + kb;
+  if (!charge.routes) charge.routes = {};
+  if (charge.routes.hasOwnProperty(cle)) return charge.routes[cle];
+
+  /* Le même trajet revient d'une signature à l'autre : six heures de mémoire
+     épargnent Google Maps et le temps de réponse du téléphone. */
+  var cache = null, cleCache = 'trajet:' + empreinteCourte_(cle);
+  try {
+    cache = CacheService.getScriptCache();
+    var vu = cache.get(cleCache);
+    if (vu !== null && vu !== undefined && vu !== '' && isFinite(Number(vu))) {
+      return charge.routes[cle] = Number(vu);
+    }
+  } catch (e) { cache = null; }
+
+  var min = -1;
+  try {
+    var r = Maps.newDirectionFinder()
+      .setOrigin(depuis).setDestination(vers)
+      .setMode(Maps.DirectionFinder.Mode.DRIVING)
+      .setRegion('fr')
+      .getDirections();
+    var jambe = r && r.routes && r.routes[0] && r.routes[0].legs && r.routes[0].legs[0];
+    if (jambe && jambe.duration && isFinite(Number(jambe.duration.value))) {
+      min = Math.ceil(Number(jambe.duration.value) / 60 / 5) * 5;
+    }
+  } catch (e) { min = -1; }
+
+  if (min < 0) return charge.routes[cle] = forfait;   // pas de réponse : on n'insiste pas
+  /* Plus de trois heures entre deux chantiers d'une même journée : c'est une
+     adresse mal comprise, pas un trajet. On le dit, et on prend le forfait. */
+  if (min > 180) {
+    try { tracerServeur_('SYSTEME', 'TRAJET IGNORE', depuis + ' → ' + vers + ' : ' + min + ' min', '', ''); }
+    catch (e) {}
+    return charge.routes[cle] = forfait;
+  }
+  try { if (cache) cache.put(cleCache, String(min), 21600); } catch (e) {}
+  return charge.routes[cle] = min;
+}
+
+/* Une clé de cache courte et stable pour une paire d'adresses. */
+function empreinteCourte_(texte) {
+  var h = 0, t = String(texte);
+  for (var i = 0; i < t.length; i++) { h = ((h << 5) - h + t.charCodeAt(i)) | 0; }
+  return (h >>> 0).toString(36) + '.' + t.length;
+}
+
+/** À lancer depuis l'éditeur : vérifie que Google Maps répond pour ce compte. */
+function testerTrajet() {
+  var charge = { trajet: 30, calcule: true, routes: {} };
+  var a = '3 Le Norvais, 56250 Monterblanc, France', b = 'Place de la République, 56000 Vannes, France';
+  var m = trajetEntre_(charge, a, b);
+  Logger.log('Trajet calculé : ' + m + ' min de ' + a + ' à ' + b);
+  return m;
 }
 
 /* ---------- le trajet, les jours fériés, les absences ---------- */
@@ -1624,6 +1755,7 @@ function planifierDevis_(numero) {
   var iNum = en.indexOf('NUMERO'), iDate = en.indexOf('DATE'), iHeure = en.indexOf('HEURE');
   var iQui = en.indexOf('PRESTATAIRE'), iStatut = en.indexOf('STATUT');
   var iDur = en.indexOf('DUREE_PREVUE_MIN'), iLot = en.indexOf('LOT'), iId = en.indexOf('ID');
+  var iAdr = en.indexOf('ADRESSE'), iCp = en.indexOf('CP'), iVille = en.indexOf('VILLE');
   if (iNum < 0 || iDate < 0 || iQui < 0) { bilan.motif = 'colonnes manquantes'; return bilan; }
 
   var charge = chargeActuelle_();
@@ -1687,18 +1819,20 @@ function planifierDevis_(numero) {
       curseur = cible;
     }
 
-    var c = creneauPour_(minutes, curseur, gens, charge, prefere || null, 120);
+    var ou = adresseComplete_(iAdr >= 0 ? v[i][iAdr] : '', iCp >= 0 ? v[i][iCp] : '',
+                              iVille >= 0 ? v[i][iVille] : '');
+    var c = creneauPour_(minutes, curseur, gens, charge, prefere || null, 120, ou);
     if (!c) {
       bilan.refuses.push({ id: iId >= 0 ? v[i][iId] : '', minutes: minutes });
       continue;
     }
-    reserver_(charge, c.nom, c.date, minutes);
+    reserver_(charge, c.nom, c.date, minutes, ou);
     sh.getRange(i + 1, iDate + 1).setValue(c.date);
     if (iHeure >= 0) sh.getRange(i + 1, iHeure + 1).setValue(c.heure);
     sh.getRange(i + 1, iQui + 1).setValue(c.nom);
     if (iStatut >= 0) sh.getRange(i + 1, iStatut + 1).setValue('PLANIFIE');
     bilan.poses.push({ id: iId >= 0 ? v[i][iId] : '', date: c.date, heure: c.heure,
-                       nom: c.nom, minutes: minutes });
+                       nom: c.nom, minutes: minutes, route: c.route || 0 });
     prefere = c.nom;
     if (!ancre && rang === 0) ancre = midi(c.date);
     if (!dernier || c.date > dernier) dernier = midi(c.date);
