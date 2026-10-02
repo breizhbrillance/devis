@@ -63,6 +63,7 @@ faut jamais en mettre.
 | `tcontrat` | la nature du devis commande le nombre de chantiers, et la colonne NATURES |
 | `tplan` | la planification : durée déduite du montant, découpage, jours travaillés, salarié le moins chargé |
 | `tplan47` | la planification corrigée après l'audit : journée de 7 h sous 8 h, vraie fréquence des contrats, jours fériés, absences, itinéraire calculé entre deux chantiers (et forfait quand Google Maps ne répond pas), devis refusé qui rend ses créneaux |
+| `tmaj` | la majoration pour état des lieux recalculée par le classeur, et la grille par défaut alignée sur le classeur (29 prestations) |
 
 **L'application** — un vrai navigateur, taille d'un téléphone.
 
@@ -79,6 +80,7 @@ faut jamais en mettre.
 | `tagent` | l'écran d'un salarié |
 | `tsign`, `tsign2` | la signature du client à l'écran |
 | `tvue` | la visionneuse de PDF et l'impression |
+| `tetat` | l'état du site : normal, sale, très sale, et la ligne de majoration qui en découle |
 | `tadmapp` | l'espace d'administration côté écran, couleur comprise |
 | `tliste` | la liste fixe des prestations et la remise unique |
 | `tnature` | les trois natures de devis, la mensualisation, l'objet imprimé |
