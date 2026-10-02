@@ -61,6 +61,7 @@ faut jamais en mettre.
 | `tadmin` | l'espace d'administration : qui est qui, ce qu'il voit, ce qu'il peut poser |
 | `tdate` | les dates à l'heure du classeur, pas à celle de Greenwich |
 | `tcontrat` | la nature du devis commande le nombre de chantiers, et la colonne NATURES |
+| `tplan` | la planification : durée déduite du montant, découpage, jours travaillés, salarié le moins chargé |
 
 **L'application** — un vrai navigateur, taille d'un téléphone.
 

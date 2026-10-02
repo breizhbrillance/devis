@@ -46,7 +46,9 @@ creer('COMMERCIAUX', [['NOM','EMAIL','CODE','ACTIF'], ['SIMON LG','s@bb.fr','ab1
 creer('PRESTATAIRES', [['NOM','EMAIL','CODE','ACTIF','TELEPHONE']]);
 creer('ADMINS', [['NOM','EMAIL','CODE','ACTIF']]);
 creer('REGLAGES', [['CLE','VALEUR','NOTE'],
- ['societe_nom','BREIZH BRILLANCE',''], ['passages_mois_defaut','4','']]);
+ ['societe_nom','BREIZH BRILLANCE',''],
+ /* cette suite éprouve la création des fiches, pas leur mise au planning */
+ ['planification_auto','NON',''], ['passages_mois_defaut','4','']]);
 creer('JOURNAL', [['HORODATAGE','MOMENT','COMMERCIAL','ACTION','DETAIL','NUMERO','APPAREIL','SOURCE']]);
 creer('CHANTIERS', [['ID','NUMERO','CLIENT','ADRESSE','CP','VILLE','ACCES','DATE','HEURE',
  'PRESTATAIRE','STATUT','ARRIVEE','DEPART','MINUTES','PRESTATIONS_FAITES','SIGNALEMENT',

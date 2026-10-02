@@ -34,7 +34,9 @@ creer('CHANTIERS',[['ID','NUMERO','CLIENT','ADRESSE','CP','VILLE','ACCES','DATE'
  'PRESTATAIRE','STATUT','ARRIVEE','DEPART','MINUTES','PRESTATIONS_FAITES','SIGNALEMENT',
  'PHOTOS','NOTE','CREE_LE']]);
 creer('REGLAGES',[['CLE','VALEUR','NOTE'],
- ['societe_nom','BREIZH BRILLANCE',''],['remise_max','10',''],
+ ['societe_nom','BREIZH BRILLANCE',''],
+ /* cette suite éprouve la création des fiches, pas leur mise au planning */
+ ['planification_auto','NON',''],['remise_max','10',''],
  ['passages_mois_defaut','4',''],['pointage_retention_mois','36',''],
  ['societe_siret','991 595 711 00011',''],['sel_codes','secret-a-ne-pas-diffuser',''],
  ['banque_iban','FR76 1234 5678 9012',''],

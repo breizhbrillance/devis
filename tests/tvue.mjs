@@ -3,6 +3,11 @@ import {chromium} from 'playwright';
 import {lancer, recu} from './srvco.mjs';
 import {ajouterUne, poserQte, cocher, ouvrirBloc, allerRemise} from './presta.mjs';
 import { CHROME } from './chemins.mjs';
+
+/* Une date d'intervention est obligatoire depuis la v46 : on prend demain,
+   pour que l'épreuve ne tombe jamais sur une date déjà passée. */
+const DEMAIN = (() => { const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); })();
 const PORT=8351; await lancer(PORT);
 const b=await chromium.launch({executablePath:CHROME});
 const c=await b.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
@@ -38,7 +43,7 @@ await p.click('button:has-text("Signature à l\'écran")'); await p.waitForTimeo
 await tracer();
 await p.click('button:has-text("Valider la signature")'); await p.waitForTimeout(500);
 T('l\'aperçu de la signature s\'affiche', await vis('sigFaite'));
-await p.fill('#fDelai','octobre');
+await p.fill('#fDate', DEMAIN); await p.fill('#fDelai','octobre');
 await p.click('#bSuiv'); await p.waitForTimeout(2200);
 
 T('le devis est enregistré comme SIGNÉ', await p.evaluate(()=>DERNIER.verdict)==='SIGNE',

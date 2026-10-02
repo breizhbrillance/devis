@@ -18,6 +18,10 @@ await p.fill('#cSociete','SYNDIC ARMOR'); await p.fill('#cContact','Mme Le Gall'
 await p.fill('#cAdresse','12 rue Nicolazic'); await p.fill('#cCp','56000'); await p.fill('#cVille','VANNES');
 await p.evaluate(()=>{ LIGNES=[{categorie:'Vitrerie',reference:'V01',designation:'Nettoyage de vitres',
   detail:'',qte:100,unite:'m²',pu:2.5,rem:0,tva:20,type:'PONCTUEL'}]; rendreLignes(); sauverBrouillon(); });
+// la date d'intervention est obligatoire depuis la v46
+await p.evaluate(()=>{ const d=new Date(); d.setDate(d.getDate()+1);
+  const v=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+  const e=document.getElementById('fDate'); if(e) e.value=v; });
 for(let i=0;i<6;i++){ if(await p.isVisible('#e5')) break;
   if(!(await p.isVisible('#bSuiv'))) break; await p.click('#bSuiv'); await p.waitForTimeout(700); }
 await p.waitForTimeout(1200);

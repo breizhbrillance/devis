@@ -12,6 +12,11 @@ import {lancer, recu, catalogueSup} from './srvco.mjs';
 import {CHROME} from './chemins.mjs';
 import {poserQte} from './presta.mjs';
 
+/* Une date d'intervention est obligatoire depuis la v46 : on prend demain,
+   pour que l'épreuve ne tombe jamais sur une date déjà passée. */
+const DEMAIN = (() => { const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); })();
+
 catalogueSup.push(
   {categorie:'Finitions', reference:'REF-0004', designation:'Décapage au décapant laitance',
    unite:'m²', pu:0.5, tva:20, type:'PONCTUEL', natures:['CHANTIER']},
@@ -133,7 +138,7 @@ T('le décapage a disparu de l\'écran', !d.includes('Décapage au décapant lai
 T('aucun bloc « hors catalogue » n\'est apparu',
   !(await p.evaluate(()=>!!document.getElementById('grpHors'))));
 await p.click('#bSuiv'); await p.waitForTimeout(700);
-await p.fill('#fDelai','semaine 44');
+await p.fill('#fDate', DEMAIN); await p.fill('#fDelai','semaine 44');
 recu.length = 0;
 for(let i = 0; i < 4; i++){
   if(await p.isVisible('#e5')) break;

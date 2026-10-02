@@ -4,6 +4,11 @@ import {chromium} from 'playwright';
 import {lancer, recu} from './srvco.mjs';
 import {ajouterUne, poserQte, cocher, ouvrirBloc, allerRemise} from './presta.mjs';
 import { CHROME } from './chemins.mjs';
+
+/* Une date d'intervention est obligatoire depuis la v46 : on prend demain,
+   pour que l'épreuve ne tombe jamais sur une date déjà passée. */
+const DEMAIN = (() => { const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); })();
 const PORT=8311; await lancer(PORT);
 const b=await chromium.launch({executablePath:CHROME});
 const c=await b.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
@@ -86,7 +91,7 @@ T('l\'image est bien une image', /^data:image\/png;base64,/.test(
 T('signatureValide() dit vrai', await p.evaluate(()=>signatureValide()) === true);
 
 /* ---------- elle suit jusqu'au devis enregistré ---------- */
-await p.fill('#fDelai','Semaine du 6 octobre');
+await p.fill('#fDate', DEMAIN); await p.fill('#fDelai','Semaine du 6 octobre');
 await p.click('#bSuiv'); await p.waitForTimeout(1500);
 T('le devis est enregistré', await vis('e5'));
 const env = recu.filter(x=>x.action==='sync').pop();

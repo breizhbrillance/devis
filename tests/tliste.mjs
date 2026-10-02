@@ -4,6 +4,11 @@ import {chromium} from 'playwright';
 import {lancer, recu} from './srvco.mjs';
 import {ajouterUne, poserQte, cocher, ouvrirBloc, allerRemise} from './presta.mjs';
 import { CHROME } from './chemins.mjs';
+
+/* Une date d'intervention est obligatoire depuis la v46 : on prend demain,
+   pour que l'épreuve ne tombe jamais sur une date déjà passée. */
+const DEMAIN = (() => { const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); })();
 const PORT = 8291; await lancer(PORT);
 const b = await chromium.launch({executablePath:CHROME});
 const c = await b.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
@@ -215,7 +220,7 @@ T('et le bloc disparaît avec elle', !(await p.isVisible('#grpHors')));
 
 /* ---------- 12. le devis enregistré porte sa remise ---------- */
 await p.click('#bSuiv'); await p.waitForTimeout(600);
-await p.fill('#fDelai','sous 15 jours');
+await p.fill('#fDate', DEMAIN); await p.fill('#fDelai','sous 15 jours');
 recu.length = 0;
 for(let i = 0; i < 4; i++){
   if(await p.isVisible('#e5')) break;

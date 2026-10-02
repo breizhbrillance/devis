@@ -4,6 +4,11 @@ import {chromium} from 'playwright';
 import {lancer, recu} from './srvco.mjs';
 import {CHROME} from './chemins.mjs';
 import {poserQte} from './presta.mjs';
+
+/* Une date d'intervention est obligatoire depuis la v46 : on prend demain,
+   pour que l'épreuve ne tombe jamais sur une date déjà passée. */
+const DEMAIN = (() => { const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); })();
 const PORT = 8299; await lancer(PORT);
 const b = await chromium.launch({executablePath:CHROME});
 const c = await b.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
@@ -112,8 +117,27 @@ T('et annonce un total mensuel',
 T('la barre du bas précise « par mois »',
   /par mois/.test(await p.innerText('#bTotL')), await p.innerText('#bTotL'));
 
+/* ---------- 6 bis. la date d'intervention ----------
+   C'était un texte libre que l'appli ne savait pas lire ; c'est maintenant une
+   vraie date, et c'est elle qui commande la pose sur le planning. */
+const HIER = (() => { const d = new Date(); d.setDate(d.getDate() - 1);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); })();
+T('le champ de date est un calendrier',
+  await p.getAttribute('#fDate','type') === 'date', await p.getAttribute('#fDate','type'));
+T('il ne propose pas de date déjà passée',
+  !!(await p.getAttribute('#fDate','min')), await p.getAttribute('#fDate','min'));
+await p.click('#bSuiv'); await p.waitForTimeout(700);
+T('sans date, le devis ne s\'enregistre pas',
+  await p.isVisible('#e4') && /quand/i.test(await p.innerText('#erreur')),
+  await p.innerText('#erreur'));
+await p.fill('#fDate', HIER); await p.waitForTimeout(200);
+await p.click('#bSuiv'); await p.waitForTimeout(700);
+T('une date déjà passée est refusée',
+  await p.isVisible('#e4') && /pass/i.test(await p.innerText('#erreur')),
+  await p.innerText('#erreur'));
+
 /* ---------- 7. ce qui part au bureau ---------- */
-await p.fill('#fDelai','à partir du 6 octobre');
+await p.fill('#fDate', DEMAIN); await p.fill('#fDelai','à partir du 6 octobre');
 recu.length = 0;
 for(let i = 0; i < 4; i++){
   if(await p.isVisible('#e5')) break;
@@ -126,6 +150,10 @@ T('le devis part au bureau', !!envoi);
 T('il annonce sa nature', envoi && envoi.devis.nature === 'ENTRETIEN', envoi && envoi.devis.nature);
 T('et son nombre de passages', envoi && Number(envoi.devis.passages) === 4, envoi && envoi.devis.passages);
 T('ses totaux sont mensuels', envoi && envoi.devis.totaux.ht === 1200, envoi && envoi.devis.totaux);
+T('il porte la date d\'intervention', envoi && envoi.devis.dateSouhaitee === DEMAIN,
+  envoi && envoi.devis.dateSouhaitee);
+T('et la précision du commercial à côté',
+  envoi && envoi.devis.delai === 'à partir du 6 octobre', envoi && envoi.devis.delai);
 
 /* ---------- 8. le devis imprimé ---------- */
 const lirePdf = (d) => p.evaluate(async (d) => {
@@ -143,6 +171,10 @@ T('le PDF affiche le prix d\'un passage', /Prix d'un passage HT/.test(texte), te
 T('il affiche la fréquence', /Passages par mois\s*4/.test(texte.replace(/\s+/g,' ')), texte.slice(-600));
 T('le total HT y est mensuel', /Total mensuel HT/.test(texte) && /1 200,00/.test(texte), texte.slice(-600));
 T('et le TTC annonce le mois', /Total TTC \/ mois/.test(texte) && /1 440,00/.test(texte), texte.slice(-600));
+T('le devis imprimé annonce la date d\'intervention',
+  /Intervention à partir du \d\d\/\d\d\/\d{4}/.test(texte.replace(/\s+/g,' ')), texte.slice(-700));
+T('et la précision du commercial la suit',
+  /à partir du 6 octobre/.test(texte), texte.slice(-700));
 T('le devis imprimé annonce son objet',
   /Objet\s*:\s*Entretien des locaux/.test(texte.replace(/\s+/g,' ')), texte.slice(0,400));
 T('et la fréquence y figure en toutes lettres',
@@ -186,7 +218,7 @@ T('pas de bloc de fréquence sur une remise en état', !(await vis('cFreq')));
 const t3 = await p.evaluate(()=>totaux());
 T('son total n\'est pas multiplié', t3.ht === 300, t3);
 T('et il n\'est pas compté comme récurrent', t3.htMensuel === 0, t3);
-await p.fill('#fDelai','semaine 42');
+await p.fill('#fDate', DEMAIN); await p.fill('#fDelai','semaine 42');
 recu.length = 0;
 for(let i = 0; i < 4; i++){
   if(await p.isVisible('#e5')) break;

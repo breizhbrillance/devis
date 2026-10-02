@@ -4,6 +4,11 @@ import {chromium} from 'playwright';
 import {lancer, recu} from './srvco.mjs';
 import {ajouterUne, poserQte, cocher, ouvrirBloc, allerRemise} from './presta.mjs';
 import { CHROME } from './chemins.mjs';
+
+/* Une date d'intervention est obligatoire depuis la v46 : on prend demain,
+   pour que l'épreuve ne tombe jamais sur une date déjà passée. */
+const DEMAIN = (() => { const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); })();
 const PORT=8321; await lancer(PORT);
 const b=await chromium.launch({executablePath:CHROME});
 const c=await b.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
@@ -25,7 +30,7 @@ await p.fill('#cAdresse','12 rue Nicolazic'); await p.fill('#cCp','56000'); awai
 await p.click('#bSuiv'); await p.waitForTimeout(500);
 await poserQte(p, 0, 50);
 await p.click('#bSuiv'); await p.waitForTimeout(600);
-await p.fill('#fDelai','sous 15 jours');
+await p.fill('#fDate', DEMAIN); await p.fill('#fDelai','sous 15 jours');
 await p.click('#bSuiv'); await p.waitForTimeout(1800);
 
 T('le devis est enregistré, on est sur l\'écran de fin', await vis('e5'));
@@ -122,7 +127,7 @@ await p.fill('#cAdresse','4 quai'); await p.fill('#cCp','56000'); await p.fill('
 await p.click('#bSuiv'); await p.waitForTimeout(500);
 await ajouterUne(p, 0);
 await p.click('#bSuiv'); await p.waitForTimeout(500);
-await p.fill('#fDelai','octobre');
+await p.fill('#fDate', DEMAIN); await p.fill('#fDelai','octobre');
 await p.click('#bSuiv'); await p.waitForTimeout(1800);
 
 await p.evaluate(()=>{ Object.defineProperty(navigator,'onLine',{get:()=>false, configurable:true});

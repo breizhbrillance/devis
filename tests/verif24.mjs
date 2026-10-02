@@ -73,6 +73,10 @@ await p.fill('#cEmail','contact@syndic-armor.fr'); await p.click('#bSuiv'); awai
 
 // 5. enregistrement + panne serveur
 mode.sync='html';
+// la date d'intervention est obligatoire depuis la v46
+await p.evaluate(()=>{ const d=new Date(); d.setDate(d.getDate()+1);
+  const v=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+  const e=document.getElementById('fDate'); if(e) e.value=v; });
 for(let i=0;i<5;i++){ if(await p.isVisible('#e5')) break;
   if(!(await p.isVisible('#bSuiv'))) break; await p.click('#bSuiv'); await p.waitForTimeout(700); }
 await p.waitForTimeout(1500);
