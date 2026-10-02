@@ -13,6 +13,7 @@ var REMISE = {valeur:0, muet:false};
    lavage de sols se vend une fois en fin de chantier et quatre fois par mois
    en entretien. */
 var NATURE = null;      // 'ENTRETIEN' | 'CHANTIER' | 'REMISE'
+var ETAT = 'NORMAL';    // état du site constaté : 'NORMAL' | 'SALE' | 'TRES_SALE'
 var PASSAGES = 0;       // par mois, seulement pour un entretien
 var ETAPE = 1;
 var TYPE = null;           // 'PRO' ou 'PART' — choisi au début de chaque devis
@@ -287,7 +288,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v46';
+var VERSION_APP = 'v48';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -688,7 +689,7 @@ function etape(n){
   if(n<=2) majBarre();          // le total du bas suit le devis en cours, pas le précédent
   if(n===3) rendreLignes();
   if(n===4){
-    ecranRemise(); calculer(); majApercuSignature();
+    ecranEtat(); ecranRemise(); calculer(); majApercuSignature();
     // le calendrier ne propose pas de date déjà passée
     var cd = $('fDate'); if(cd) cd.min = isoJour();
   }
@@ -1608,6 +1609,77 @@ function ecranRemise(){
   peindreRemise();
 }
 
+/* ====================== ÉTAT DU SITE ======================
+   Un site sale demande plus de temps que le même site propre, et le catalogue
+   ne le sait pas. Plutôt que de laisser retoucher les prix — c'est ce que la
+   grille verrouillée interdit — le commercial dit ce qu'il a vu, et le devis
+   porte une ligne à part, « Majoration pour état des lieux ». Les deux taux
+   viennent du classeur : l'écran propose, le bureau fixe. */
+var REF_MAJ = 'MAJ-ETAT';
+function pctReglage(cle){
+  var v = (CFG && CFG.reglages) ? CFG.reglages[cle] : null;
+  if(v === undefined || v === null || String(v).trim() === '') return 0;
+  var n = Number(String(v).replace(',', '.'));
+  if(!isFinite(n) || n < 0) return 0;
+  return n > 100 ? 100 : n;
+}
+/* Le taux en vigueur sur CE devis. Un entretien n'en a jamais : son prix est
+   celui d'un passage répété, pas d'une remise à niveau. */
+function majorationPct(){
+  if(estEntretien()) return 0;
+  if(ETAT === 'SALE') return pctReglage('majoration_sale');
+  if(ETAT === 'TRES_SALE') return pctReglage('majoration_tres_sale');
+  return 0;
+}
+/* La ligne de majoration, recalculée à chaque fois à partir des prestations :
+   elle n'est jamais rangée dans LIGNES, qui ne contient que du catalogue. */
+function ligneMajoration(){
+  var pct = majorationPct();
+  if(!pct || !LIGNES.length) return null;
+  var base = 0;
+  LIGNES.forEach(function(l){ base += brutL(l); });
+  var m = Math.round(base * pct) / 100;
+  if(m <= 0) return null;
+  return {categorie:'État des lieux',
+          designation:'Majoration pour état des lieux (+' + nb(pct) + ' %)',
+          detail:'', qte:1, unite:'forfait', pu:m,
+          rem:REMISE.valeur, remMuet:REMISE.muet,
+          tva:LIGNES[0].tva, type:'PONCTUEL', reference:REF_MAJ};
+}
+/* Ce que le devis contient vraiment : les prestations, puis la majoration. C'est
+   cette liste que reçoivent le total, le PDF et le classeur. */
+function lignesDevis(){
+  var m = ligneMajoration();
+  return m ? LIGNES.concat([m]) : LIGNES.slice();
+}
+function sansMajoration(ls){
+  return (ls || []).filter(function(l){ return String((l && l.reference) || '') !== REF_MAJ; });
+}
+function setEtat(e){
+  ETAT = (e === 'SALE' || e === 'TRES_SALE') ? e : 'NORMAL';
+  ecranEtat();
+  calculer();
+}
+/* Le bloc n'apparaît que s'il y a quelque chose à choisir : un entretien, ou
+   deux taux à zéro dans le classeur, et il disparaît. */
+function ecranEtat(){
+  var c = $('cEtat');
+  if(!c) return;
+  var s = pctReglage('majoration_sale'), t = pctReglage('majoration_tres_sale');
+  var visible = !estEntretien() && (s > 0 || t > 0);
+  c.classList.toggle('hide', !visible);
+  if(!visible) return;
+  $('etS').classList.toggle('hide', s <= 0);
+  $('etT').classList.toggle('hide', t <= 0);
+  // Un taux retiré du classeur ne doit pas rester choisi dans un brouillon.
+  if((ETAT === 'SALE' && s <= 0) || (ETAT === 'TRES_SALE' && t <= 0)) ETAT = 'NORMAL';
+  $('etSp').textContent = '+' + nb(s) + ' %';
+  $('etTp').textContent = '+' + nb(t) + ' %';
+  $('etN').classList.toggle('on', ETAT === 'NORMAL');
+  $('etS').classList.toggle('on', ETAT === 'SALE');
+  $('etT').classList.toggle('on', ETAT === 'TRES_SALE');
+}
+
 /* ====================== MONTANTS ====================== */
 /* Montant brut d'une ligne, remise non déduite : c'est lui qu'on additionne
    par poste, la remise se lisant ensuite en une seule ligne. */
@@ -1621,7 +1693,7 @@ function montantL(l){
 
 function totaux(){
   var t = {htPonctuel:0,htMensuel:0,ht:0,brut:0,remise:0,tva:0,ttc:0,parTaux:{}};
-  LIGNES.forEach(function(l){
+  lignesDevis().forEach(function(l){
     var b = montantL(l), taux = Number(l.tva)||0;
     t.brut += brutL(l);
     if(String(l.type).toUpperCase()==='MENSUEL') t.htMensuel+=b; else t.htPonctuel+=b;
@@ -1658,7 +1730,7 @@ function totaux(){
 /* Récapitulatif par poste, comme sur le devis imprimé. */
 function calculer(){
   var t = totaux(), h='', postes = {}, ordre = [];
-  LIGNES.forEach(function(l){
+  lignesDevis().forEach(function(l){
     var k = String(l.categorie||'').trim() || 'Prestations';
     if(!postes[k]){ postes[k]=0; ordre.push(k); }
     postes[k] += brutL(l);
@@ -2002,10 +2074,11 @@ function sauverBrouillon(){
                     plus2ans:PLUS2ANS, taux:TAUX, dateSouhaitee:val('fDate'),
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
-                    nature:NATURE, passages:PASSAGES});
+                    nature:NATURE, passages:PASSAGES, etat:ETAT});
 }
 function restaurer(b){
-  LIGNES = b.lignes||[];
+  LIGNES = sansMajoration(b.lignes);
+  ETAT = (b.etat === 'SALE' || b.etat === 'TRES_SALE') ? b.etat : 'NORMAL';
   NATURE = b.nature || null;
   PASSAGES = Number(b.passages) || 0;
   REMISE = {valeur:0, muet:false};
@@ -2107,7 +2180,8 @@ function enregistrerSuite(b, envoi, moi, secours){
       validite: new Date(Date.now()+jours*86400000).toISOString(),
       commercial: moi.nom,
       client: lireClient(),
-      lignes: LIGNES.slice(),
+      lignes: lignesDevis(),
+      etatSite: majorationPct() ? ETAT : 'NORMAL',   // ce que le commercial a constaté
       objet: val('fObjet'),
       dateSouhaitee: val('fDate'),   // c'est elle qui sert à planifier
       delai: val('fDelai'),          // la phrase pour le client, rien de plus
@@ -2206,10 +2280,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=46';
+    sc.src = 'visionneuse.js?v=48';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=46';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=48';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2663,9 +2737,12 @@ function dupliquer(id, btn){
       $('c'+k).value = c[k.toLowerCase()] || '';
     });
     tracer('DEVIS DUPLIQUE', 'repris de ' + e.numero, e.numero);
-    LIGNES = (d.lignes||[]).map(function(l){
+    /* La majoration d'un ancien devis ne se recopie pas : elle se recalcule,
+       à partir de l'état noté et des taux d'aujourd'hui. */
+    LIGNES = sansMajoration(d.lignes).map(function(l){
       var o = {}; for(var k in l){ if(l.hasOwnProperty(k)) o[k] = l[k]; } return o;
     });
+    ETAT = (d.etatSite === 'SALE' || d.etatSite === 'TRES_SALE') ? d.etatSite : 'NORMAL';
     $('fObjet').value = d.objet || '';
     // La date d'un ancien devis n'a plus cours : on la laisse à choisir.
     $('fDate').value = '';
@@ -3400,6 +3477,7 @@ function nouveauDevis(){
   LIGNES = [];
   REMISE = {valeur:0, muet:false};
   NATURE = null; PASSAGES = 0;
+  ETAT = 'NORMAL';
   GRP = {};
   PHOTO_ID = null;
   cacherSugg();

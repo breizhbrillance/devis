@@ -201,7 +201,10 @@ var ENTETES_DEVIS_ = [
   'RECU_LE', 'ID_APPAREIL', 'ID_DEVIS', 'OBJET', 'LOGEMENT_PLUS_2_ANS', 'TAUX_TVA', 'DELAI',
   'DATE_SOUHAITEE',
   'MOTIF_REFUS', 'RELANCE_LE', 'DATE_STATUT', 'PREUVE_SIGNATURE', 'NOTE_COMMERCIAL',
-  'CONTROLE_TARIF', 'PASSAGES_MOIS', 'NATURE'
+  'CONTROLE_TARIF', 'PASSAGES_MOIS', 'NATURE',
+  /* NORMAL, SALE ou TRES_SALE : ce que le commercial a constaté sur place, et
+     qui justifie la ligne de majoration du devis. */
+  'ETAT_SITE'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -400,6 +403,10 @@ var REGLAGES_DEFAUT_ = [
    'Temps de route compté, en minutes, quand l\'itinéraire ne peut pas être calculé (adresse manquante, Google Maps muet)'],
   ['travail_jours_feries', 'NON',
    'OUI : l\'appli pose aussi des chantiers les jours fériés'],
+  ['majoration_sale', '15',
+   'Majoration en % quand le commercial déclare le site « sale » — 0 pour retirer le choix'],
+  ['majoration_tres_sale', '30',
+   'Majoration en % quand le commercial déclare le site « très sale » — 0 pour retirer le choix'],
   ['banque_nom', 'CMB Saint Avé', 'Coordonnées bancaires imprimées sur le devis'],
   ['banque_iban', 'FR76 1558 9569 3900 1258 9684 096', ''],
   ['banque_bic', 'CMBRFR2BXXX', ''],
@@ -421,22 +428,40 @@ var REGLAGES_DEFAUT_ = [
   ['sel_codes', '', 'Généré automatiquement — ne pas modifier']
 ];
 
+/* La grille telle qu'elle est dans le classeur depuis le 3 octobre 2026 : quinze
+   prestations d'intervention, puis quatorze tâches d'entretien au prix d'un
+   passage. « Charger la grille de prix » remet exactement ceci ; si le classeur
+   a évolué depuis, c'est lui qui a raison, pas cette liste. */
 var CATALOGUE_DEFAUT_ = [
-  ['Remise en état des sols', 'Nettoyage approfondi des plinthes et angles', '', 'm2', 0.20, 10, 'PONCTUEL', 'OUI', 'REF-0001', ''],
-  ['Remise en état des sols', 'Aspiration complète des sols', '', 'm2', 0.40, 10, 'PONCTUEL', 'OUI', 'REF-0002', ''],
+  ['Remise en état des sols', 'Nettoyage approfondi des plinthes et angles', '', 'm2', 0.20, 10, 'PONCTUEL', 'OUI', 'REF-0001', 'CHANTIER,REMISE'],
+  ['Remise en état des sols', 'Aspiration complète des sols', '', 'm2', 0.40, 10, 'PONCTUEL', 'OUI', 'REF-0002', 'CHANTIER,REMISE'],
   ['Remise en état des sols', 'Décapage des sols au décapant laitance', '', 'm2', 0.50, 10, 'PONCTUEL', 'OUI', 'REF-0003', 'CHANTIER'],
-  ['Remise en état des sols', 'Lavage humide et désinfection des sols', '', 'm2', 0.45, 10, 'PONCTUEL', 'OUI', 'REF-0004', ''],
-  ['Nettoyage des vitrages et menuiseries', 'Nettoyage des vitrages intérieurs/extérieurs', '', 'm2', 8, 10, 'PONCTUEL', 'OUI', 'REF-0005', ''],
-  ['Nettoyage des vitrages et menuiseries', 'Nettoyage complet des menuiseries, cadres et rails', '', 'm2', 4, 10, 'PONCTUEL', 'OUI', 'REF-0006', ''],
-  ['Nettoyage des vitrages et menuiseries', 'Nettoyage des volets roulants', '', 'm2', 2, 10, 'PONCTUEL', 'OUI', 'REF-0007', ''],
-  ['Remise en état de la cuisine', 'Nettoyage intérieur de la cuisine', '', 'forfait', 30, 10, 'PONCTUEL', 'OUI', 'REF-0008', ''],
-  ['Remise en état de la cuisine', 'Nettoyage extérieur de la cuisine', '', 'forfait', 20, 10, 'PONCTUEL', 'OUI', 'REF-0009', ''],
-  ['Chambres et pièces diverses', 'Nettoyage intérieur/extérieur des étagères, meubles, moulures et surfaces en relief', '', 'pièce(s)', 10, 10, 'PONCTUEL', 'OUI', 'REF-0010', ''],
-  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage et désinfection WC et lavabos', '', 'pièce(s)', 40, 10, 'PONCTUEL', 'OUI', 'REF-0011', ''],
-  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage robinetteries et faïences', '', 'pièce(s)', 15, 10, 'PONCTUEL', 'OUI', 'REF-0012', ''],
-  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage parois vitrées', '', 'pièce(s)', 30, 10, 'PONCTUEL', 'OUI', 'REF-0013', ''],
-  ['Finitions générales et livraison', 'Contrôle qualité et reprises générales', '', 'forfait', 10, 10, 'PONCTUEL', 'OUI', 'REF-0014', ''],
-  ['Remise en état des sols', 'Nettoyage vapeur des sols', '', 'm2', 0.50, 10, 'PONCTUEL', 'OUI', 'REF-0015', 'REMISE']
+  ['Remise en état des sols', 'Nettoyage vapeur des sols', '', 'm2', 0.50, 10, 'PONCTUEL', 'OUI', 'REF-0015', 'REMISE'],
+  ['Remise en état des sols', 'Lavage humide et désinfection des sols', '', 'm2', 0.45, 10, 'PONCTUEL', 'OUI', 'REF-0004', 'CHANTIER,REMISE'],
+  ['Nettoyage des vitrages et menuiseries', 'Nettoyage des vitrages intérieurs/extérieurs', '', 'm2', 8, 10, 'PONCTUEL', 'OUI', 'REF-0005', 'CHANTIER,REMISE'],
+  ['Nettoyage des vitrages et menuiseries', 'Nettoyage complet des menuiseries, cadres et rails', '', 'm2', 4, 10, 'PONCTUEL', 'OUI', 'REF-0006', 'CHANTIER,REMISE'],
+  ['Nettoyage des vitrages et menuiseries', 'Nettoyage des volets roulants', '', 'm2', 2, 10, 'PONCTUEL', 'OUI', 'REF-0007', 'CHANTIER,REMISE'],
+  ['Remise en état de la cuisine', 'Nettoyage intérieur de la cuisine', '', 'forfait', 30, 10, 'PONCTUEL', 'OUI', 'REF-0008', 'CHANTIER,REMISE'],
+  ['Remise en état de la cuisine', 'Nettoyage extérieur de la cuisine', '', 'forfait', 20, 10, 'PONCTUEL', 'OUI', 'REF-0009', 'CHANTIER,REMISE'],
+  ['Chambres et pièces diverses', 'Nettoyage intérieur/extérieur des étagères, meubles, moulures et surfaces en relief', '', 'pièce(s)', 10, 10, 'PONCTUEL', 'OUI', 'REF-0010', 'CHANTIER,REMISE'],
+  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage et désinfection WC et lavabos', '', 'pièce(s)', 40, 10, 'PONCTUEL', 'OUI', 'REF-0011', 'CHANTIER,REMISE'],
+  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage robinetteries et faïences', '', 'pièce(s)', 15, 10, 'PONCTUEL', 'OUI', 'REF-0012', 'CHANTIER,REMISE'],
+  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage parois vitrées', '', 'pièce(s)', 30, 10, 'PONCTUEL', 'OUI', 'REF-0013', 'CHANTIER,REMISE'],
+  ['Finitions générales et livraison', 'Contrôle qualité et reprises générales', '', 'forfait', 10, 10, 'PONCTUEL', 'OUI', 'REF-0014', 'CHANTIER,REMISE'],
+  ['Bureaux et espaces de travail', 'Nettoyage et désinfection des bureaux, tables, chaises et points de contact', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0016', 'ENTRETIEN'],
+  ['Bureaux et espaces de travail', 'Dépoussiérage et suppression des traces sur matériel informatique, casiers et étagères', '', 'forfait', 4, 20, 'PONCTUEL', 'OUI', 'REF-0017', 'ENTRETIEN'],
+  ['Bureaux et espaces de travail', 'Dépoussiérage des lustres et luminaires', '', 'forfait', 6.20, 20, 'PONCTUEL', 'OUI', 'REF-0018', 'ENTRETIEN'],
+  ['Bureaux et espaces de travail', 'Nettoyage et désinfection des tablettes de commande', '', 'forfait', 2, 20, 'PONCTUEL', 'OUI', 'REF-0019', 'ENTRETIEN'],
+  ['Cuisine et espace repas', 'Désinfection des ustensiles de cuisine et du plan de travail', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0020', 'ENTRETIEN'],
+  ['Cuisine et espace repas', 'Nettoyage des micro-ondes : points de contact extérieurs et intérieur', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0021', 'ENTRETIEN'],
+  ['Cuisine et espace repas', 'Nettoyage de l\'armoire réfrigérée : points de contact extérieurs et étages intérieurs', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0022', 'ENTRETIEN'],
+  ['Sanitaires', 'Vérification et désinfection des robinets et bondes', '', 'forfait', 3.50, 20, 'PONCTUEL', 'OUI', 'REF-0023', 'ENTRETIEN'],
+  ['Sanitaires', 'Nettoyage et désinfection des cuvettes et abattants de toilettes', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0024', 'ENTRETIEN'],
+  ['Sanitaires', 'Désinfection complète des lavabos, miroirs et plans de travail', '', 'forfait', 7, 20, 'PONCTUEL', 'OUI', 'REF-0025', 'ENTRETIEN'],
+  ['Sols et surfaces', 'Dépoussiérage et détachage des plinthes, murs, plafonds et rebords de fenêtre', '', 'forfait', 5, 20, 'PONCTUEL', 'OUI', 'REF-0026', 'ENTRETIEN'],
+  ['Sols et surfaces', 'Aspiration des sols', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
+  ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'forfait', 13, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
+  ['Contrôle', 'Contrôle visuel et hygiénique après chaque intervention', '', 'forfait', 1, 20, 'PONCTUEL', 'OUI', 'REF-0029', 'ENTRETIEN']
 ];
 
 /** Remplace le contenu du CATALOGUE par la grille de prix de référence. */
@@ -763,6 +788,7 @@ function enregistrer_(d, com) {
        Trois natures possibles ; tout ce qui n'est pas reconnu est une
        intervention unique, c'est le cas le moins coûteux à corriger. */
     NATURE: natureDevis_(devis.nature),
+    ETAT_SITE: etatSite_(devis.etatSite),
     PASSAGES_MOIS: Number(devis.passages) || ''
   };
   if (controleTarif) {
@@ -2146,7 +2172,10 @@ function planningDe_(nom) {
     if (isNaN(d.getTime()) || d < hier || d > loin) continue;
 
     // La fiche de travail : ce qui a été vendu, SANS UN SEUL MONTANT.
-    var taches = (parDevis[String(o.NUMERO).trim()] || []).map(function (l) {
+    var taches = (parDevis[String(o.NUMERO).trim()] || []).filter(function (l) {
+      /* La majoration est une ligne de prix, pas un travail à cocher. */
+      return String(l.REFERENCE || '').trim() !== REF_MAJORATION_;
+    }).map(function (l) {
       return {
         ref: String(l.REFERENCE || ''),
         designation: String(l.DESIGNATION || ''),
@@ -2543,6 +2572,21 @@ function isoJour_(d) {
  * un appareil resté longtemps hors connexion travaille avec un catalogue
  * périmé ; ou quelqu'un a modifié le devis avant l'envoi.
  */
+var REF_MAJORATION_ = 'MAJ-ETAT';
+
+/* Un pourcentage de REGLAGES, borné entre 0 et 100. Illisible ou vide : zéro. */
+function pourcentReglage_(v) {
+  var n = Number(String(v === undefined || v === null ? '' : v).replace(',', '.').trim());
+  if (!isFinite(n) || n < 0) return 0;
+  return n > 100 ? 100 : n;
+}
+
+/* NORMAL, SALE ou TRES_SALE ; tout le reste vaut NORMAL. */
+function etatSite_(v) {
+  var e = String(v || '').toUpperCase().trim().replace(/[ -]+/g, '_');
+  return (e === 'SALE' || e === 'TRES_SALE') ? e : 'NORMAL';
+}
+
 function controlerTarifs_(devis, reg) {
   var lignes = (devis && devis.lignes) || [];
   if (!lignes.length) return '';
@@ -2557,13 +2601,38 @@ function controlerTarifs_(devis, reg) {
   if (!isFinite(max) || max < 0) max = 0;
   if (max > 100) max = 100;
 
+  /* La majoration pour état des lieux n'est pas au catalogue : c'est un
+     pourcentage du reste du devis. On la recalcule ici, avec les deux taux du
+     classeur, et l'on signale tout montant qui ne tombe sur aucun des deux. */
+  var base = 0;
+  lignes.forEach(function (l) {
+    if (String(l.reference || '').trim() === REF_MAJORATION_) return;
+    base += Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) * 100) / 100;
+  });
+  var tauxPermis = [pourcentReglage_(reg.majoration_sale), pourcentReglage_(reg.majoration_tres_sale)]
+    .filter(function (x) { return x > 0; });
+  var majorations = 0;
+
   var ecarts = [];
   lignes.forEach(function (l, i) {
     var rang = 'ligne ' + (i + 1) + ' (' + (l.designation || 'sans nom') + ')';
     var ref = String(l.reference || '').trim();
     var p = ref ? cat[ref] : parNom[normNom_(l.designation || '')];
 
-    if (!p) {
+    if (ref === REF_MAJORATION_) {
+      majorations++;
+      var montant = Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) * 100) / 100;
+      var juste = tauxPermis.some(function (t) {
+        return Math.abs(montant - Math.round(base * t) / 100) <= 0.011;
+      });
+      if (majorations > 1) ecarts.push(rang + ' : majoration comptée deux fois');
+      else if (natureDevis_(devis.nature) === 'ENTRETIEN') {
+        ecarts.push(rang + ' : majoration sur un contrat d\'entretien');
+      } else if (!juste) {
+        ecarts.push(rang + ' : majoration de ' + montant + ' € qui ne correspond à aucun taux du classeur (' +
+                    (tauxPermis.length ? tauxPermis.join(' % ou ') + ' %' : 'aucun') + ' de ' + base + ' €)');
+      }
+    } else if (!p) {
       ecarts.push(rang + ' : hors catalogue');
     } else {
       var attendu = Number(p.pu) || 0, recu = Number(l.pu) || 0;
