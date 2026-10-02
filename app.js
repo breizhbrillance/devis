@@ -287,7 +287,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v44';
+var VERSION_APP = 'v45';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1073,6 +1073,7 @@ function choisirType(t){
   // Un particulier n'a pas de locaux à entretenir : si l'entretien avait été
   // choisi, il n'a plus cours. Les deux interventions, elles, lui vont.
   if(t === 'PART' && NATURE === 'ENTRETIEN'){ NATURE = null; PASSAGES = 0; }
+  purgerSelonNature();
   majType();
   majNature();
   sauverBrouillon();
@@ -1081,7 +1082,10 @@ function choisirType(t){
 function choisirNature(n){
   NATURE = n;
   if(n !== 'ENTRETIEN') PASSAGES = 0;
+  var retirees = purgerSelonNature();
   majNature();
+  if(ETAPE === 3) rendreLignes();
+  if(retirees) majBarre();
   sauverBrouillon();
   // Sur un entretien on reste : le commercial a un champ à remplir sous les
   // yeux. Sur une intervention il n'y a plus rien à dire ici.
@@ -1222,6 +1226,43 @@ function normTexte(s){
 /* La clé d'une prestation : sa référence si le classeur en donne une, sinon sa
    désignation. C'est elle qui relie une ligne déjà saisie à sa place dans la
    liste, y compris quand le catalogue a bougé entre deux ouvertures. */
+/* ====================== LE CATALOGUE SELON LA NATURE ======================
+   Une prestation peut n'appartenir qu'à certaines natures de devis : le
+   décapage de la laitance ne se vend qu'en fin de chantier, le nettoyage
+   vapeur des sols qu'en remise en état. C'est la colonne NATURES du CATALOGUE
+   qui le dit ; vide, la prestation se vend dans les trois. */
+var CATV = [];                 // le catalogue tel que le commercial le voit
+
+function naturesDe(p){
+  var v = (p && p.natures) || [];
+  if(typeof v === 'string') v = v.split(/[^A-Za-z]+/);
+  return v.map(function(x){ return String(x).toUpperCase().trim(); }).filter(Boolean);
+}
+function prestaVisible(p){
+  var n = naturesDe(p);
+  if(!n.length) return true;   // sans mention, elle se vend partout
+  if(!NATURE) return true;     // nature pas encore choisie : on ne cache rien
+  return n.indexOf(NATURE) >= 0;
+}
+function catalogueVisible(){
+  return ((CFG && CFG.catalogue) || []).filter(prestaVisible);
+}
+/* Les écrans désignent une prestation par son rang dans la liste affichée.
+   C'est donc cette liste-là, et pas le catalogue entier, qu'il faut consulter. */
+function presta(i){ return CATV[i] || null; }
+
+/* Changer de nature en cours de devis peut retirer du catalogue une prestation
+   déjà chiffrée. On ne la laisse pas dans l'ombre, comptée au total sans être
+   affichée nulle part : elle quitte le devis. */
+function purgerSelonNature(){
+  var exclues = {};
+  ((CFG && CFG.catalogue) || []).forEach(function(p){
+    if(!prestaVisible(p)) exclues[clePresta(p)] = 1; });
+  var avant = LIGNES.length;
+  LIGNES = LIGNES.filter(function(l){ return !exclues[clePresta(l)]; });
+  return avant - LIGNES.length;
+}
+
 function clePresta(p){
   var r = String((p && p.reference) || '').trim();
   return r ? 'R:' + r : 'D:' + normTexte(p && p.designation);
@@ -1277,7 +1318,8 @@ function poser(cle, qte){
 }
 
 function rendreLignes(){
-  var c = $('lignes'), cat = (CFG && CFG.catalogue) || [];
+  CATV = catalogueVisible();
+  var c = $('lignes'), cat = CATV;
   CATS = []; CATP = {};
   cat.forEach(function(p){
     var k = String(p.categorie || '').trim() || 'Prestations';
@@ -1285,8 +1327,11 @@ function rendreLignes(){
     CATP[k].push(p);
   });
   if(!cat.length){
-    c.innerHTML = '<div class="card"><div class="empty">Le catalogue est vide.<br>' +
-      'Synchronise l\'application pour le recevoir.</div></div>';
+    c.innerHTML = '<div class="card"><div class="empty">' +
+      (((CFG && CFG.catalogue) || []).length
+        ? 'Aucune prestation ne correspond à cette nature de devis.'
+        : 'Le catalogue est vide.<br>Synchronise l\'application pour le recevoir.') +
+      '</div></div>';
     majBarre(); return;
   }
   var h = '', rang = 0;
@@ -1340,7 +1385,7 @@ function basculerGrp(k){
 /* On repeint la ligne touchée, jamais la liste entière : un rendu complet
    referme le clavier du téléphone au milieu d'un nombre. */
 function rafraichirLigne(i){
-  var p = ((CFG && CFG.catalogue) || [])[i];
+  var p = presta(i);
   if(!p) return;
   var l = ligneDe(clePresta(p)), q = l ? (Number(l.qte) || 0) : 0;
   var r = $('pr' + i), tt = $('tt' + i);
@@ -1366,7 +1411,7 @@ function majBadges(){
 }
 
 function setQte(i, v, el){
-  var p = ((CFG && CFG.catalogue) || [])[i];
+  var p = presta(i);
   if(!p) return;
   var n = (String(v).trim() === '' ? 0 : Number(String(v).replace(',', '.')));
   if(!isFinite(n) || n < 0){ n = 0; if(el) el.value = ''; }
@@ -1376,7 +1421,7 @@ function setQte(i, v, el){
 }
 
 function basculerForfait(i){
-  var p = ((CFG && CFG.catalogue) || [])[i];
+  var p = presta(i);
   if(!p) return;
   var cle = clePresta(p);
   poser(cle, qteDe(cle) > 0 ? 0 : 1);
@@ -1419,7 +1464,7 @@ function retirerHors(i){
    On mesure pièce par pièce, l'appli additionne : c'est là que les erreurs
    de multiplication faites debout dans un hall coûtent le plus cher. */
 function ouvrirSurface(i){
-  var p = ((CFG && CFG.catalogue) || [])[i];
+  var p = presta(i);
   if(!p) return;
   // On retient la prestation, pas son rang : le catalogue peut être rafraîchi
   // en arrière-plan pendant que la calculette est ouverte.
@@ -2143,10 +2188,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=44';
+    sc.src = 'visionneuse.js?v=45';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=44';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=45';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
