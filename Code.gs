@@ -20,7 +20,8 @@ var SH = {
   BORD: 'TABLEAU DE BORD',
   PRESTATAIRES: 'PRESTATAIRES',
   CHANTIERS: 'CHANTIERS',
-  ADMINS: 'ADMINS'
+  ADMINS: 'ADMINS',
+  ABSENCES: 'ABSENCES'
 };
 
 /* Les agents qui exécutent le travail. Feuille séparée des COMMERCIAUX : ce ne
@@ -35,6 +36,12 @@ var ENTETES_PRESTATAIRES_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'TELEPHONE',
    et les chiffres. Mêmes colonnes que les deux autres populations, pour que
    la façon d'ajouter ou de retirer quelqu'un ne change jamais. */
 var ENTETES_ADMINS_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF'];
+
+/* Les jours où l'on ne pose rien : congés d'un salarié, ou fermeture de la
+   maison quand PRESTATAIRE est vide ou vaut TOUS. Volontairement sans motif :
+   le planning a besoin de savoir QUAND quelqu'un est absent, jamais POURQUOI,
+   et un motif d'absence n'a rien à faire dans un classeur partagé. */
+var ENTETES_ABSENCES_ = ['PRESTATAIRE', 'DU', 'AU'];
 
 /* Une ligne par intervention. Naît d'un devis signé, se remplit sur le terrain. */
 var ENTETES_CHANTIERS_ = [
@@ -53,8 +60,10 @@ var ENTETES_CHANTIERS_ = [
    PLANIFIE : date et agent en place, l'agent le voit dans son planning.
    EN COURS : l'agent a pointé son arrivée.
    FAIT : il a pointé son départ.
-   PROBLEME : il a signalé quelque chose — le chantier reste à regarder. */
-var STATUTS_CHANTIER_ = ['A PLANIFIER', 'PLANIFIE', 'EN COURS', 'FAIT', 'PROBLEME'];
+   PROBLEME : il a signalé quelque chose — le chantier reste à regarder.
+   ANNULE : le devis n'est plus signé, ou le gérant a retiré le passage. La
+   fiche reste dans la feuille pour mémoire, mais ne compte plus nulle part. */
+var STATUTS_CHANTIER_ = ['A PLANIFIER', 'PLANIFIE', 'EN COURS', 'FAIT', 'PROBLEME', 'ANNULE'];
 
 var ENTETES_JOURNAL_ = [
   'HORODATAGE', 'MOMENT', 'COMMERCIAL', 'ACTION', 'DETAIL', 'NUMERO', 'APPAREIL', 'SOURCE'
@@ -246,6 +255,7 @@ function majStructure_() {
   creerOnglet_(ss, SH.PRESTATAIRES, ENTETES_PRESTATAIRES_);
   creerOnglet_(ss, SH.ADMINS, ENTETES_ADMINS_);
   creerOnglet_(ss, SH.CHANTIERS, ENTETES_CHANTIERS_);
+  creerOnglet_(ss, SH.ABSENCES, ENTETES_ABSENCES_);
   [[SH.PRESTATAIRES, ENTETES_PRESTATAIRES_], [SH.CHANTIERS, ENTETES_CHANTIERS_],
    [SH.ADMINS, ENTETES_ADMINS_]]
     .forEach(function (o) {
@@ -382,6 +392,12 @@ var REGLAGES_DEFAUT_ = [
    'Taux horaire de vente (€/h) : sert à déduire la durée d\'un chantier de son montant'],
   ['planification_auto', 'OUI',
    'NON : les chantiers naissent « A PLANIFIER » et c\'est le bureau qui pose dates et salariés'],
+  ['reliquat_ignore_min', '60',
+   'Un reste de chantier plus court que cette durée (minutes) n\'ouvre pas une journée de plus : sous 8 h, une seule journée de 7 h'],
+  ['trajet_minutes', '30',
+   'Temps de route compté entre deux chantiers d\'une même journée, en minutes'],
+  ['travail_jours_feries', 'NON',
+   'OUI : l\'appli pose aussi des chantiers les jours fériés'],
   ['banque_nom', 'CMB Saint Avé', 'Coordonnées bancaires imprimées sur le devis'],
   ['banque_iban', 'FR76 1558 9569 3900 1258 9684 096', ''],
   ['banque_bic', 'CMBRFR2BXXX', ''],
@@ -891,6 +907,13 @@ function enregistrerStatut_(d, com) {
   // La note ne s'écrit que si l'envoi en portait une : un résultat transmis
   // seul ne doit pas effacer ce que le commercial avait déjà noté.
   if (d.note !== undefined) v.NOTE_COMMERCIAL = note;
+  /* L'état d'avant : c'est lui qui dit si une « relance » défait une signature. */
+  var statutAvant = '';
+  if (statut) {
+    lireDevis_().forEach(function (x) {
+      if (String(x.NUMERO).trim() === num) statutAvant = String(x.STATUT || '').toUpperCase().trim();
+    });
+  }
   var trouve = majDevis_(num, v);
 
   tracerServeur_(com ? com.nom : (d.nom || ''),
@@ -917,7 +940,17 @@ function enregistrerStatut_(d, com) {
                      num, '');
     }
   }
-  return { ok: true, statut: statut || '(note seule)', chantiers: nes };
+  /* Le devis n'est plus signé : ses rendez-vous ne tiennent plus. Un refus les
+     retire toujours ; une relance seulement si elle remplace une signature. */
+  var annules = 0;
+  if (statut === 'REFUSE' || (statut === 'A RELANCER' && statutAvant === 'SIGNE')) {
+    try {
+      annules = annulerChantiers_(num, statut, com ? com.nom : (d.nom || ''), d.appareil || '').length;
+    } catch (eA) {
+      tracerServeur_('SYSTEME', 'ANNULATION ECHEC', String(eA && eA.message || eA), num, '');
+    }
+  }
+  return { ok: true, statut: statut || '(note seule)', chantiers: nes, annules: annules };
 }
 
 /* ====================== ESPACE PRESTATAIRE ======================
@@ -992,6 +1025,9 @@ function tableauAdmin_() {
   var chantiers = [];
   objetsDe_(SH.CHANTIERS).forEach(function (o) {
     if (!String(o.ID || '').trim()) return;
+    /* Une fiche annulée n'est plus à planifier : elle ne doit pas remonter en
+       tête de l'écran comme un chantier sans date. */
+    if (String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') return;
     var d = o.DATE ? new Date(o.DATE) : null;
     var plan = !!(d && !isNaN(d.getTime()));
     // Un chantier sans date est justement celui qu'il faut planifier : il doit
@@ -1134,6 +1170,7 @@ function prochainNumChantier_(sh, cId) {
 function poserPlanning_(numero, qui, appareil) {
   var bilan;
   try {
+    reactiverChantiers_(numero);
     bilan = planifierDevis_(numero);
   } catch (e) {
     tracerServeur_('SYSTEME', 'PLANIFICATION ECHEC',
@@ -1205,6 +1242,12 @@ function heuresLisibles_(min) {
  *
  * 3. QUI ? Le salarié le moins chargé de la semaine visée, parmi ceux dont
  *    le jour est travaillé et dont la journée n'est pas déjà pleine.
+ *
+ * Depuis la v47 : rien n'est posé un jour férié ni pendant une absence (onglet
+ * ABSENCES) ; un second chantier dans la journée compte son trajet ; les
+ * passages d'un contrat suivent sa vraie fréquence ; un reste de moins d'une
+ * heure n'ouvre pas une journée de plus ; et un devis qui n'est plus signé
+ * rend ses créneaux.
  */
 
 /* L'interrupteur du classeur. Posé à NON, l'appli crée les fiches mais ne pose
@@ -1320,7 +1363,10 @@ function cleSemaine_(d) {
    planning prudent qu'un salarié en retard toute la journée. */
 function chargeActuelle_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
-  var charge = { jour: {}, semaine: {} };
+  var reg = lireReglages_();
+  /* Le trajet et le calendrier voyagent avec la charge : tout ce qui cherche
+     un créneau les trouve au même endroit, sans relire le classeur. */
+  var charge = { jour: {}, semaine: {}, trajet: trajetMinutes_(reg), cal: calendrier_(reg) };
   if (!sh || sh.getLastRow() < 2) return charge;
   var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
   var en = v[0].map(function (x) { return String(x).trim(); });
@@ -1334,9 +1380,7 @@ function chargeActuelle_() {
     if (iStatut >= 0 && String(v[i][iStatut]).toUpperCase() === 'ANNULE') continue;
     var min = iDur >= 0 ? Number(v[i][iDur]) : 0;
     if (!isFinite(min) || min <= 0) min = 210;
-    var cj = qui + '|' + isoJour_(d), cs = qui + '|' + cleSemaine_(d);
-    charge.jour[cj] = (charge.jour[cj] || 0) + min;
-    charge.semaine[cs] = (charge.semaine[cs] || 0) + min;
+    reserver_(charge, qui, d, min);
   }
   return charge;
 }
@@ -1348,13 +1392,21 @@ function chargeActuelle_() {
 function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
   if (!gens.length) return null;
   var jour = new Date(depuis.getFullYear(), depuis.getMonth(), depuis.getDate(), 12, 0, 0);
+  var trajet = charge.trajet || 0;
   for (var pas = 0; pas < (horizon || 120); pas++) {
     var jSem = jour.getDay(), iso = isoJour_(jour), sem = cleSemaine_(jour);
-    var possibles = gens.filter(function (g) {
+    /* Un jour férié ou un jour de fermeture ne reçoit rien, pour personne. */
+    var ferme = jourFerme_(charge.cal, jour);
+    var possibles = ferme ? [] : gens.filter(function (g) {
       if (g.jours.indexOf(jSem) < 0) return false;
+      if (estAbsent_(charge.cal, g.cle, iso)) return false;
       var dejaJ = charge.jour[g.cle + '|' + iso] || 0;
       var dejaS = charge.semaine[g.cle + '|' + sem] || 0;
-      return (dejaJ + minutes <= g.capaciteJour) && (dejaS + minutes <= g.capaciteSemaine);
+      /* Un deuxième chantier dans la journée, c'est aussi une route à faire :
+         elle prend sur la journée et sur la semaine comme du travail. */
+      var route = dejaJ > 0 ? trajet : 0;
+      return (dejaJ + route + minutes <= g.capaciteJour) &&
+             (dejaS + route + minutes <= g.capaciteSemaine);
     });
     if (possibles.length) {
       /* Le même salarié garde les jours suivants d'un chantier découpé, et les
@@ -1376,6 +1428,7 @@ function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
          découpe pas à la minute dans la journée — le salarié s'organise — on
          donne un point de départ honnête. */
       var reste = charge.jour[choisi.cle + '|' + iso] || 0;
+      if (reste > 0) reste += trajet;          // il arrive après la route
       var debut = choisi.plages[0].debut;
       for (var p = 0; p < choisi.plages.length; p++) {
         var large = choisi.plages[p].fin - choisi.plages[p].debut;
@@ -1396,8 +1449,140 @@ function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
 function reserver_(charge, nom, date, minutes) {
   var k = normNom_(nom);
   var cj = k + '|' + isoJour_(date), cs = k + '|' + cleSemaine_(date);
-  charge.jour[cj] = (charge.jour[cj] || 0) + minutes;
-  charge.semaine[cs] = (charge.semaine[cs] || 0) + minutes;
+  /* S'il y a déjà un chantier ce jour-là, celui-ci coûte aussi le trajet. */
+  var route = (charge.jour[cj] || 0) > 0 ? (charge.trajet || 0) : 0;
+  charge.jour[cj] = (charge.jour[cj] || 0) + route + minutes;
+  charge.semaine[cs] = (charge.semaine[cs] || 0) + route + minutes;
+}
+
+/* ---------- le trajet, les jours fériés, les absences ---------- */
+
+/* Minutes de route entre deux chantiers d'une même journée. Zéro est permis :
+   c'est le réglage de quelqu'un qui ne veut pas en tenir compte. */
+function trajetMinutes_(reg) {
+  var brut = String((reg && reg.trajet_minutes !== undefined) ? reg.trajet_minutes : '').trim();
+  if (brut === '') return 30;
+  var t = Number(brut.replace(',', '.'));
+  return (isFinite(t) && t >= 0) ? Math.round(t) : 30;
+}
+
+/* Sous ce nombre de minutes, le reste d'un chantier n'ouvre pas une journée de
+   plus. La durée vient du prix, pas d'un chronomètre : envoyer quelqu'un pour
+   un quart d'heure sur la foi d'une division serait absurde. */
+function reliquatIgnore_(reg) {
+  var brut = String((reg && reg.reliquat_ignore_min !== undefined) ? reg.reliquat_ignore_min : '').trim();
+  if (brut === '') return 60;
+  var t = Number(brut.replace(',', '.'));
+  return (isFinite(t) && t >= 0) ? Math.round(t) : 60;
+}
+
+/* Le dimanche de Pâques, par le calcul de Meeus : les trois fériés mobiles en
+   découlent, et aucune liste n'est à tenir à jour d'une année sur l'autre. */
+function paques_(an) {
+  var a = an % 19, b = Math.floor(an / 100), c = an % 100;
+  var d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  var g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  var i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  var m = Math.floor((a + 11 * h + 22 * l) / 451);
+  var mois = Math.floor((h + l - 7 * m + 114) / 31);
+  var jour = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(an, mois - 1, jour, 12, 0, 0);
+}
+
+/* Les onze jours fériés de métropole pour une année : { '2026-11-11': 'Armistice 1918', … } */
+function joursFeries_(an) {
+  var t = {};
+  function fixe(m, j, nom) { t[isoJour_(new Date(an, m - 1, j, 12, 0, 0))] = nom; }
+  function mobile(decalage, nom) {
+    var d = paques_(an); d.setDate(d.getDate() + decalage); t[isoJour_(d)] = nom;
+  }
+  fixe(1, 1, 'Jour de l\'an'); mobile(1, 'Lundi de Pâques');
+  fixe(5, 1, 'Fête du travail'); fixe(5, 8, 'Victoire 1945');
+  mobile(39, 'Ascension'); mobile(50, 'Lundi de Pentecôte');
+  fixe(7, 14, 'Fête nationale'); fixe(8, 15, 'Assomption');
+  fixe(11, 1, 'Toussaint'); fixe(11, 11, 'Armistice 1918'); fixe(12, 25, 'Noël');
+  return t;
+}
+
+/* Une cellule de date, quelle que soit la façon dont elle a été tapée :
+   vraie date, « 12/10/2026 » ou « 2026-10-12 ». Rend '2026-10-12', ou ''. */
+function jourDe_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? '' : isoJour_(v);
+  var s = String(v === null || v === undefined ? '' : v).trim();
+  var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
+  m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})/);
+  if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  return '';
+}
+
+/* L'onglet ABSENCES : une ligne par période. PRESTATAIRE vide ou « TOUS » ferme
+   la maison pour tout le monde. AU vide vaut une seule journée. */
+function lireAbsences_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.ABSENCES);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim().toUpperCase(); });
+  var iQui = en.indexOf('PRESTATAIRE'), iDu = en.indexOf('DU'), iAu = en.indexOf('AU');
+  if (iDu < 0) return [];
+  var out = [];
+  for (var i = 1; i < v.length; i++) {
+    var du = jourDe_(v[i][iDu]);
+    if (!du) continue;
+    var au = (iAu >= 0 ? jourDe_(v[i][iAu]) : '') || du;
+    if (au < du) { var x = du; du = au; au = x; }      // dates tapées à l'envers
+    var qui = iQui >= 0 ? normNom_(v[i][iQui]) : '';
+    if (qui === 'tous' || qui === 'tout le monde' || qui === 'fermeture') qui = '';
+    out.push({ cle: qui, du: du, au: au });
+  }
+  return out;
+}
+
+/* Tout ce qui interdit un jour, réuni une fois pour toutes. */
+function calendrier_(reg) {
+  return {
+    feriesTravailles: String((reg && reg.travail_jours_feries) || 'NON').toUpperCase().trim() === 'OUI',
+    absences: lireAbsences_(),
+    annees: {}
+  };
+}
+
+/* Le nom du jour férié, ou '' si c'est un jour ordinaire. */
+function ferie_(cal, date) {
+  if (!cal || cal.feriesTravailles) return '';
+  var an = date.getFullYear();
+  if (!cal.annees[an]) cal.annees[an] = joursFeries_(an);
+  return cal.annees[an][isoJour_(date)] || '';
+}
+
+/* Fermé pour tout le monde : férié, ou fermeture inscrite dans ABSENCES. */
+function jourFerme_(cal, date) {
+  if (!cal) return false;
+  if (ferie_(cal, date)) return true;
+  return estAbsent_(cal, '', isoJour_(date), true);
+}
+
+/* Ce salarié est-il absent ce jour-là ? Avec seulementTous, on ne regarde que
+   les fermetures de la maison. */
+function estAbsent_(cal, cle, iso, seulementTous) {
+  if (!cal || !cal.absences) return false;
+  for (var i = 0; i < cal.absences.length; i++) {
+    var a = cal.absences[i];
+    if (iso < a.du || iso > a.au) continue;
+    if (a.cle === '') return true;
+    if (!seulementTous && a.cle === cle) return true;
+  }
+  return false;
+}
+
+/* Quelqu'un peut-il travailler ce jour-là ? Sert à choisir le jour d'un
+   passage de contrat avant même de regarder la charge. */
+function jourOuvrable_(gens, cal, date) {
+  if (jourFerme_(cal, date)) return false;
+  var j = date.getDay(), iso = isoJour_(date);
+  return gens.some(function (g) {
+    return g.jours.indexOf(j) >= 0 && !estAbsent_(cal, g.cle, iso);
+  });
 }
 
 /**
@@ -1445,25 +1630,61 @@ function planifierDevis_(numero) {
   var recurrent = String(devis.NATURE || '').toUpperCase().trim() === 'ENTRETIEN';
   var prefere = '';
   var curseur = new Date(depuis.getTime());
-  var lotPrecedent = '';
+  var num = String(numero).trim();
+  function midi(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0); }
+  function debutDePassage(lot) { return !lot || Number(lot.split('/')[0]) === 1; }
+  function lotDe(ligne) { return iLot >= 0 ? String(ligne[iLot] || '').trim() : ''; }
+
+  /* Combien de passages ce devis compte-t-il ? C'est ce qui donne le rythme :
+     huit passages dans le mois, c'est deux par semaine, pas un par semaine
+     pendant deux mois. */
+  var passages = 0;
+  for (var n = 1; n < v.length; n++) {
+    if (String(v[n][iNum]).trim() === num && debutDePassage(lotDe(v[n]))) passages++;
+  }
+  if (passages < 1) passages = 1;
+
+  var rang = -1;            // le passage en cours, compté depuis zéro
+  var ancre = null;         // le jour du premier passage : les autres s'y réfèrent
+  var dernier = null;       // le dernier jour occupé par ce devis
 
   for (var i = 1; i < v.length; i++) {
-    if (String(v[i][iNum]).trim() !== String(numero).trim()) continue;
-    if (v[i][iDate]) continue;                       // déjà posé, on n'y touche pas
+    if (String(v[i][iNum]).trim() !== num) continue;
+    var lot = lotDe(v[i]);
+    var debut = debutDePassage(lot);
+    if (debut) rang++;
+
+    if (v[i][iDate]) {                               // déjà posé, on n'y touche pas
+      if (v[i][iDate] instanceof Date) {
+        if (!ancre && rang === 0) ancre = midi(v[i][iDate]);
+        if (!dernier || v[i][iDate] > dernier) dernier = midi(v[i][iDate]);
+      }
+      continue;
+    }
+    if (iStatut >= 0 && String(v[i][iStatut]).toUpperCase().trim() === 'ANNULE') continue;
     if (String(v[i][iQui]).trim()) continue;         // déjà affecté à la main
 
     var minutes = iDur >= 0 ? Number(v[i][iDur]) : 0;
     if (!isFinite(minutes) || minutes <= 0) minutes = 210;
-    var lot = iLot >= 0 ? String(v[i][iLot] || '').trim() : '';
 
-    /* Les jours d'un même passage se suivent ; les passages d'un contrat
-       s'espacent d'une semaine, le même jour quand c'est possible. */
-    var memePassage = lot && lotPrecedent &&
-                      lot.split('/')[1] === lotPrecedent.split('/')[1] &&
-                      Number(lot.split('/')[0]) === Number(lotPrecedent.split('/')[0]) + 1;
-    if (recurrent && !memePassage && i > 1 && bilan.poses.length) {
-      curseur = new Date(curseur.getTime());
-      curseur.setDate(curseur.getDate() + 7);
+    /* Les jours d'un même passage se suivent. Les passages d'un contrat se
+       répartissent sur quatre semaines à partir du premier : quatre passages
+       tombent le même jour chaque semaine, huit sur deux jours fixes. */
+    if (recurrent && debut) {
+      var cible = midi(ancre || depuis);
+      cible.setDate(cible.getDate() + Math.round(rang * 28 / passages));
+      if (cible < depuis) cible = midi(depuis);
+      var plancher = dernier ? midi(dernier) : null;
+      if (plancher) plancher.setDate(plancher.getDate() + 1);
+      if (plancher && cible < plancher) cible = plancher;
+      /* Le jour visé n'est pas travaillé : on préfère la veille au lendemain,
+         pour ne pas coller ce passage au suivant. */
+      for (var recul = 1; recul <= 3 && !jourOuvrable_(gens, charge.cal, cible); recul++) {
+        var avant = midi(cible); avant.setDate(avant.getDate() - recul);
+        if (avant < midi(depuis) || (plancher && avant < plancher)) break;
+        if (jourOuvrable_(gens, charge.cal, avant)) { cible = avant; break; }
+      }
+      curseur = cible;
     }
 
     var c = creneauPour_(minutes, curseur, gens, charge, prefere || null, 120);
@@ -1479,15 +1700,168 @@ function planifierDevis_(numero) {
     bilan.poses.push({ id: iId >= 0 ? v[i][iId] : '', date: c.date, heure: c.heure,
                        nom: c.nom, minutes: minutes });
     prefere = c.nom;
-    lotPrecedent = lot;
+    if (!ancre && rang === 0) ancre = midi(c.date);
+    if (!dernier || c.date > dernier) dernier = midi(c.date);
     /* Le lot suivant d'un même passage part du lendemain ; sinon on repart du
-       jour posé, et l'espacement d'un contrat s'ajoutera au tour suivant. */
+       jour posé. */
     curseur = new Date(c.date.getTime());
     if (lot && Number(lot.split('/')[0]) < Number(lot.split('/')[1])) {
       curseur.setDate(curseur.getDate() + 1);
     }
   }
   return bilan;
+}
+
+/* ---------- un devis qui n'est plus signé libère son planning ---------- */
+
+var MARQUE_ANNULATION_ = 'Annulé (devis ';
+
+/**
+ * Annule les chantiers d'un devis qui n'ont pas commencé. Un chantier où le
+ * salarié a pointé son arrivée n'est jamais touché : le travail a eu lieu, il
+ * reste à facturer ou à discuter, pas à effacer.
+ *
+ * La date et le nom sont retirés de la fiche — c'est ce qui la fait disparaître
+ * du téléphone du salarié et rend la place au planning — mais notés dans NOTE,
+ * pour que le gérant sache quel rendez-vous il doit décommander.
+ */
+function annulerChantiers_(numero, motif, qui, appareil) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var iNum = en.indexOf('NUMERO'), iDate = en.indexOf('DATE'), iHeure = en.indexOf('HEURE');
+  var iQui = en.indexOf('PRESTATAIRE'), iStatut = en.indexOf('STATUT');
+  var iArr = en.indexOf('ARRIVEE'), iNote = en.indexOf('NOTE'), iId = en.indexOf('ID');
+  if (iNum < 0 || iStatut < 0) return [];
+  var annules = [];
+  for (var i = 1; i < v.length; i++) {
+    if (String(v[i][iNum]).trim() !== String(numero).trim()) continue;
+    var st = String(v[i][iStatut]).toUpperCase().trim();
+    if (st !== 'A PLANIFIER' && st !== 'PLANIFIE' && st !== '') continue;
+    if (iArr >= 0 && v[i][iArr]) continue;           // il y est allé
+    var d = iDate >= 0 && v[i][iDate] instanceof Date ? v[i][iDate] : null;
+    var nom = iQui >= 0 ? String(v[i][iQui] || '').trim() : '';
+    var trace = MARQUE_ANNULATION_ + (motif || 'non signé') + ') le ' +
+      Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy') +
+      (d ? ' — était prévu le ' + Utilities.formatDate(d, 'Europe/Paris', 'dd/MM/yyyy') : '') +
+      (nom ? ' avec ' + nom : '');
+    sh.getRange(i + 1, iStatut + 1).setValue('ANNULE');
+    if (iDate >= 0) sh.getRange(i + 1, iDate + 1).setValue('');
+    if (iHeure >= 0) sh.getRange(i + 1, iHeure + 1).setValue('');
+    if (iQui >= 0) sh.getRange(i + 1, iQui + 1).setValue('');
+    if (iNote >= 0) {
+      var deja = String(v[i][iNote] || '').trim();
+      sh.getRange(i + 1, iNote + 1).setValue(deja ? deja + '\n' + trace : trace);
+    }
+    annules.push({ id: iId >= 0 ? String(v[i][iId]) : '', date: d, nom: nom });
+  }
+  if (!annules.length) return annules;
+
+  tracerServeur_(qui || 'SYSTEME', 'CHANTIERS ANNULES',
+                 annules.length + ' annulé(s) — devis ' + (motif || 'non signé'),
+                 numero, appareil || '');
+
+  /* Le gérant n'est dérangé que si un rendez-vous était réellement pris : c'est
+     lui qui prévient le client et le salarié. */
+  var poses = annules.filter(function (a) { return a.date; });
+  if (poses.length) {
+    var reg = lireReglages_();
+    var dest = String(reg.recap_email || '').trim() || Session.getEffectiveUser().getEmail();
+    var corps = 'Le devis ' + numero + ' est passé à « ' + (motif || 'non signé') + ' ».\n\n' +
+      poses.length + ' intervention(s) retirée(s) du planning :\n' +
+      poses.map(function (a) {
+        return '  · ' + Utilities.formatDate(a.date, 'Europe/Paris', 'dd/MM/yyyy') +
+               (a.nom ? ' — ' + a.nom : '') + (a.id ? ' (' + a.id + ')' : '');
+      }).join('\n') +
+      '\n\nLe salarié ne les verra plus sur son téléphone à sa prochaine connexion : ' +
+      'préviens-le si la date est proche.\n' + SpreadsheetApp.getActive().getUrl();
+    try { MailApp.sendEmail(dest, 'Planning — devis ' + numero + ' annulé', corps); }
+    catch (e) { /* le classeur reste la source */ }
+  }
+  return annules;
+}
+
+/* Un devis refusé puis finalement signé : ses fiches annulées par l'appli
+   redeviennent « A PLANIFIER », et la planification les repose. Une fiche que
+   le gérant a annulée lui-même ne porte pas la marque et reste annulée. */
+function reactiverChantiers_(numero) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return 0;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var iNum = en.indexOf('NUMERO'), iStatut = en.indexOf('STATUT'), iNote = en.indexOf('NOTE');
+  if (iNum < 0 || iStatut < 0 || iNote < 0) return 0;
+  var n = 0;
+  for (var i = 1; i < v.length; i++) {
+    if (String(v[i][iNum]).trim() !== String(numero).trim()) continue;
+    if (String(v[i][iStatut]).toUpperCase().trim() !== 'ANNULE') continue;
+    var note = String(v[i][iNote] || '');
+    if (note.indexOf(MARQUE_ANNULATION_) < 0) continue;
+    var garde = note.split('\n').filter(function (l) {
+      return l.indexOf(MARQUE_ANNULATION_) !== 0;
+    }).join('\n');
+    sh.getRange(i + 1, iStatut + 1).setValue('A PLANIFIER');
+    sh.getRange(i + 1, iNote + 1).setValue(garde);
+    n++;
+  }
+  return n;
+}
+
+/* Le filet du soir : un devis passé à REFUSE à la main dans le classeur ne
+   déclenche rien sur le moment. L'automate quotidien rattrape. */
+function annulerRefuses_() {
+  var n = 0;
+  lireDevis_().forEach(function (d) {
+    if (String(d.STATUT || '').toUpperCase().trim() !== 'REFUSE') return;
+    n += annulerChantiers_(String(d.NUMERO).trim(), 'REFUSE', 'SYSTEME', '').length;
+  });
+  return n;
+}
+
+/* Les rendez-vous déjà posés qu'une absence ou un jour férié rend impossibles.
+   L'appli ne les déplace pas — ce sont des engagements pris auprès de clients —
+   elle les signale. */
+function conflitsPlanning_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var cal = calendrier_(lireReglages_());
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var iDate = en.indexOf('DATE'), iQui = en.indexOf('PRESTATAIRE'), iStatut = en.indexOf('STATUT');
+  var iId = en.indexOf('ID'), iClient = en.indexOf('CLIENT');
+  if (iDate < 0 || iQui < 0) return [];
+  var auj = isoJour_(new Date()), out = [];
+  for (var i = 1; i < v.length; i++) {
+    var d = v[i][iDate];
+    if (!(d instanceof Date) || isoJour_(d) < auj) continue;
+    var st = iStatut >= 0 ? String(v[i][iStatut]).toUpperCase().trim() : '';
+    if (st !== 'PLANIFIE' && st !== 'A PLANIFIER' && st !== '') continue;
+    var nom = String(v[i][iQui] || '').trim();
+    var pourquoi = ferie_(cal, d);
+    if (!pourquoi && estAbsent_(cal, '', isoJour_(d), true)) pourquoi = 'fermeture';
+    if (!pourquoi && nom && estAbsent_(cal, normNom_(nom), isoJour_(d))) pourquoi = nom + ' absent';
+    if (!pourquoi) continue;
+    out.push({ id: iId >= 0 ? String(v[i][iId]) : '', date: d, nom: nom,
+               client: iClient >= 0 ? String(v[i][iClient]) : '', motif: pourquoi });
+  }
+  return out;
+}
+
+function signalerConflits_(reg) {
+  var c = conflitsPlanning_();
+  if (!c.length) return 0;
+  var dest = String(reg.recap_email || '').trim() || Session.getEffectiveUser().getEmail();
+  var corps = c.length + ' intervention(s) posée(s) un jour où elle(s) ne peu(ven)t pas avoir lieu :\n\n' +
+    c.map(function (x) {
+      return '  · ' + Utilities.formatDate(x.date, 'Europe/Paris', 'dd/MM/yyyy') + ' — ' +
+             x.client + (x.nom ? ' — ' + x.nom : '') + ' — ' + x.motif + (x.id ? ' (' + x.id + ')' : '');
+    }).join('\n') +
+    '\n\nL\'appli ne déplace pas un rendez-vous déjà pris : change la date ou le salarié ' +
+    'dans l\'onglet ' + SH.CHANTIERS + '.\n' + SpreadsheetApp.getActive().getUrl();
+  try { MailApp.sendEmail(dest, 'Planning — ' + c.length + ' intervention(s) à replacer', corps); }
+  catch (e) {}
+  return c.length;
 }
 
 /* ENTRETIEN (contrat régulier, mensualisé), CHANTIER (fin de chantier) ou
@@ -1570,13 +1944,20 @@ function genererChantiers_(numero) {
   /* Le découpage en journées n'a de sens que si l'appli pose elle-même les
      dates. Planification coupée, on laisse une fiche par passage avec sa durée
      entière : c'est le bureau qui décide comment l'étaler. */
-  var parts = planificationAuto_(reg) ? Math.max(1, Math.ceil(minutesPassage / journee)) : 1;
+  var parts = 1, derniere = minutesPassage;
+  if (planificationAuto_(reg)) {
+    parts = Math.max(1, Math.ceil(minutesPassage / journee));
+    derniere = minutesPassage - (parts - 1) * journee;
+    /* Un reste trop court n'ouvre pas une journée de plus : 7 h 15 de travail
+       calculé, c'est une journée de 7 h sur le planning, pas une journée et un
+       déplacement d'un quart d'heure le lendemain. */
+    if (parts > 1 && derniere < reliquatIgnore_(reg)) { parts--; derniere = journee; }
+  }
   var lots = [];
   for (var q = 0; q < parts; q++) {
-    var reste = minutesPassage - q * journee;
-    /* Une seule part : elle porte la durée entière, même si elle dépasse une
-       journée — c'est le cas quand la planification automatique est coupée. */
-    lots.push({ minutes: parts > 1 ? Math.min(journee, reste) : minutesPassage,
+    /* Une seule part avec la planification coupée : elle porte la durée
+       entière, même si elle dépasse une journée. */
+    lots.push({ minutes: q < parts - 1 ? journee : derniere,
                 lot: parts > 1 ? (q + 1) + '/' + parts : '' });
   }
 
@@ -1625,6 +2006,7 @@ function planningDe_(nom) {
     en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
     if (!String(o.ID || '').trim()) continue;
     if (normNom_(o.PRESTATAIRE || '') !== moi) continue;
+    if (String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') continue;
     if (!o.DATE) continue;                       // pas encore planifié
     var d = new Date(o.DATE);
     if (isNaN(d.getTime()) || d < hier || d > loin) continue;
@@ -2448,6 +2830,9 @@ function automateQuotidien() {
   var reg = lireReglages_();
   majStructure_();
   var expires = expirer_();
+  var annules = 0, conflits = 0;
+  try { annules = annulerRefuses_(); conflits = signalerConflits_(reg); }
+  catch (eP) { tracerServeur_('SYSTEME', 'PLANNING ECHEC', String(eP && eP.message || eP), '', ''); }
   var aFacturer = majAFacturer_();
   majTableauDeBord_();
 
@@ -2488,9 +2873,12 @@ function automateQuotidien() {
   if (jourJs === jourRecap) envoyerRecap_(reg, aFacturer);
 
   tracerServeur_('', 'AUTOMATE QUOTIDIEN',
-    expires + ' expiré(s) · ' + aFacturer + ' à facturer · ' + envoyes + ' rappel(s) envoyé(s)',
+    expires + ' expiré(s) · ' + aFacturer + ' à facturer · ' + envoyes + ' rappel(s) envoyé(s)' +
+    (annules ? ' · ' + annules + ' chantier(s) annulé(s)' : '') +
+    (conflits ? ' · ' + conflits + ' intervention(s) à replacer' : ''),
     '', '');
-  return { expires: expires, aFacturer: aFacturer, rappels: envoyes };
+  return { expires: expires, aFacturer: aFacturer, rappels: envoyes,
+           annules: annules, conflits: conflits };
 }
 
 function envoyerRecap_(reg, aFacturer) {
