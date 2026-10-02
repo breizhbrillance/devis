@@ -17,8 +17,44 @@ var SH = {
   LIGNES: 'LIGNES',
   JOURNAL: 'JOURNAL',
   FACTURER: 'A FACTURER',
-  BORD: 'TABLEAU DE BORD'
+  BORD: 'TABLEAU DE BORD',
+  PRESTATAIRES: 'PRESTATAIRES',
+  CHANTIERS: 'CHANTIERS',
+  ADMINS: 'ADMINS'
 };
+
+/* Les agents qui exécutent le travail. Feuille séparée des COMMERCIAUX : ce ne
+   sont pas les mêmes gens, pas les mêmes droits, et surtout pas les mêmes
+   données envoyées à leur téléphone. */
+/* JOURS, PLAGES et HEURES_SEMAINE décrivent la disponibilité du salarié ; sans
+   elles, le planning ne saurait pas quel jour poser quoi. Vides, on retombe sur
+   du lundi au vendredi, 8h-12h / 14h-17h, 35 heures. */
+var ENTETES_PRESTATAIRES_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'TELEPHONE',
+                             'JOURS', 'PLAGES', 'HEURES_SEMAINE'];
+/* Les comptes qui voient tout : les plannings de chacun, les devis de chacun,
+   et les chiffres. Mêmes colonnes que les deux autres populations, pour que
+   la façon d'ajouter ou de retirer quelqu'un ne change jamais. */
+var ENTETES_ADMINS_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF'];
+
+/* Une ligne par intervention. Naît d'un devis signé, se remplit sur le terrain. */
+var ENTETES_CHANTIERS_ = [
+  'ID', 'NUMERO', 'CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES',
+  'DATE', 'HEURE', 'PRESTATAIRE', 'STATUT',
+  'ARRIVEE', 'DEPART', 'MINUTES', 'PRESTATIONS_FAITES', 'SIGNALEMENT',
+  'PHOTOS', 'NOTE', 'CREE_LE',
+  /* DUREE_PREVUE_MIN : ce que l'appli a calculé, en minutes, et que le gérant
+     peut corriger. MINUTES, juste au-dessus, est tout autre chose : le temps
+     réellement pointé par le salarié. LOT dit « 2/3 » quand un chantier a été
+     découpé sur plusieurs journées. */
+  'DUREE_PREVUE_MIN', 'LOT'
+];
+
+/* A PLANIFIER : le devis est signé, personne ni date encore posés.
+   PLANIFIE : date et agent en place, l'agent le voit dans son planning.
+   EN COURS : l'agent a pointé son arrivée.
+   FAIT : il a pointé son départ.
+   PROBLEME : il a signalé quelque chose — le chantier reste à regarder. */
+var STATUTS_CHANTIER_ = ['A PLANIFIER', 'PLANIFIE', 'EN COURS', 'FAIT', 'PROBLEME'];
 
 var ENTETES_JOURNAL_ = [
   'HORODATAGE', 'MOMENT', 'COMMERCIAL', 'ACTION', 'DETAIL', 'NUMERO', 'APPAREIL', 'SOURCE'
@@ -101,8 +137,11 @@ function initialiser() {
   var ss = SpreadsheetApp.getActive();
 
   creerOnglet_(ss, SH.REGLAGES, ['CLE', 'VALEUR', 'COMMENTAIRE']);
-  creerOnglet_(ss, SH.CATALOGUE, ['CATEGORIE', 'DESIGNATION', 'DETAIL', 'UNITE', 'PU_HT', 'TVA', 'TYPE', 'ACTIF', 'REFERENCE']);
+  creerOnglet_(ss, SH.CATALOGUE, ['CATEGORIE', 'DESIGNATION', 'DETAIL', 'UNITE', 'PU_HT', 'TVA', 'TYPE', 'ACTIF', 'REFERENCE', 'NATURES']);
   creerOnglet_(ss, SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF']);
+  creerOnglet_(ss, SH.PRESTATAIRES, ENTETES_PRESTATAIRES_);
+  creerOnglet_(ss, SH.ADMINS, ENTETES_ADMINS_);
+  creerOnglet_(ss, SH.CHANTIERS, ENTETES_CHANTIERS_);
   creerOnglet_(ss, SH.DEVIS, ENTETES_DEVIS_);
   creerOnglet_(ss, SH.LIGNES, ENTETES_LIGNES_);
   creerOnglet_(ss, SH.JOURNAL, ENTETES_JOURNAL_);
@@ -151,8 +190,9 @@ var ENTETES_DEVIS_ = [
   'TOTAL_HT_PONCTUEL', 'TOTAL_HT_MENSUEL', 'TOTAL_HT', 'TOTAL_TVA', 'TOTAL_TTC',
   'REMISE_PCT', 'STATUT', 'SIGNE', 'SIGNATAIRE', 'VALIDITE', 'LIEN_PDF', 'PHOTOS', 'NOTES',
   'RECU_LE', 'ID_APPAREIL', 'ID_DEVIS', 'OBJET', 'LOGEMENT_PLUS_2_ANS', 'TAUX_TVA', 'DELAI',
+  'DATE_SOUHAITEE',
   'MOTIF_REFUS', 'RELANCE_LE', 'DATE_STATUT', 'PREUVE_SIGNATURE', 'NOTE_COMMERCIAL',
-  'CONTROLE_TARIF'
+  'CONTROLE_TARIF', 'PASSAGES_MOIS', 'NATURE'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -202,6 +242,26 @@ function majStructure_() {
       en.push(h);
     });
   }
+  // Les deux onglets de l'espace prestataire, créés s'ils manquent.
+  creerOnglet_(ss, SH.PRESTATAIRES, ENTETES_PRESTATAIRES_);
+  creerOnglet_(ss, SH.ADMINS, ENTETES_ADMINS_);
+  creerOnglet_(ss, SH.CHANTIERS, ENTETES_CHANTIERS_);
+  [[SH.PRESTATAIRES, ENTETES_PRESTATAIRES_], [SH.CHANTIERS, ENTETES_CHANTIERS_],
+   [SH.ADMINS, ENTETES_ADMINS_]]
+    .forEach(function (o) {
+      var sh2 = ss.getSheetByName(o[0]);
+      if (!sh2 || sh2.getLastColumn() === 0) return;
+      var en2 = sh2.getRange(1, 1, 1, sh2.getLastColumn()).getValues()[0]
+        .map(function (x) { return String(x).trim(); });
+      o[1].forEach(function (h) {
+        if (en2.indexOf(h) >= 0) return;
+        var c = sh2.getLastColumn() + 1;
+        sh2.getRange(1, c).setValue(h)
+          .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+        en2.push(h);
+      });
+    });
+
   // Le catalogue porte une REFERENCE : c'est elle qui permet au classeur de
   // retrouver le tarif officiel d'une ligne reçue. Elle est ajoutée à la fin,
   // jamais insérée, et remplie automatiquement là où elle manque.
@@ -228,6 +288,16 @@ function majStructure_() {
         vus[cand] = true; refs[i][0] = cand; change = true;
       }
       if (change) plage.setValues(refs);
+    }
+
+    /* NATURES dit à quelles natures de devis la prestation appartient
+       (ENTRETIEN, CHANTIER, REMISE, séparées par des virgules). Vide, elle se
+       vend dans les trois : c'est le cas de presque tout le catalogue, et c'est
+       pourquoi la colonne peut rester vide sans rien casser. */
+    if (enC.indexOf('NATURES') < 0) {
+      var iNat = shC.getLastColumn();
+      shC.getRange(1, iNat + 1).setValue('NATURES')
+        .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
     }
   }
 
@@ -298,6 +368,9 @@ var REGLAGES_DEFAUT_ = [
   ['societe_rcs', 'RCS Vannes 000 000 000', ''],
   ['tva_defaut', '20', 'Taux de TVA par défaut en %'],
   ['remise_max', '10', 'Remise maximale que le commercial peut accorder, en % — 0 pour l\'interdire'],
+  ['passages_mois_defaut', '4', 'Contrat mensuel : nombre de passages créés par mois si le devis ne le précise pas'],
+  ['pointage_retention_mois', '36', 'Durée de conservation des pointages arrivée/départ, en mois'],
+  ['texte_information_agent', 'L\'application enregistre, à chaque utilisation : les connexions, l\'heure d\'arrivée et l\'heure de départ de chaque chantier, les prestations cochées, les photos prises et les signalements.\n\nCes informations servent au suivi des interventions, à la preuve du travail effectué auprès des clients, et au décompte du temps de travail. Elles sont conservées {mois} mois, puis effacées.\n\nConformément au règlement général sur la protection des données, tu peux demander à consulter les informations qui te concernent et faire rectifier une erreur, en écrivant à breizhbrillance@gmail.com.', 'Texte affiché à chaque connexion d\'un agent — {mois} est remplacé par pointage_retention_mois'],
   ['validite_jours', '30', 'Durée de validité du devis en jours'],
   ['conditions_reglement', 'Paiement à 30 jours à réception de facture. Pénalités de retard : 3 fois le taux d\'intérêt légal. Indemnité forfaitaire de recouvrement : 40 €.', 'Bas de devis'],
   ['mentions_bas', 'Devis gratuit. Il doit être retourné daté et signé avec la mention « Bon pour accord ».', 'Bas de devis'],
@@ -305,6 +378,10 @@ var REGLAGES_DEFAUT_ = [
   ['prefixe_devis', 'DEV', 'Numéro : DEV-2026-KL-0001 (KL = initiales du commercial)'],
   ['dossier_racine_id', '', 'Dossier Drive racine — rempli automatiquement'],
   ['email_copie', '', 'Adresse qui reçoit une copie de chaque devis'],
+  ['taux_horaire_planning', '30',
+   'Taux horaire de vente (€/h) : sert à déduire la durée d\'un chantier de son montant'],
+  ['planification_auto', 'OUI',
+   'NON : les chantiers naissent « A PLANIFIER » et c\'est le bureau qui pose dates et salariés'],
   ['banque_nom', 'CMB Saint Avé', 'Coordonnées bancaires imprimées sur le devis'],
   ['banque_iban', 'FR76 1558 9569 3900 1258 9684 096', ''],
   ['banque_bic', 'CMBRFR2BXXX', ''],
@@ -327,20 +404,21 @@ var REGLAGES_DEFAUT_ = [
 ];
 
 var CATALOGUE_DEFAUT_ = [
-  ['Remise en état des sols', 'Nettoyage approfondi des plinthes et angles', '', 'm2', 0.20, 10, 'PONCTUEL', 'OUI'],
-  ['Remise en état des sols', 'Aspiration complète des sols', '', 'm2', 0.40, 10, 'PONCTUEL', 'OUI'],
-  ['Remise en état des sols', 'Décapage des sols au décapant laitance', '', 'm2', 0.50, 10, 'PONCTUEL', 'OUI'],
-  ['Remise en état des sols', 'Lavage humide et désinfection des sols', '', 'm2', 0.45, 10, 'PONCTUEL', 'OUI'],
-  ['Nettoyage des vitrages et menuiseries', 'Nettoyage des vitrages intérieurs/extérieurs', '', 'm2', 8, 10, 'PONCTUEL', 'OUI'],
-  ['Nettoyage des vitrages et menuiseries', 'Nettoyage complet des menuiseries, cadres et rails', '', 'm2', 4, 10, 'PONCTUEL', 'OUI'],
-  ['Nettoyage des vitrages et menuiseries', 'Nettoyage des volets roulants', '', 'm2', 2, 10, 'PONCTUEL', 'OUI'],
-  ['Remise en état de la cuisine', 'Nettoyage intérieur de la cuisine', '', 'forfait', 30, 10, 'PONCTUEL', 'OUI'],
-  ['Remise en état de la cuisine', 'Nettoyage extérieur de la cuisine', '', 'forfait', 20, 10, 'PONCTUEL', 'OUI'],
-  ['Chambres et pièces diverses', 'Nettoyage intérieur/extérieur des étagères, meubles, moulures et surfaces en relief', '', 'pièce(s)', 10, 10, 'PONCTUEL', 'OUI'],
-  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage et désinfection WC et lavabos', '', 'pièce(s)', 40, 10, 'PONCTUEL', 'OUI'],
-  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage robinetteries et faïences', '', 'pièce(s)', 15, 10, 'PONCTUEL', 'OUI'],
-  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage parois vitrées', '', 'pièce(s)', 30, 10, 'PONCTUEL', 'OUI'],
-  ['Finitions générales et livraison', 'Contrôle qualité et reprises générales', '', 'forfait', 10, 10, 'PONCTUEL', 'OUI']
+  ['Remise en état des sols', 'Nettoyage approfondi des plinthes et angles', '', 'm2', 0.20, 10, 'PONCTUEL', 'OUI', 'REF-0001', ''],
+  ['Remise en état des sols', 'Aspiration complète des sols', '', 'm2', 0.40, 10, 'PONCTUEL', 'OUI', 'REF-0002', ''],
+  ['Remise en état des sols', 'Décapage des sols au décapant laitance', '', 'm2', 0.50, 10, 'PONCTUEL', 'OUI', 'REF-0003', 'CHANTIER'],
+  ['Remise en état des sols', 'Lavage humide et désinfection des sols', '', 'm2', 0.45, 10, 'PONCTUEL', 'OUI', 'REF-0004', ''],
+  ['Nettoyage des vitrages et menuiseries', 'Nettoyage des vitrages intérieurs/extérieurs', '', 'm2', 8, 10, 'PONCTUEL', 'OUI', 'REF-0005', ''],
+  ['Nettoyage des vitrages et menuiseries', 'Nettoyage complet des menuiseries, cadres et rails', '', 'm2', 4, 10, 'PONCTUEL', 'OUI', 'REF-0006', ''],
+  ['Nettoyage des vitrages et menuiseries', 'Nettoyage des volets roulants', '', 'm2', 2, 10, 'PONCTUEL', 'OUI', 'REF-0007', ''],
+  ['Remise en état de la cuisine', 'Nettoyage intérieur de la cuisine', '', 'forfait', 30, 10, 'PONCTUEL', 'OUI', 'REF-0008', ''],
+  ['Remise en état de la cuisine', 'Nettoyage extérieur de la cuisine', '', 'forfait', 20, 10, 'PONCTUEL', 'OUI', 'REF-0009', ''],
+  ['Chambres et pièces diverses', 'Nettoyage intérieur/extérieur des étagères, meubles, moulures et surfaces en relief', '', 'pièce(s)', 10, 10, 'PONCTUEL', 'OUI', 'REF-0010', ''],
+  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage et désinfection WC et lavabos', '', 'pièce(s)', 40, 10, 'PONCTUEL', 'OUI', 'REF-0011', ''],
+  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage robinetteries et faïences', '', 'pièce(s)', 15, 10, 'PONCTUEL', 'OUI', 'REF-0012', ''],
+  ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage parois vitrées', '', 'pièce(s)', 30, 10, 'PONCTUEL', 'OUI', 'REF-0013', ''],
+  ['Finitions générales et livraison', 'Contrôle qualité et reprises générales', '', 'forfait', 10, 10, 'PONCTUEL', 'OUI', 'REF-0014', ''],
+  ['Remise en état des sols', 'Nettoyage vapeur des sols', '', 'm2', 0.50, 10, 'PONCTUEL', 'OUI', 'REF-0015', 'REMISE']
 ];
 
 /** Remplace le contenu du CATALOGUE par la grille de prix de référence. */
@@ -354,8 +432,8 @@ function chargerGrillePrix() {
 
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CATALOGUE);
   if (!sh) return ui.alert('Onglet CATALOGUE introuvable. Lance d\'abord « 1. Initialiser le fichier ».');
-  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 8).clearContent();
-  sh.getRange(2, 1, CATALOGUE_DEFAUT_.length, 8).setValues(CATALOGUE_DEFAUT_);
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 10).clearContent();
+  sh.getRange(2, 1, CATALOGUE_DEFAUT_.length, 10).setValues(CATALOGUE_DEFAUT_);
   sh.setColumnWidth(1, 250); sh.setColumnWidth(2, 340); sh.setColumnWidth(3, 200);
   ui.alert(CATALOGUE_DEFAUT_.length + ' prestations chargées.\n\n' +
     'Le taux de TVA indiqué ici n\'est qu\'une valeur de repli : sur le terrain, ' +
@@ -421,6 +499,7 @@ function config_() {
   delete reg.email_copie;
   return {
     maj: new Date().toISOString(),
+    role: 'COMMERCIAL',
     compteurs: compteurs_(),    // dernier numéro par commercial : évite qu'un
     reglages: reg,              // téléphone réinstallé reparte à 0001
     catalogue: lireCatalogue_()
@@ -432,14 +511,15 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
     var d = JSON.parse(e.postData.contents);
-    var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut'];
+    var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
+                   'planning', 'chantier', 'tableau', 'planifier'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
     if (tropDEssais_(d.nom)) {
       return reponse_({ ok: false, refus: true, erreur: 'Trop d\'essais. Réessaie dans un quart d\'heure.' });
     }
-    var com = trouverCommercial_(d.nom);
+    var com = trouverPersonne_(d.nom);
     if (!com || (com.code && String(d.code || '') !== com.code)) {
       noterEchec_(d.nom);
       // On ne journalise que les noms qui existent : sinon, n'importe qui
@@ -448,10 +528,30 @@ function doPost(e) {
       return reponse_({ ok: false, refus: true, erreur: 'Nom ou code incorrect' });
     }
 
-    if (d.action === 'connexion') {
-      tracerServeur_(com.nom, 'CONNEXION VALIDEE', '', '', d.appareil || '');
-      return reponse_({ ok: true, nom: com.nom, config: config_() });
+    // La cloison entre les deux métiers. Un agent ne peut pas appeler les
+    // actions du commercial, et réciproquement : ce n'est pas l'écran qui
+    // protège, c'est cette liste.
+    var agent = com.role === 'PRESTATAIRE';
+    var admin = com.role === 'ADMIN';
+    var permis = admin
+      ? ['connexion', 'config', 'journal', 'tableau', 'planifier', 'statut']
+      : agent
+        ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
+        : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut'];
+    if (permis.indexOf(d.action) < 0) {
+      tracerServeur_(com.nom, 'ACTION REFUSEE', d.action, '', d.appareil || '');
+      return reponse_({ ok: false, erreur: 'action non autorisée pour ce compte' });
     }
+
+    if (d.action === 'connexion') {
+      tracerServeur_(com.nom, 'CONNEXION VALIDEE', com.role, '', d.appareil || '');
+      return reponse_({ ok: true, nom: com.nom, role: com.role,
+                        config: configPour_(com.role) });
+    }
+    if (d.action === 'planning') {
+      return reponse_({ ok: true, chantiers: planningDe_(com.nom) });
+    }
+    if (d.action === 'chantier') return reponse_(enregistrerChantier_(d, com));
     if (d.action === 'journal') {
       var evs = (d.evenements || []).slice(0, 300).map(function (e) {
         return { t: e.t, nom: e.nom || com.nom, action: e.action, detail: e.detail,
@@ -460,7 +560,11 @@ function doPost(e) {
       tracer_(evs);
       return reponse_({ ok: true, recus: evs.length });
     }
-    if (d.action === 'config') return reponse_({ ok: true, config: config_() });
+    if (d.action === 'config') {
+      return reponse_({ ok: true, config: configPour_(com.role) });
+    }
+    if (d.action === 'tableau') return reponse_(tableauAdmin_());
+    if (d.action === 'planifier') return reponse_(planifierChantier_(d, com));
     if (d.action === 'photo') return reponse_(enregistrerPhoto_(d));
     if (d.action === 'statut') return reponse_(enregistrerStatut_(d, com));
 
@@ -488,6 +592,65 @@ function compteurs_() {
   return out;
 }
 
+/**
+ * Un devis déjà reçu revient signé. On refait le rangement du PDF — celui du
+ * téléphone porte maintenant la signature — et on met la ligne à jour.
+ *
+ * Le PDF vierge ne disparaît pas sans filet : il part à la corbeille du Drive,
+ * d'où il reste récupérable. Le lien de la feuille, lui, pointe aussitôt sur
+ * la version signée, qui sert à la fois de devis et de preuve : la photo du
+ * papier n'a plus lieu d'être réclamée.
+ */
+function signerDevisRecu_(ligne, col, d, devis, reg, com) {
+  var numero = String(ligne[col.NUMERO]);
+  var ancien = String(col.LIEN_PDF != null ? (ligne[col.LIEN_PDF] || '') : '');
+  var lien = ancien;
+
+  if (d.pdf) {
+    var blob = Utilities.newBlob(Utilities.base64Decode(d.pdf), 'application/pdf',
+      d.nomFichier || ('Devis ' + numero + '.pdf'));
+    lien = dossierDevis_(reg, new Date(devis.date), devis.commercial)
+             .createFile(blob).getUrl();
+    // L'ancien fichier ne part à la corbeille qu'une fois le nouveau en place :
+    // à aucun moment il n'y a zéro exemplaire du devis dans le Drive.
+    var m = ancien.match(/\/d\/([A-Za-z0-9_-]+)/);
+    if (m) {
+      try { DriveApp.getFileById(m[1]).setTrashed(true); }
+      catch (e) { tracerServeur_('SYSTEME', 'PDF VIERGE NON RETIRE',
+                                 String(e && e.message || e), numero, ''); }
+    }
+  }
+
+  var quand = devis.signeLe ? new Date(Number(devis.signeLe)) : new Date();
+  majDevis_(numero, {
+    LIEN_PDF: lien,
+    PREUVE_SIGNATURE: lien,          // le devis signé est sa propre preuve
+    SIGNE: 'OUI',
+    SIGNATAIRE: devis.signataire || '',
+    STATUT: 'SIGNE',
+    DATE_STATUT: quand
+  });
+
+  tracerServeur_(devis.commercial || com.nom, 'DEVIS SIGNE RECU',
+                 'signé à l\'écran' + (devis.signataire ? ' par ' + devis.signataire : ''),
+                 numero, d.appareil || '');
+
+  // Un devis signé fait naître ses interventions ; la fonction ne double pas
+  // celles qui existent déjà.
+  try {
+    var nes = genererChantiers_(numero);
+    if (nes) {
+      tracerServeur_(devis.commercial || com.nom, 'CHANTIERS CREES',
+                     nes + ' à planifier', numero, d.appareil || '');
+    }
+    poserPlanning_(numero, devis.commercial || com.nom, d.appareil || '');
+  } catch (eC) {
+    tracerServeur_('SYSTEME', 'CHANTIERS ECHEC', String(eC && eC.message || eC), numero, '');
+  }
+
+  return { ok: true, signe: true, numero: numero, pdfUrl: lien };
+}
+
 function enregistrer_(d, com) {
   var ss = SpreadsheetApp.getActive();
   var reg = lireReglages_();
@@ -510,6 +673,14 @@ function enregistrer_(d, com) {
     //    (un téléphone réinstallé peut réémettre le même numéro pour un autre devis)
     for (var i = 0; i < lignes.length; i++) {
       if (d.id && col.ID_DEVIS != null && String(lignes[i][col.ID_DEVIS]) === String(d.id)) {
+        // Le même devis revient avec une signature qu'il n'avait pas : le
+        // client a signé à l'écran après coup. Ce n'est pas un doublon, c'est
+        // le devis signé qui arrive — le PDF vierge cède la place.
+        var dejaSigne = col.SIGNE != null &&
+                        String(lignes[i][col.SIGNE] || '').toUpperCase() === 'OUI';
+        if (devis.signature && !dejaSigne) {
+          return signerDevisRecu_(lignes[i], col, d, devis, reg, com);
+        }
         return { ok: true, doublon: true, numero: String(lignes[i][col.NUMERO]),
                  pdfUrl: String(lignes[i][col.LIEN_PDF] || '') };
       }
@@ -563,7 +734,18 @@ function enregistrer_(d, com) {
     LOGEMENT_PLUS_2_ANS: (c.plus2ans === true ? 'OUI' : (c.plus2ans === false ? 'NON' : '')),
     TAUX_TVA: tauxPrincipal_(devis),
     DELAI: devis.delai || '',
-    CONTROLE_TARIF: controleTarif
+    /* La date à partir de laquelle l'intervention peut commencer. Elle était
+       noyée dans le texte libre de DELAI : le classeur ne pouvait rien en
+       faire. C'est elle qui commande maintenant la pose sur le planning. */
+    DATE_SOUHAITEE: jourValide_(devis.dateSouhaitee),
+    CONTROLE_TARIF: controleTarif,
+    /* La nature vient du devis, pas des lignes : c'est elle qui dit combien de
+       chantiers créer. Sans elle, PASSAGES_MOIS restait vide et le classeur
+       retombait toujours sur le réglage par défaut, quel que soit le contrat.
+       Trois natures possibles ; tout ce qui n'est pas reconnu est une
+       intervention unique, c'est le cas le moins coûteux à corriger. */
+    NATURE: natureDevis_(devis.nature),
+    PASSAGES_MOIS: Number(devis.passages) || ''
   };
   if (controleTarif) {
     tracerServeur_(devis.commercial || com.nom, 'ECART TARIF', controleTarif,
@@ -704,9 +886,11 @@ function enregistrerStatut_(d, com) {
     DATE_STATUT: quand,
     MOTIF_REFUS: statut === 'REFUSE' ? String(d.motif || '') : '',
     RELANCE_LE: statut === 'A RELANCER' && d.relance ? new Date(d.relance + 'T09:00:00') : '',
-    SIGNE: statut === 'SIGNE' ? 'OUI' : 'NON',
-    NOTE_COMMERCIAL: note
-  } : { NOTE_COMMERCIAL: note };
+    SIGNE: statut === 'SIGNE' ? 'OUI' : 'NON'
+  } : {};
+  // La note ne s'écrit que si l'envoi en portait une : un résultat transmis
+  // seul ne doit pas effacer ce que le commercial avait déjà noté.
+  if (d.note !== undefined) v.NOTE_COMMERCIAL = note;
   var trouve = majDevis_(num, v);
 
   tracerServeur_(com ? com.nom : (d.nom || ''),
@@ -716,7 +900,855 @@ function enregistrerStatut_(d, com) {
 
   // Le devis n'est pas encore arrivé : l'appareil réessaiera au prochain envoi.
   if (!trouve) return { ok: false, erreur: 'devis introuvable dans le classeur' };
-  return { ok: true, statut: statut || '(note seule)' };
+
+  // Un devis signé fait naître les interventions à planifier. La fonction ne
+  // fait rien si elles existent déjà : un téléphone qui réessaie ne double pas.
+  var nes = 0;
+  if (statut === 'SIGNE') {
+    try {
+      nes = genererChantiers_(num);
+      if (nes) {
+        tracerServeur_(com ? com.nom : (d.nom || ''), 'CHANTIERS CREES',
+                       nes + ' à planifier', num, d.appareil || '');
+      }
+      poserPlanning_(num, com ? com.nom : (d.nom || ''), d.appareil || '');
+    } catch (eC) {
+      tracerServeur_('SYSTEME', 'CHANTIERS ECHEC', String(eC && eC.message || eC),
+                     num, '');
+    }
+  }
+  return { ok: true, statut: statut || '(note seule)', chantiers: nes };
+}
+
+/* ====================== ESPACE PRESTATAIRE ======================
+   Un agent n'est pas un commercial au rabais : il voit un autre outil, et il
+   reçoit d'autres données. La frontière est ici, pas dans l'écran — masquer un
+   bouton laisserait les tarifs dans son téléphone. */
+
+/**
+ * Ce que reçoit un agent à la connexion. Volontairement maigre : le nom de la
+ * société pour l'en-tête, et le texte d'information sur ce qui est enregistré.
+ * Ni catalogue, ni prix, ni compteurs, ni coordonnées bancaires.
+ */
+/* ====================== ESPACE D'ADMINISTRATION ======================
+   Ce que voit un compte ADMIN : les devis de tous les commerciaux, les
+   chantiers de tous les prestataires, et les chiffres qui vont avec. Tout
+   part en un seul appel, que l'appareil garde en cache : sur un téléphone,
+   trois allers-retours pour afficher un écran, c'est trois occasions de
+   tomber en rade de réseau. */
+
+/** Lit un onglet et renvoie ses lignes sous forme d'objets nommés. */
+function objetsDe_(nom) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(nom);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var out = [];
+  for (var i = 1; i < v.length; i++) {
+    var o = {};
+    en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
+    out.push(o);
+  }
+  return out;
+}
+
+function tableauAdmin_() {
+  var reg = lireReglages_();
+  var jours = Number(reg.admin_fenetre_jours || 90);
+  var depuis = new Date(); depuis.setDate(depuis.getDate() - jours); depuis.setHours(0, 0, 0, 0);
+
+  var devis = [], chiffres = { nb: 0, signes: 0, ht: 0, htSigne: 0, mensuelSigne: 0 }, par = {};
+  objetsDe_(SH.DEVIS).forEach(function (o) {
+    var d = o.DATE ? new Date(o.DATE) : null;
+    if (!d || isNaN(d.getTime()) || d < depuis) return;
+    var st = String(o.STATUT || '').toUpperCase();
+    var ht = Number(o.TOTAL_HT) || 0;
+    var mens = Number(o.TOTAL_HT_MENSUEL) || 0;
+    var qui = String(o.COMMERCIAL || '').trim() || '(sans nom)';
+    if (!par[qui]) par[qui] = { nom: qui, nb: 0, signes: 0, ht: 0, htSigne: 0, mensuelSigne: 0 };
+    chiffres.nb++; par[qui].nb++;
+    chiffres.ht += ht; par[qui].ht += ht;
+    if (st === 'SIGNE') {
+      chiffres.signes++; par[qui].signes++;
+      chiffres.htSigne += ht; par[qui].htSigne += ht;
+      chiffres.mensuelSigne += mens; par[qui].mensuelSigne += mens;
+    }
+    devis.push({
+      numero: String(o.NUMERO || ''), date: isoJour_(d),
+      commercial: qui, client: String(o.CLIENT || ''), ville: String(o.VILLE || ''),
+      ttc: Number(o.TOTAL_TTC) || 0, ht: ht, statut: st || 'REMIS',
+      motif: String(o.MOTIF_REFUS || ''),
+      relance: o.RELANCE_LE ? isoJour_(o.RELANCE_LE) : '',
+      pdf: String(o.LIEN_PDF || ''), signe: String(o.SIGNE || '').toUpperCase() === 'OUI',
+      preuve: String(o.PREUVE_SIGNATURE || '') ? true : false,
+      note: String(o.NOTE_COMMERCIAL || '')
+    });
+  });
+  devis.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+  if (devis.length > 300) devis = devis.slice(0, 300);
+
+  var hier = new Date(); hier.setDate(hier.getDate() - 30); hier.setHours(0, 0, 0, 0);
+  var loin = new Date(); loin.setDate(loin.getDate() + 90);
+  var chantiers = [];
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    if (!String(o.ID || '').trim()) return;
+    var d = o.DATE ? new Date(o.DATE) : null;
+    var plan = !!(d && !isNaN(d.getTime()));
+    // Un chantier sans date est justement celui qu'il faut planifier : il doit
+    // remonter, sinon l'écran ne sert à rien.
+    if (plan && (d < hier || d > loin)) return;
+    chantiers.push({
+      id: String(o.ID), numero: String(o.NUMERO || ''), client: String(o.CLIENT || ''),
+      adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
+      acces: String(o.ACCES || ''),
+      date: plan ? isoJour_(d) : '',
+      heure: o.HEURE ? String(o.HEURE) : '',
+      prestataire: String(o.PRESTATAIRE || ''),
+      statut: String(o.STATUT || 'A PLANIFIER'),
+      arrivee: Number(o.ARRIVEE) || 0, depart: Number(o.DEPART) || 0,
+      minutes: Number(o.MINUTES) || 0,
+      signalement: String(o.SIGNALEMENT || ''), note: String(o.NOTE || '')
+    });
+  });
+  chantiers.sort(function (a, b) {
+    if (!a.date && b.date) return -1;               // à planifier d'abord
+    if (a.date && !b.date) return 1;
+    return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+  });
+  if (chantiers.length > 300) chantiers = chantiers.slice(0, 300);
+
+  var liste = [];
+  for (var k in par) if (par.hasOwnProperty(k)) liste.push(par[k]);
+  liste.sort(function (a, b) { return b.htSigne - a.htSigne; });
+
+  return {
+    ok: true, maj: new Date().getTime(), fenetre: jours,
+    chiffres: chiffres, parCommercial: liste,
+    devis: devis, chantiers: chantiers,
+    prestataires: lirePrestataires_().map(function (p) { return p.nom; }),
+    commerciaux: lireCommerciaux_().map(function (c) { return c.nom; })
+  };
+}
+
+/**
+ * Poser une date, une heure et un prestataire sur un chantier depuis le
+ * téléphone. Dès que la date et la personne sont là, le chantier quitte
+ * « à planifier » — sinon la colonne dirait le contraire de la réalité.
+ */
+function planifierChantier_(d, com) {
+  var id = String(d.id || '').trim();
+  if (!id) return { ok: false, erreur: 'chantier inconnu' };
+
+  var v = {};
+  if (d.date !== undefined) v.DATE = String(d.date || '') ? new Date(String(d.date) + 'T12:00:00') : '';
+  if (d.heure !== undefined) v.HEURE = String(d.heure || '');
+  if (d.prestataire !== undefined) v.PRESTATAIRE = String(d.prestataire || '');
+
+  // Le nom doit exister, sinon le chantier n'apparaîtrait sur aucun téléphone.
+  if (v.PRESTATAIRE) {
+    var connu = false, n = normNom_(v.PRESTATAIRE);
+    lirePrestataires_().forEach(function (p) { if (normNom_(p.nom) === n) { connu = true; v.PRESTATAIRE = p.nom; } });
+    if (!connu) return { ok: false, erreur: 'ce prestataire n\'est pas dans la liste' };
+  }
+
+  var avant = null;
+  objetsDe_(SH.CHANTIERS).forEach(function (o) { if (String(o.ID).trim() === id) avant = o; });
+  if (!avant) return { ok: false, erreur: 'chantier introuvable' };
+
+  var dateFinale = v.DATE !== undefined ? v.DATE : avant.DATE;
+  var quiFinal = v.PRESTATAIRE !== undefined ? v.PRESTATAIRE : avant.PRESTATAIRE;
+  var stAvant = String(avant.STATUT || '').toUpperCase();
+  if (dateFinale && String(quiFinal || '').trim()) {
+    if (stAvant === 'A PLANIFIER' || stAvant === '') v.STATUT = 'PLANIFIE';
+  } else if (stAvant === 'PLANIFIE') {
+    v.STATUT = 'A PLANIFIER';      // on lui a retiré sa date ou sa personne
+  }
+
+  var ligne = majChantier_(id, v);
+  if (!ligne) return { ok: false, erreur: 'chantier introuvable' };
+
+  tracerServeur_(com ? com.nom : '', 'CHANTIER PLANIFIE',
+                 (v.PRESTATAIRE || quiFinal || '?') + ' \u00b7 ' +
+                 (dateFinale ? Utilities.formatDate(new Date(dateFinale), 'Europe/Paris', 'dd/MM/yyyy') : 'sans date') +
+                 (v.HEURE ? ' ' + v.HEURE : ''),
+                 String(avant.NUMERO || ''), d.appareil || '');
+
+  return { ok: true, id: id, statut: v.STATUT || avant.STATUT };
+}
+
+/* Un seul endroit décide de ce que chaque métier reçoit à la connexion. */
+function configPour_(role) {
+  if (role === 'PRESTATAIRE') return configPrestataire_();
+  if (role === 'ADMIN') return configAdmin_();
+  return config_();
+}
+
+/**
+ * Ce que reçoit un compte d'administration : de quoi remplir les listes
+ * déroulantes, et rien de plus. Les chiffres et les listes viennent de
+ * l'action « tableau », qui se rafraîchit à la demande.
+ */
+function configAdmin_() {
+  var reg = lireReglages_();
+  return {
+    maj: new Date().toISOString(),
+    role: 'ADMIN',
+    reglages: {
+      societe_nom: String(reg.societe_nom || ''),
+      texte_information: String(reg.texte_information || ''),
+      version_information: String(reg.version_information || '1')
+    },
+    commerciaux: lireCommerciaux_().map(function (c) { return c.nom; }),
+    prestataires: lirePrestataires_().map(function (p) { return p.nom; })
+  };
+}
+
+function configPrestataire_() {
+  var reg = lireReglages_();
+  var mois = String(reg.pointage_retention_mois || '36');
+  return {
+    maj: new Date().toISOString(),
+    role: 'PRESTATAIRE',
+    reglages: {
+      societe_nom: String(reg.societe_nom || ''),
+      texte_information: String(reg.texte_information_agent || '').replace('{mois}', mois),
+      version_information: String(reg.version_information || '1') + '-agent'
+    }
+  };
+}
+
+/** Le plus grand numéro de chantier déjà posé, pour en fabriquer un nouveau. */
+function prochainNumChantier_(sh, cId) {
+  if (sh.getLastRow() < 2) return 1;
+  var max = 0;
+  sh.getRange(2, cId + 1, sh.getLastRow() - 1, 1).getValues().forEach(function (r) {
+    var m = String(r[0]).match(/^CH-(\d+)$/);
+    if (m && Number(m[1]) > max) max = Number(m[1]);
+  });
+  return max + 1;
+}
+
+/* Pose le planning d'un devis et prévient le gérant. On ne laisse jamais une
+   planification se faire en silence : ce sont des rendez-vous chez des clients,
+   et le gérant doit pouvoir les contester le jour même. */
+function poserPlanning_(numero, qui, appareil) {
+  var bilan;
+  try {
+    bilan = planifierDevis_(numero);
+  } catch (e) {
+    tracerServeur_('SYSTEME', 'PLANIFICATION ECHEC',
+                   String(e && e.message || e), numero, appareil || '');
+    return { poses: [], refuses: [], motif: 'erreur' };
+  }
+  var reg = lireReglages_();
+  var dates = bilan.poses.map(function (p) {
+    return '  · ' + isoJour_(p.date) + ' ' + p.heure + ' — ' + p.nom +
+           ' — ' + heuresLisibles_(p.minutes) + (p.id ? ' (' + p.id + ')' : '');
+  }).join('\n');
+
+  if (bilan.poses.length) {
+    tracerServeur_(qui || 'SYSTEME', 'CHANTIERS PLANIFIES',
+                   bilan.poses.length + ' posé(s)' +
+                   (bilan.refuses.length ? ', ' + bilan.refuses.length + ' sans créneau' : ''),
+                   numero, appareil || '');
+  }
+  if (bilan.refuses.length || bilan.motif) {
+    tracerServeur_(qui || 'SYSTEME', 'PLANIFICATION INCOMPLETE',
+                   bilan.motif || (bilan.refuses.length + ' chantier(s) sans créneau'),
+                   numero, appareil || '');
+  }
+
+  var dest = String(reg.recap_email || '').trim() || Session.getEffectiveUser().getEmail();
+  var corps = 'Devis ' + numero + ' signé.\n\n' +
+    (bilan.poses.length
+      ? bilan.poses.length + ' intervention(s) posée(s) :\n' + dates + '\n'
+      : 'Aucune intervention n\'a pu être posée.\n') +
+    (bilan.motif ? '\nRien n\'a été planifié : ' + bilan.motif + '.\n' : '') +
+    (bilan.refuses.length
+      ? '\n' + bilan.refuses.length + ' intervention(s) sans créneau dans les quatre mois ' +
+        'qui viennent : elles restent « A PLANIFIER » dans l\'onglet ' + SH.CHANTIERS + '.\n'
+      : '') +
+    '\nTu peux tout corriger à la main dans le classeur : l\'appli ne réécrit ' +
+    'jamais une date ou un nom que tu as posés.\n' +
+    SpreadsheetApp.getActive().getUrl();
+  try {
+    MailApp.sendEmail(dest, 'Planning — devis ' + numero, corps);
+  } catch (e) { /* sans importance : le classeur reste la source */ }
+  return bilan;
+}
+
+/* 450 minutes → « 7 h 30 ». Pour un courriel que l'on lit d'un coup d'œil. */
+function heuresLisibles_(min) {
+  var m = Math.max(0, Math.round(Number(min) || 0));
+  var h = Math.floor(m / 60), r = m % 60;
+  if (!h) return r + ' min';
+  return h + ' h' + (r ? ' ' + ('0' + r).slice(-2) : '');
+}
+
+/* ====================== LA PLANIFICATION ======================
+ *
+ * Un devis signé ne produisait que des fiches « A PLANIFIER », sans jour ni
+ * personne : le gérant devait tout poser à la main. Ce qui suit pose les
+ * dates et les salariés, et laisse au gérant le dernier mot — il corrige
+ * dans la feuille, rien ne réécrit ce qu'il a changé.
+ *
+ * Trois inconnues, trois réponses :
+ *
+ * 1. COMBIEN DE TEMPS ? Faute de pointages, on passe par l'argent : la grille
+ *    de prix a été bâtie sur un taux horaire, donc heures = montant ÷ taux.
+ *    Le taux est dans REGLAGES (taux_horaire_planning), modifiable sans
+ *    toucher au code, et la durée obtenue reste rectifiable à la main sur
+ *    chaque fiche. Les premiers pointages diront si le taux est juste.
+ *
+ * 2. QUAND ? À partir de la date d'intervention portée au devis — une vraie
+ *    date depuis la v46 — et jamais avant.
+ *
+ * 3. QUI ? Le salarié le moins chargé de la semaine visée, parmi ceux dont
+ *    le jour est travaillé et dont la journée n'est pas déjà pleine.
+ */
+
+/* L'interrupteur du classeur. Posé à NON, l'appli crée les fiches mais ne pose
+   ni date ni salarié : on revient au fonctionnement d'avant, sans toucher au
+   code. C'est la sortie de secours si la planification se trompe. */
+function planificationAuto_(reg) {
+  return String((reg && reg.planification_auto) || 'OUI').toUpperCase().trim() !== 'NON';
+}
+
+/* Le taux horaire de vente qui sert à convertir un montant en heures. */
+function tauxHorairePlanning_(reg) {
+  var t = Number(String((reg && reg.taux_horaire_planning) || '').replace(',', '.'));
+  return (isFinite(t) && t > 0) ? t : 30;
+}
+
+/* Un montant en minutes de travail, arrondies au quart d'heure. Jamais moins
+   d'une demi-heure : un déplacement ne se fait pas pour dix minutes. */
+function minutesPour_(montantHt, taux) {
+  var m = Number(montantHt) || 0;
+  if (m <= 0) return 0;
+  var min = m / (taux || 30) * 60;
+  min = Math.round(min / 15) * 15;
+  return Math.max(30, min);
+}
+
+/* « MA,ME,JE,VE,SA » → [2,3,4,5,6] (0 = dimanche, comme getDay()).
+   On accepte les noms entiers, les abréviations et n'importe quel séparateur :
+   une colonne remplie à la main les mélange toujours. Vide → du lundi au
+   vendredi, le cas le plus courant. */
+function joursTravailles_(v) {
+  var table = [['DIMANCHE', 'DI', 'DIM'], ['LUNDI', 'LU', 'LUN'], ['MARDI', 'MA', 'MAR'],
+               ['MERCREDI', 'ME', 'MER'], ['JEUDI', 'JE', 'JEU'],
+               ['VENDREDI', 'VE', 'VEN'], ['SAMEDI', 'SA', 'SAM']];
+  var brut = String(v || '').toUpperCase()
+    .replace(/[ÉÈÊ]/g, 'E').replace(/[À]/g, 'A')
+    .split(/[^A-Z]+/).filter(function (x) { return x; });
+  var vus = {}, sortie = [];
+  brut.forEach(function (mot) {
+    for (var j = 0; j < 7; j++) {
+      if (table[j].indexOf(mot) >= 0 && !vus[j]) { vus[j] = true; sortie.push(j); }
+    }
+  });
+  if (!sortie.length) return [1, 2, 3, 4, 5];
+  return sortie.sort(function (a, b) { return a - b; });
+}
+
+/* « 08:00-12:00, 14:00-17:00 » → [{debut:480, fin:720}, {debut:840, fin:1020}],
+   en minutes depuis minuit. Vide → la journée type de la maison. */
+function plagesTravail_(v) {
+  var sortie = [];
+  String(v || '').replace(/[hH]/g, ':').split(/[;,]+/).forEach(function (bout) {
+    var m = String(bout).match(/(\d{1,2}):?(\d{2})?\s*[-–à]\s*(\d{1,2}):?(\d{2})?/);
+    if (!m) return;
+    var d = Number(m[1]) * 60 + Number(m[2] || 0);
+    var f = Number(m[3]) * 60 + Number(m[4] || 0);
+    if (f > d) sortie.push({ debut: d, fin: f });
+  });
+  if (!sortie.length) return [{ debut: 480, fin: 720 }, { debut: 840, fin: 1020 }];
+  return sortie.sort(function (a, b) { return a.debut - b.debut; });
+}
+
+function capaciteJour_(plages) {
+  var t = 0;
+  plages.forEach(function (p) { t += p.fin - p.debut; });
+  return t;
+}
+
+/* Les salariés tels que le planning les voit : qui travaille quels jours,
+   dans quelles plages, et combien d'heures par semaine au plus. */
+function prestatairesPlanning_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.PRESTATAIRES);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var iNom = en.indexOf('NOM'), iActif = en.indexOf('ACTIF');
+  var iJours = en.indexOf('JOURS'), iPlages = en.indexOf('PLAGES');
+  var iHeures = en.indexOf('HEURES_SEMAINE');
+  if (iNom < 0) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
+    .filter(function (r) {
+      return String(r[iNom]).trim() &&
+             (iActif < 0 || String(r[iActif]).toUpperCase() !== 'NON');
+    })
+    .map(function (r) {
+      var plages = plagesTravail_(iPlages >= 0 ? r[iPlages] : '');
+      var h = Number(String(iHeures >= 0 ? r[iHeures] : '').replace(',', '.'));
+      return {
+        nom: String(r[iNom]).trim(),
+        /* La charge se compte sous le nom normalisé, parce que la feuille écrit
+           « Maxime » ici et « MAXIME » là. Sans cela, l'appli ne voyait jamais
+           ce qui était déjà posé et empilait tout sur la même personne. */
+        cle: normNom_(r[iNom]),
+        jours: joursTravailles_(iJours >= 0 ? r[iJours] : ''),
+        plages: plages,
+        capaciteJour: capaciteJour_(plages),
+        capaciteSemaine: (isFinite(h) && h > 0) ? Math.round(h * 60) : 2100   // 35 h
+      };
+    });
+}
+
+/* Le lundi de la semaine d'une date : c'est la clé qui sert à compter la
+   charge hebdomadaire. */
+function cleSemaine_(d) {
+  var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  var j = x.getDay();                       // 0 = dimanche
+  x.setDate(x.getDate() - (j === 0 ? 6 : j - 1));
+  return isoJour_(x);
+}
+
+/* Ce qui est déjà posé : minutes par salarié et par jour, et par semaine.
+   On lit la durée prévue quand elle est là, et l'on compte une demi-journée
+   par défaut pour une fiche ancienne qui n'en porte pas — mieux vaut un
+   planning prudent qu'un salarié en retard toute la journée. */
+function chargeActuelle_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  var charge = { jour: {}, semaine: {} };
+  if (!sh || sh.getLastRow() < 2) return charge;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var iDate = en.indexOf('DATE'), iQui = en.indexOf('PRESTATAIRE');
+  var iDur = en.indexOf('DUREE_PREVUE_MIN'), iStatut = en.indexOf('STATUT');
+  if (iDate < 0 || iQui < 0) return charge;
+  for (var i = 1; i < v.length; i++) {
+    var qui = normNom_(v[i][iQui]);
+    var d = v[i][iDate];
+    if (!qui || !d || !(d instanceof Date)) continue;
+    if (iStatut >= 0 && String(v[i][iStatut]).toUpperCase() === 'ANNULE') continue;
+    var min = iDur >= 0 ? Number(v[i][iDur]) : 0;
+    if (!isFinite(min) || min <= 0) min = 210;
+    var cj = qui + '|' + isoJour_(d), cs = qui + '|' + cleSemaine_(d);
+    charge.jour[cj] = (charge.jour[cj] || 0) + min;
+    charge.semaine[cs] = (charge.semaine[cs] || 0) + min;
+  }
+  return charge;
+}
+
+/* Le premier créneau possible pour un lot, à partir d'un jour donné.
+   Renvoie { date, heure, nom } ou null si rien ne se libère dans l'horizon.
+   Le salarié retenu est le moins chargé de sa semaine parmi ceux qui peuvent :
+   c'est ce qui égalise les plannings dès qu'il y a plus d'une personne. */
+function creneauPour_(minutes, depuis, gens, charge, prefere, horizon) {
+  if (!gens.length) return null;
+  var jour = new Date(depuis.getFullYear(), depuis.getMonth(), depuis.getDate(), 12, 0, 0);
+  for (var pas = 0; pas < (horizon || 120); pas++) {
+    var jSem = jour.getDay(), iso = isoJour_(jour), sem = cleSemaine_(jour);
+    var possibles = gens.filter(function (g) {
+      if (g.jours.indexOf(jSem) < 0) return false;
+      var dejaJ = charge.jour[g.cle + '|' + iso] || 0;
+      var dejaS = charge.semaine[g.cle + '|' + sem] || 0;
+      return (dejaJ + minutes <= g.capaciteJour) && (dejaS + minutes <= g.capaciteSemaine);
+    });
+    if (possibles.length) {
+      /* Le même salarié garde les jours suivants d'un chantier découpé, et les
+         passages suivants d'un contrat : le client voit la même personne. */
+      var choisi = null;
+      if (prefere) {
+        possibles.forEach(function (g) { if (g.nom === prefere) choisi = g; });
+      }
+      if (!choisi) {
+        possibles.sort(function (a, b) {
+          var ca = charge.semaine[a.cle + '|' + sem] || 0;
+          var cb = charge.semaine[b.cle + '|' + sem] || 0;
+          if (ca !== cb) return ca - cb;
+          return a.nom < b.nom ? -1 : 1;
+        });
+        choisi = possibles[0];
+      }
+      /* L'heure de début : la première plage où il reste de la place. On ne
+         découpe pas à la minute dans la journée — le salarié s'organise — on
+         donne un point de départ honnête. */
+      var reste = charge.jour[choisi.cle + '|' + iso] || 0;
+      var debut = choisi.plages[0].debut;
+      for (var p = 0; p < choisi.plages.length; p++) {
+        var large = choisi.plages[p].fin - choisi.plages[p].debut;
+        if (reste < large) { debut = choisi.plages[p].debut + reste; break; }
+        reste -= large;
+      }
+      return {
+        date: new Date(jour.getTime()),
+        heure: ('0' + Math.floor(debut / 60)).slice(-2) + ':' + ('0' + (debut % 60)).slice(-2),
+        nom: choisi.nom
+      };
+    }
+    jour.setDate(jour.getDate() + 1);
+  }
+  return null;
+}
+
+function reserver_(charge, nom, date, minutes) {
+  var k = normNom_(nom);
+  var cj = k + '|' + isoJour_(date), cs = k + '|' + cleSemaine_(date);
+  charge.jour[cj] = (charge.jour[cj] || 0) + minutes;
+  charge.semaine[cs] = (charge.semaine[cs] || 0) + minutes;
+}
+
+/**
+ * Pose sur le planning les chantiers d'un devis qui n'ont ni date ni salarié.
+ *
+ * Renvoie un compte rendu : ce qui a été posé, ce qui ne l'a pas été. Le gérant
+ * le reçoit par courriel ; rien n'est posé en silence.
+ *
+ * Ne touche jamais une fiche qui porte déjà une date : si le gérant a corrigé
+ * à la main, c'est lui qui a raison.
+ */
+function planifierDevis_(numero) {
+  var bilan = { poses: [], refuses: [], motif: '' };
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) { bilan.motif = 'aucun chantier'; return bilan; }
+
+  if (!planificationAuto_(lireReglages_())) {
+    bilan.motif = 'planification automatique coupée dans les réglages';
+    return bilan;
+  }
+  var gens = prestatairesPlanning_();
+  if (!gens.length) { bilan.motif = 'aucun salarié actif'; return bilan; }
+
+  var devis = null;
+  lireDevis_().forEach(function (d) {
+    if (String(d.NUMERO).trim() === String(numero).trim()) devis = d;
+  });
+  if (!devis) { bilan.motif = 'devis introuvable'; return bilan; }
+
+  /* Jamais avant la date promise au client, et jamais dans le passé : un devis
+     signé en retard ne fait pas voyager dans le temps. */
+  var depuis = devis.DATE_SOUHAITEE instanceof Date ? new Date(devis.DATE_SOUHAITEE) : null;
+  var aujourdhui = new Date();
+  if (!depuis || depuis < aujourdhui) depuis = aujourdhui;
+
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var iNum = en.indexOf('NUMERO'), iDate = en.indexOf('DATE'), iHeure = en.indexOf('HEURE');
+  var iQui = en.indexOf('PRESTATAIRE'), iStatut = en.indexOf('STATUT');
+  var iDur = en.indexOf('DUREE_PREVUE_MIN'), iLot = en.indexOf('LOT'), iId = en.indexOf('ID');
+  if (iNum < 0 || iDate < 0 || iQui < 0) { bilan.motif = 'colonnes manquantes'; return bilan; }
+
+  var charge = chargeActuelle_();
+  var recurrent = String(devis.NATURE || '').toUpperCase().trim() === 'ENTRETIEN';
+  var prefere = '';
+  var curseur = new Date(depuis.getTime());
+  var lotPrecedent = '';
+
+  for (var i = 1; i < v.length; i++) {
+    if (String(v[i][iNum]).trim() !== String(numero).trim()) continue;
+    if (v[i][iDate]) continue;                       // déjà posé, on n'y touche pas
+    if (String(v[i][iQui]).trim()) continue;         // déjà affecté à la main
+
+    var minutes = iDur >= 0 ? Number(v[i][iDur]) : 0;
+    if (!isFinite(minutes) || minutes <= 0) minutes = 210;
+    var lot = iLot >= 0 ? String(v[i][iLot] || '').trim() : '';
+
+    /* Les jours d'un même passage se suivent ; les passages d'un contrat
+       s'espacent d'une semaine, le même jour quand c'est possible. */
+    var memePassage = lot && lotPrecedent &&
+                      lot.split('/')[1] === lotPrecedent.split('/')[1] &&
+                      Number(lot.split('/')[0]) === Number(lotPrecedent.split('/')[0]) + 1;
+    if (recurrent && !memePassage && i > 1 && bilan.poses.length) {
+      curseur = new Date(curseur.getTime());
+      curseur.setDate(curseur.getDate() + 7);
+    }
+
+    var c = creneauPour_(minutes, curseur, gens, charge, prefere || null, 120);
+    if (!c) {
+      bilan.refuses.push({ id: iId >= 0 ? v[i][iId] : '', minutes: minutes });
+      continue;
+    }
+    reserver_(charge, c.nom, c.date, minutes);
+    sh.getRange(i + 1, iDate + 1).setValue(c.date);
+    if (iHeure >= 0) sh.getRange(i + 1, iHeure + 1).setValue(c.heure);
+    sh.getRange(i + 1, iQui + 1).setValue(c.nom);
+    if (iStatut >= 0) sh.getRange(i + 1, iStatut + 1).setValue('PLANIFIE');
+    bilan.poses.push({ id: iId >= 0 ? v[i][iId] : '', date: c.date, heure: c.heure,
+                       nom: c.nom, minutes: minutes });
+    prefere = c.nom;
+    lotPrecedent = lot;
+    /* Le lot suivant d'un même passage part du lendemain ; sinon on repart du
+       jour posé, et l'espacement d'un contrat s'ajoutera au tour suivant. */
+    curseur = new Date(c.date.getTime());
+    if (lot && Number(lot.split('/')[0]) < Number(lot.split('/')[1])) {
+      curseur.setDate(curseur.getDate() + 1);
+    }
+  }
+  return bilan;
+}
+
+/* ENTRETIEN (contrat régulier, mensualisé), CHANTIER (fin de chantier) ou
+   REMISE (remise en état). Les deux dernières sont des interventions uniques :
+   elles ne diffèrent que par ce qu'on y fait, et par le nom sur le devis. */
+function natureDevis_(v) {
+  var n = String(v || '').toUpperCase().trim();
+  if (n === 'ENTRETIEN') return 'ENTRETIEN';
+  if (n === 'REMISE' || n === 'REMISE EN ETAT' || n === 'REMISE_EN_ETAT') return 'REMISE';
+  return 'CHANTIER';
+}
+
+/**
+ * Un devis vient d'être signé : on crée les chantiers qui en découlent.
+ *
+ * Un devis ponctuel donne UNE intervention. Un contrat mensuel en donne autant
+ * que le nombre de passages inscrit sur le devis (colonne PASSAGES_MOIS), ou à
+ * défaut la valeur du réglage. Les lignes naissent sans date et sans agent :
+ * c'est le bureau qui construit le planning.
+ *
+ * La fonction est idempotente — un même devis ne génère ses chantiers qu'une
+ * fois, même si le résultat est renvoyé deux fois par un téléphone entêté.
+ */
+function genererChantiers_(numero) {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(SH.CHANTIERS);
+  if (!sh) return 0;
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cId = en.indexOf('ID'), cNum = en.indexOf('NUMERO');
+  if (cId < 0 || cNum < 0) return 0;
+
+  // déjà fait ?
+  if (sh.getLastRow() > 1) {
+    var vus = sh.getRange(2, cNum + 1, sh.getLastRow() - 1, 1).getValues();
+    for (var j = 0; j < vus.length; j++) {
+      if (String(vus[j][0]).trim() === String(numero).trim()) return 0;
+    }
+  }
+
+  var devis = null;
+  lireDevis_().forEach(function (d) {
+    if (String(d.NUMERO).trim() === String(numero).trim()) devis = d;
+  });
+  if (!devis) return 0;
+
+  var reg = lireReglages_();
+  var lignes = lignesParDevis_()[String(numero).trim()] || [];
+
+  /* C'est la nature du devis qui commande. Les devis établis avant qu'elle
+     existe n'en portent pas : on retombe alors sur l'ancienne règle, le type
+     des lignes, pour qu'un contrat signé hier produise les mêmes chantiers
+     qu'aujourd'hui. */
+  var nature = String(devis.NATURE || '').toUpperCase().trim();
+  var recurrent = nature === 'ENTRETIEN';   // une remise en état n'en est pas un
+  if (!nature) {
+    recurrent = lignes.some(function (l) {
+      return String(l.TYPE || '').toUpperCase() === 'MENSUEL';
+    });
+  }
+
+  var combien = 1;
+  if (recurrent) {
+    combien = Number(devis.PASSAGES_MOIS) ||
+              Number(String(reg.passages_mois_defaut || '4').replace(',', '.')) || 4;
+    if (combien < 1) combien = 1;
+    if (combien > 31) combien = 31;
+  }
+
+  /* Combien de temps ? Le montant divisé par le taux horaire de vente. Pour un
+     contrat, le total du devis est celui du mois : un passage en vaut la part.
+     Et un chantier plus long qu'une journée se découpe en journées, parce
+     qu'une fiche qui déborde ne tient sur aucun planning. */
+  var taux = tauxHorairePlanning_(reg);
+  var htTotal = Number(devis.TOTAL_HT) || 0;
+  var minutesPassage = minutesPour_(recurrent && combien > 0 ? htTotal / combien : htTotal, taux);
+  var gens = prestatairesPlanning_();
+  var journee = 420;                         // 7 h, à défaut de salarié décrit
+  gens.forEach(function (g) { if (g.capaciteJour > journee) journee = g.capaciteJour; });
+  /* Le découpage en journées n'a de sens que si l'appli pose elle-même les
+     dates. Planification coupée, on laisse une fiche par passage avec sa durée
+     entière : c'est le bureau qui décide comment l'étaler. */
+  var parts = planificationAuto_(reg) ? Math.max(1, Math.ceil(minutesPassage / journee)) : 1;
+  var lots = [];
+  for (var q = 0; q < parts; q++) {
+    var reste = minutesPassage - q * journee;
+    /* Une seule part : elle porte la durée entière, même si elle dépasse une
+       journée — c'est le cas quand la planification automatique est coupée. */
+    lots.push({ minutes: parts > 1 ? Math.min(journee, reste) : minutesPassage,
+                lot: parts > 1 ? (q + 1) + '/' + parts : '' });
+  }
+
+  var suivant = prochainNumChantier_(sh, cId);
+  var maintenant = new Date();
+  var acces = String(devis.NOTE_COMMERCIAL || '').trim();   // codes, gardien, où sont les clés
+  var rows = [], rang = 0;
+  for (var k = 0; k < combien; k++) {
+    for (var p = 0; p < lots.length; p++) {
+      var v = {
+        ID: 'CH-' + ('000' + (suivant + rang)).slice(-4),
+        NUMERO: devis.NUMERO,
+        CLIENT: devis.CLIENT,
+        ADRESSE: devis.ADRESSE, CP: devis.CP, VILLE: devis.VILLE,
+        ACCES: acces,
+        DATE: '', HEURE: '', PRESTATAIRE: '',
+        STATUT: 'A PLANIFIER',
+        ARRIVEE: '', DEPART: '', MINUTES: '',
+        PRESTATIONS_FAITES: '', SIGNALEMENT: '', PHOTOS: 0, NOTE: '',
+        CREE_LE: maintenant,
+        DUREE_PREVUE_MIN: lots[p].minutes, LOT: lots[p].lot
+      };
+      rows.push(en.map(function (h) { return v.hasOwnProperty(h) ? v[h] : ''; }));
+      rang++;
+    }
+  }
+  if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, en.length).setValues(rows);
+  return rows.length;
+}
+
+/** Les chantiers d'un agent : ceux à venir, et les trente derniers jours. */
+function planningDe_(nom) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var moi = normNom_(nom);
+
+  var hier = new Date(); hier.setDate(hier.getDate() - 30); hier.setHours(0, 0, 0, 0);
+  var loin = new Date(); loin.setDate(loin.getDate() + 60);
+
+  var parDevis = lignesParDevis_();
+  var out = [];
+  for (var i = 1; i < v.length; i++) {
+    var o = {};
+    en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
+    if (!String(o.ID || '').trim()) continue;
+    if (normNom_(o.PRESTATAIRE || '') !== moi) continue;
+    if (!o.DATE) continue;                       // pas encore planifié
+    var d = new Date(o.DATE);
+    if (isNaN(d.getTime()) || d < hier || d > loin) continue;
+
+    // La fiche de travail : ce qui a été vendu, SANS UN SEUL MONTANT.
+    var taches = (parDevis[String(o.NUMERO).trim()] || []).map(function (l) {
+      return {
+        ref: String(l.REFERENCE || ''),
+        designation: String(l.DESIGNATION || ''),
+        detail: String(l.DETAIL || ''),
+        qte: Number(l.QTE) || 0,
+        unite: String(l.UNITE || '')
+      };
+    });
+
+    out.push({
+      id: String(o.ID).trim(),
+      client: String(o.CLIENT || ''),
+      adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
+      acces: String(o.ACCES || ''),
+      date: Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+      heure: o.HEURE instanceof Date
+        ? Utilities.formatDate(o.HEURE, Session.getScriptTimeZone(), 'HH:mm')
+        : String(o.HEURE || ''),
+      statut: String(o.STATUT || 'PLANIFIE'),
+      arrivee: o.ARRIVEE ? new Date(o.ARRIVEE).getTime() : 0,
+      depart: o.DEPART ? new Date(o.DEPART).getTime() : 0,
+      minutes: Number(o.MINUTES) || 0,
+      faites: String(o.PRESTATIONS_FAITES || '').split('|').filter(function (x) { return x; }),
+      signalement: String(o.SIGNALEMENT || ''),
+      note: String(o.NOTE || ''),
+      taches: taches
+    });
+  }
+  out.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+  return out;
+}
+
+/** Écrit dans la ligne d'un chantier, repérée par son ID. */
+function majChantier_(id, valeurs) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return null;
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cId = en.indexOf('ID');
+  if (cId < 0) return null;
+  var ids = sh.getRange(2, cId + 1, sh.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).trim() !== String(id).trim()) continue;
+    for (var k in valeurs) {
+      if (!valeurs.hasOwnProperty(k)) continue;
+      var c = en.indexOf(k);
+      if (c >= 0) sh.getRange(i + 2, c + 1).setValue(valeurs[k]);
+    }
+    return i + 2;
+  }
+  return null;
+}
+
+/**
+ * Ce que l'agent renvoie du terrain : son arrivée, son départ, les prestations
+ * cochées, un signalement. Chaque envoi porte l'heure prise par l'appareil, pour
+ * qu'un pointage fait hors connexion reste juste une fois remonté.
+ */
+function enregistrerChantier_(d, personne) {
+  var id = String(d.id || '').trim();
+  if (!id) return { ok: false, erreur: 'chantier manquant' };
+
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh) return { ok: false, erreur: 'onglet CHANTIERS absent' };
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var ligne = null, actuel = {};
+  var cId = en.indexOf('ID');
+  if (cId >= 0 && sh.getLastRow() > 1) {
+    var tout = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+    for (var i = 0; i < tout.length; i++) {
+      if (String(tout[i][cId]).trim() !== id) continue;
+      ligne = i + 2;
+      en.forEach(function (h, c) { if (h) actuel[h] = tout[i][c]; });
+      break;
+    }
+  }
+  if (!ligne) return { ok: false, erreur: 'chantier introuvable' };
+
+  // Un agent ne touche qu'à ses propres chantiers.
+  if (normNom_(actuel.PRESTATAIRE || '') !== normNom_(personne.nom)) {
+    return { ok: false, erreur: 'ce chantier ne vous est pas affecté' };
+  }
+
+  var v = {}, actions = [];
+
+  if (d.arrivee) {
+    v.ARRIVEE = new Date(Number(d.arrivee));
+    v.STATUT = 'EN COURS';
+    actions.push('ARRIVEE');
+  }
+  if (d.depart) {
+    var dep = new Date(Number(d.depart));
+    v.DEPART = dep;
+    var arr = v.ARRIVEE || (actuel.ARRIVEE ? new Date(actuel.ARRIVEE) : null);
+    if (arr) v.MINUTES = Math.max(0, Math.round((dep.getTime() - arr.getTime()) / 60000));
+    v.STATUT = 'FAIT';
+    actions.push('DEPART');
+  }
+  if (d.faites !== undefined) {
+    v.PRESTATIONS_FAITES = (d.faites || []).join('|');
+    actions.push('PRESTATIONS');
+  }
+  if (d.note !== undefined) { v.NOTE = String(d.note || ''); actions.push('NOTE'); }
+  if (d.signalement) {
+    v.SIGNALEMENT = String(d.signalement);
+    // On ne dégrade pas un chantier déjà terminé : le signalement s'ajoute.
+    if (String(v.STATUT || actuel.STATUT || '') !== 'FAIT') v.STATUT = 'PROBLEME';
+    actions.push('SIGNALEMENT');
+  }
+  if (!actions.length) return { ok: false, erreur: 'rien à enregistrer' };
+
+  majChantier_(id, v);
+  tracerServeur_(personne.nom, 'CHANTIER ' + actions.join('+'),
+                 (v.MINUTES !== undefined ? v.MINUTES + ' min · ' : '') +
+                 String(v.SIGNALEMENT || '').slice(0, 120),
+                 actuel.NUMERO || id, d.appareil || '');
+  return { ok: true, id: id, statut: v.STATUT || actuel.STATUT || '' };
 }
 
 /** Compte les photos rattachées à un devis et l'écrit dans la colonne PHOTOS. */
@@ -839,7 +1871,7 @@ function lireReglages_() {
 function lireCatalogue_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CATALOGUE);
   if (!sh || sh.getLastRow() < 2) return [];
-  var large = Math.max(9, sh.getLastColumn());
+  var large = Math.max(10, sh.getLastColumn());
   return sh.getRange(2, 1, sh.getLastRow() - 1, large).getValues()
     .filter(function (r) { return String(r[1]).trim() && String(r[7]).toUpperCase() !== 'NON'; })
     .map(function (r) {
@@ -848,8 +1880,76 @@ function lireCatalogue_() {
         detail: String(r[2] || ''), unite: String(r[3] || ''),
         pu: Number(r[4]) || 0, tva: Number(r[5]) || 20,
         type: String(r[6] || '').toUpperCase() === 'MENSUEL' ? 'MENSUEL' : 'PONCTUEL',
-        reference: String(r[8] || '').trim()
+        reference: String(r[8] || '').trim(),
+        natures: naturesCatalogue_(r[9])
       };
+    });
+}
+
+/* « 2026-10-06 » → le 6 octobre 2026 à midi, heure du classeur. Midi et non
+   minuit : une date du calendrier n'a pas d'heure, et minuit bascule d'un jour
+   au moindre décalage. Tout le reste renvoie une chaîne vide. */
+function jourValide_(v) {
+  var m = String(v || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return '';
+  var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0);
+  return isNaN(d.getTime()) ? '' : d;
+}
+
+/* « ENTRETIEN, REMISE » → ['ENTRETIEN','REMISE']. Vide, ou rien de reconnu :
+   tableau vide, et la prestation se vend dans toutes les natures. On accepte
+   la virgule, le point-virgule, la barre oblique et l'espace comme séparateurs,
+   parce qu'une colonne remplie à la main les mélange toujours. */
+function naturesCatalogue_(v) {
+  var vus = {}, sortie = [];
+  String(v || '').toUpperCase().split(/[^A-Z]+/).forEach(function (m) {
+    if (m !== 'ENTRETIEN' && m !== 'CHANTIER' && m !== 'REMISE') return;
+    if (vus[m]) return;
+    vus[m] = true; sortie.push(m);
+  });
+  return sortie;
+}
+
+/* Les agents actifs. Même forme que lireCommerciaux_, autre population. */
+function lirePrestataires_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.PRESTATAIRES);
+  if (!sh || sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues()
+    .filter(function (r) { return String(r[0]).trim() && String(r[3]).toUpperCase() !== 'NON'; })
+    .map(function (r) {
+      return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(),
+               code: String(r[2] || '').trim(), role: 'PRESTATAIRE' };
+    });
+}
+
+/**
+ * Qui se connecte. On cherche d'abord parmi les commerciaux, puis parmi les
+ * agents. Le rôle qui sort d'ici commande tout le reste : les données envoyées
+ * à l'appareil, et les actions autorisées.
+ */
+function trouverPersonne_(nom) {
+  var n = normNom_(nom), out = null;
+  // Un compte d'administration l'emporte sur les deux autres : quelqu'un qui
+  // figure aussi parmi les commerciaux ouvre le tableau, pas la saisie. Sans
+  // cette priorité, le patron qui a gardé sa ligne de commercial n'atteindrait
+  // jamais son espace.
+  lireAdmins_().forEach(function (p) { if (normNom_(p.nom) === n) out = p; });
+  if (out) return out;
+  var c = trouverCommercial_(nom);
+  if (c) { c.role = 'COMMERCIAL'; return c; }
+  lirePrestataires_().forEach(function (p) { if (normNom_(p.nom) === n) out = p; });
+  return out;
+}
+
+/* Les comptes d'administration actifs. */
+function lireAdmins_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.ADMINS);
+  if (!sh || sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues()
+    .filter(function (r) { return String(r[0]).trim() && String(r[3]).toUpperCase() !== 'NON'; })
+    .map(function (r) {
+      return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(),
+               code: String(r[2] || '').trim(), role: 'ADMIN' };
     });
 }
 
@@ -902,6 +2002,17 @@ function dossierDevis_(reg, date, commercial) {
   dossier = sousDossier_(dossier, ('0' + (d.getMonth() + 1)).slice(-2) + ' - ' + MOIS_[d.getMonth()]);
   dossier = sousDossier_(dossier, commercial || 'Sans commercial');
   return dossier;
+}
+
+/**
+ * Une date de cellule, écrite « aaaa-mm-jj » à l'heure du classeur.
+ *
+ * toISOString() renvoie la date UTC : une cellule du 30 septembre, lue par un
+ * script réglé sur Paris, y devient le 29 septembre. Tout le tableau de bord
+ * affichait ainsi des dates en avance d'un jour sur la réalité.
+ */
+function isoJour_(d) {
+  return Utilities.formatDate(new Date(d), Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
 /** Montant HT d'une ligne, remise de ligne déduite. */
