@@ -6,8 +6,11 @@
    long qu'une journée, les jours non travaillés sautés, le salarié le moins
    chargé, l'espacement hebdomadaire d'un contrat, et surtout ce que l'appli
    ne doit PAS faire — réécrire une date posée à la main par le gérant. */
-import { creer, lire, charger, courriers } from './gs.mjs';
+import { creer, lire, charger, courriers, horloge } from './gs.mjs';
 import { CODE_GS } from './chemins.mjs';
+/* Le bureau vit le vendredi 2 octobre 2026 : les dates de l'épreuve restent
+   dans l'avenir quel que soit le jour où elle tourne. */
+horloge(new Date(2026, 9, 2, 10, 0, 0));
 const ok = [], ko = [];
 const T = (n, c, d) => { (c?ok:ko).push(n + (c?'':'  → ' + JSON.stringify(d))); };
 

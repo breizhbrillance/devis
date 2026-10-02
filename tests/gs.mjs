@@ -53,6 +53,40 @@ const ss = {
 export function creer(nom, lignes){ return feuilles[nom]=new Sheet(nom,lignes.map(l=>l.slice())); }
 export function lire(nom){ return feuilles[nom]?feuilles[nom].d:null; }
 export function courriers(){ return mails; }
+/* Un faux Google Maps. Sans réglage, il ne répond pas — comme un quota épuisé —
+   et le script doit alors retomber sur son forfait. itineraires(f) lui donne
+   une fonction (origine, destination) → minutes, ou null pour « aucune route ». */
+let routeDe = null; const demandes = [];
+export function itineraires(f){ routeDe = f || null; demandes.length = 0; }
+export function demandesMaps(){ return demandes; }
+const FauxMaps = {
+  DirectionFinder:{ Mode:{ DRIVING:'driving' } },
+  newDirectionFinder(){ let o = '', d = '';
+    return { setOrigin(x){ o = x; return this; }, setDestination(x){ d = x; return this; },
+      setMode(){ return this; }, setRegion(){ return this; }, setLanguage(){ return this; },
+      getDirections(){ demandes.push([o, d]);
+        if(!routeDe) throw new Error('Service invoked too many times for one day: route.');
+        const m = routeDe(o, d);
+        if(m === null || m === undefined) return { routes: [] };
+        return { routes:[{ legs:[{ duration:{ value: m * 60 } }] }] }; } }; }
+};
+/* L'horloge du faux bureau. Sans elle, « aujourd'hui » est le vrai jour : une
+   épreuve écrite pour le 6 octobre tombe au rouge le 7, sans que rien n'ait
+   changé dans le code. Appelée avant charger(), elle fige le jour vu par le
+   script ; non appelée, rien ne change pour les autres suites. */
+let instantFige = null;
+export function horloge(d){ instantFige = d ? new Date(d).getTime() : null; }
+function DateDuBureau(){
+  if(instantFige === null) return Date;
+  const fige = instantFige, Vraie = Date;
+  return class extends Vraie {
+    constructor(...a){ if(a.length === 0) super(fige); else super(...a); }
+    static now(){ return fige; }
+    /* Les dates posées par l'épreuve sont de vraies dates : le script doit
+       continuer à les reconnaître comme telles. */
+    static [Symbol.hasInstance](x){ return x instanceof Vraie; }
+  };
+}
 export function charger(chemin){
   const src = fs.readFileSync(chemin,'utf8');
   const ctx = {
@@ -72,7 +106,8 @@ export function charger(chemin){
     DriveApp:{ getRootFolder:()=>dossier(), getFoldersByName:()=>({hasNext:()=>false}), createFolder:()=>dossier(),
       getFileById:(id)=>{ if(!fichiers[id]) throw new Error('fichier introuvable : '+id); return fic(id); } },
     ContentService:{ createTextOutput:(t)=>({setMimeType:()=>t}), MimeType:{JSON:'j'} },
-    Logger:{ log(){} }, console, Date, Math, JSON, String, Number, Array, Object, isNaN, parseFloat, parseInt, RegExp, Error
+    Maps: FauxMaps,
+    Logger:{ log(){} }, console, Date: DateDuBureau(), Math, JSON, String, Number, Array, Object, isNaN, parseFloat, parseInt, RegExp, Error
   };
   function fic(id){ return { getUrl:()=>'https://drive.google.com/file/d/'+id+'/view',
     getId:()=>id, getName:()=>fichiers[id].nom, setTrashed:(v)=>{ fichiers[id].corbeille = !!v; return fic(id); } }; }

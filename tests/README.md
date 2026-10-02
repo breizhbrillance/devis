@@ -38,7 +38,7 @@ Tout est simulé.
 
 | fichier | rôle |
 |---|---|
-| `gs.mjs` | un faux Google Apps Script : feuilles en mémoire, faux Drive, faux envoi de courriel. `Code.gs` y est chargé tel quel et s'exécute pour de bon |
+| `gs.mjs` | un faux Google Apps Script : feuilles en mémoire, faux Drive, faux envoi de courriel. `Code.gs` y est chargé tel quel et s'exécute pour de bon. `horloge()` fige le jour vu par le script, pour qu'une épreuve datée ne tombe pas au rouge en vieillissant ; `itineraires()` branche un faux Google Maps, muet par défaut |
 | `srv*.mjs` | de faux bureaux HTTP qui servent l'application et répondent à ses appels. `srvco` pour un commercial, `srvag` pour un salarié, `srvad` pour les trois métiers |
 | `chemins.mjs` | où sont l'application et le navigateur |
 | `presta.mjs` | choisir une prestation dans la liste fixe, comme le ferait un doigt |
@@ -62,6 +62,7 @@ faut jamais en mettre.
 | `tdate` | les dates à l'heure du classeur, pas à celle de Greenwich |
 | `tcontrat` | la nature du devis commande le nombre de chantiers, et la colonne NATURES |
 | `tplan` | la planification : durée déduite du montant, découpage, jours travaillés, salarié le moins chargé |
+| `tplan47` | la planification corrigée après l'audit : journée de 7 h sous 8 h, vraie fréquence des contrats, jours fériés, absences, itinéraire calculé entre deux chantiers (et forfait quand Google Maps ne répond pas), devis refusé qui rend ses créneaux |
 
 **L'application** — un vrai navigateur, taille d'un téléphone.
 
