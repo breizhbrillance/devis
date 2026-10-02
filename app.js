@@ -12,7 +12,7 @@ var REMISE = {valeur:0, muet:false};
    C'est le devis qui est ponctuel ou récurrent, pas la prestation : le même
    lavage de sols se vend une fois en fin de chantier et quatre fois par mois
    en entretien. */
-var NATURE = null;      // 'ENTRETIEN' | 'CHANTIER'
+var NATURE = null;      // 'ENTRETIEN' | 'CHANTIER' | 'REMISE'
 var PASSAGES = 0;       // par mois, seulement pour un entretien
 var ETAPE = 1;
 var TYPE = null;           // 'PRO' ou 'PART' — choisi au début de chaque devis
@@ -287,7 +287,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v43';
+var VERSION_APP = 'v44';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -667,7 +667,7 @@ function ouvrirVerdict(id){
    un « Continuer » à offrir. */
 function barreVisible(){
   if(ETAPE >= 5) return false;
-  if(ETAPE === 1) return TYPE === 'PRO' && NATURE === 'ENTRETIEN';
+  if(ETAPE === 1) return estEntretien();
   return true;
 }
 
@@ -693,8 +693,10 @@ function etape(n){
 function suivant(){
   if(ETAPE===1){
     if(!TYPE) return erreur('Choisis le type de client.');
-    if(TYPE === 'PRO' && !NATURE)
-      return erreur('Précise s\'il s\'agit d\'un entretien ou d\'une fin de chantier.');
+    if(!NATURE)
+      return erreur(TYPE === 'PRO'
+        ? 'Précise s\'il s\'agit d\'un entretien, d\'une fin de chantier ou d\'une remise en état.'
+        : 'Précise s\'il s\'agit d\'une fin de chantier ou d\'une remise en état.');
     return etape(2);
   }
   if(ETAPE===2){
@@ -988,7 +990,11 @@ function appliquerSugg(i){
   var c = SUGG[i] && SUGG[i].c;
   if(!c) return;
   vibrer(8);
-  if(c.type === 'PART' || c.type === 'PRO'){ TYPE = c.type; majType(); }
+  if(c.type === 'PART' || c.type === 'PRO'){
+    TYPE = c.type;
+    if(TYPE === 'PART' && NATURE === 'ENTRETIEN'){ NATURE = null; PASSAGES = 0; }
+    majType(); majNature();
+  }
   ['Societe','Siret','Tva','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
     var v = c[k.toLowerCase()];
     if(v) $('c' + k).value = v;
@@ -1064,13 +1070,12 @@ function apresConnexion(){
 /* ====================== TYPE DE CLIENT ====================== */
 function choisirType(t){
   TYPE = t;
-  // Un particulier ne se pose pas la question : c'est une intervention.
-  if(t === 'PART'){ NATURE = 'CHANTIER'; PASSAGES = 0; }
-  else if(NATURE === 'CHANTIER' && PASSAGES === 0) NATURE = null;
+  // Un particulier n'a pas de locaux à entretenir : si l'entretien avait été
+  // choisi, il n'a plus cours. Les deux interventions, elles, lui vont.
+  if(t === 'PART' && NATURE === 'ENTRETIEN'){ NATURE = null; PASSAGES = 0; }
   majType();
   majNature();
   sauverBrouillon();
-  if(t === 'PART') etape(2);
 }
 
 function choisirNature(n){
@@ -1079,7 +1084,7 @@ function choisirNature(n){
   majNature();
   sauverBrouillon();
   // Sur un entretien on reste : le commercial a un champ à remplir sous les
-  // yeux. Sur une fin de chantier il n'y a plus rien à dire ici.
+  // yeux. Sur une intervention il n'y a plus rien à dire ici.
   if(n !== 'ENTRETIEN') etape(2);
 }
 
@@ -1099,16 +1104,27 @@ function setPassages(v, surValidation){
 
 function majNature(){
   var pro = (TYPE === 'PRO');
-  $('blocNature').classList.toggle('hide', !pro);
+  $('blocNature').classList.toggle('hide', !TYPE);
+  // L'entretien des locaux ne se propose qu'au professionnel.
+  $('chENT').classList.toggle('hide', !pro);
   $('chENT').classList.toggle('on', NATURE === 'ENTRETIEN');
   $('chCHA').classList.toggle('on', NATURE === 'CHANTIER');
-  $('blocFreq').classList.toggle('hide', !(pro && NATURE === 'ENTRETIEN'));
+  $('chREM').classList.toggle('on', NATURE === 'REMISE');
+  $('blocFreq').classList.toggle('hide', !estEntretien());
   var a = $('fPassages'); if(a) a.value = PASSAGES || '';
   var b = $('fPassages4'); if(b) b.value = PASSAGES || '';
   $('bar').classList.toggle('hide', !barreVisible());
 }
 
 function estEntretien(){ return NATURE === 'ENTRETIEN'; }
+
+/* Le nom que le devis et le classeur donnent à la nature. */
+function libelleNature(n){
+  n = String(n || NATURE || '').toUpperCase();
+  if(n === 'ENTRETIEN') return 'Entretien des locaux';
+  if(n === 'REMISE')    return 'Remise en état';
+  return 'Nettoyage de fin de chantier';
+}
 function majType(){
   var pro = (TYPE === 'PRO');
   $('chPRO').classList.toggle('on', pro);
@@ -1123,6 +1139,10 @@ function majType(){
   else if(PLUS2ANS !== null){ appliquerTaux(PLUS2ANS ? 10 : 20); }
   else { TAUX = null; majTva(); }
   cacherSugg();
+  // Les deux questions du premier écran se tiennent : tant qu'aucun type n'est
+  // choisi, la nature n'a pas lieu d'être affichée. Un nouveau devis repasse
+  // par ici, et c'est ce qui remet le bloc à zéro.
+  majNature();
   majBarre();
 }
 
@@ -2029,7 +2049,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       objet: val('fObjet'),
       delai: val('fDelai'),
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
-      nature: NATURE || 'CHANTIER',
+      nature: NATURE || 'CHANTIER',   // 'ENTRETIEN' | 'CHANTIER' | 'REMISE'
       passages: estEntretien() ? PASSAGES : 0,
       notes: val('fNotes'),
       signataire: val('fSignataire'),
@@ -2123,10 +2143,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=43';
+    sc.src = 'visionneuse.js?v=44';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=43';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=44';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };

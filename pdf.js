@@ -190,6 +190,24 @@ var PDF = (function () {
     doc.text(dateLongue(devis.date), R, y, { align: 'right' });
     y += 4;
 
+    /* La nature du devis, en toutes lettres. Une remise en état et un nettoyage
+       de fin de chantier ne recouvrent pas le même travail, et le client ne le
+       devinait pas : seules les lignes le disaient. Un devis d'avant la nature
+       n'en porte pas — on n'écrit alors rien plutôt que de lui en prêter une. */
+    var natD = String(devis.nature || '').toUpperCase().trim();
+    var nomNature = natD === 'ENTRETIEN' ? 'Entretien des locaux'
+                  : natD === 'REMISE'    ? 'Remise en état'
+                  : natD === 'CHANTIER'  ? 'Nettoyage de fin de chantier' : '';
+    if (nomNature) {
+      var nbP = Math.round(Number(devis.passages) || 0);
+      if (natD === 'ENTRETIEN' && nbP > 0) {
+        nomNature += ' \u2014 ' + nbP + ' passage' + (nbP > 1 ? 's' : '') + ' par mois';
+      }
+      police('normal', 9, [55, 65, 81]);
+      doc.text('Objet : ' + nomNature, M + 4, y + 3.4);
+      y += 5;
+    }
+
     /* ---------------- tableau ---------------- */
     var BAS_UTILE = 246;          // au-delà, on passe à la page suivante
 

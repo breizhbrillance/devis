@@ -343,10 +343,10 @@
       <span>Chez lui, à son domicile.</span>
     </button>
 
-    <!-- La nature ne se pose que pour un professionnel : chez un particulier,
-         c'est toujours une intervention. Elle appartient au devis, pas aux
-         prestations — le même lavage de sols est ponctuel en fin de chantier
-         et mensuel en entretien. -->
+    <!-- La nature appartient au devis, pas aux prestations — le même lavage de
+         sols est ponctuel en fin de chantier et mensuel en entretien. Les trois
+         natures sont offertes au professionnel ; un particulier n'a pas de
+         locaux à entretenir, il ne voit donc que les deux interventions. -->
     <div id="blocNature" class="hide">
       <h2 style="margin:20px 0 10px">De quoi s'agit-il ?</h2>
       <button class="choix" id="chENT" onclick="choisirNature('ENTRETIEN')">
@@ -355,7 +355,11 @@
       </button>
       <button class="choix" id="chCHA" onclick="choisirNature('CHANTIER')">
         <b>Nettoyage de fin de chantier</b>
-        <span>Une intervention, facturée une fois.</span>
+        <span>Après travaux, avant la livraison. Une intervention, facturée une fois.</span>
+      </button>
+      <button class="choix" id="chREM" onclick="choisirNature('REMISE')">
+        <b>Remise en état</b>
+        <span>Un local ou un logement à reprendre à fond. Une intervention, facturée une fois.</span>
       </button>
       <div id="blocFreq" class="hide">
         <label>Passages par mois</label>
@@ -753,11 +757,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=43"></script>
-<script src="jspdf.umd.min.js?v=43"></script>
-<script src="police.js?v=43"></script>
-<script src="logo.js?v=43"></script>
-<script src="pdf.js?v=43"></script>
-<script src="app.js?v=43"></script>
+<script src="config.js?v=44"></script>
+<script src="jspdf.umd.min.js?v=44"></script>
+<script src="police.js?v=44"></script>
+<script src="logo.js?v=44"></script>
+<script src="pdf.js?v=44"></script>
+<script src="app.js?v=44"></script>
 </body>
 </html>
