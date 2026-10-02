@@ -19,7 +19,7 @@ const ICI = path.dirname(fileURLToPath(import.meta.url));
 const CLASSEUR = ['tgs', 'tsigne', 'ttarif', 'tpresta', 'tadmin', 'tdate', 'tcontrat'];
 const APPLI = ['tco', 'tchamps', 'tv', 'tnote', 'verif24', 'tplafond', 'tprix',
                'tclavier', 'tagent', 'tsign', 'tsign2', 'tvue', 'tadmapp',
-               'tliste', 'tpdf39', 'tnature'];
+               'tliste', 'tpdf39', 'tnature', 'tcatnat'];
 
 const arg = (process.argv[2] || '').toLowerCase();
 let suites;

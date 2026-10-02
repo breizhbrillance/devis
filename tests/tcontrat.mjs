@@ -51,7 +51,16 @@ creer('JOURNAL', [['HORODATAGE','MOMENT','COMMERCIAL','ACTION','DETAIL','NUMERO'
 creer('CHANTIERS', [['ID','NUMERO','CLIENT','ADRESSE','CP','VILLE','ACCES','DATE','HEURE',
  'PRESTATAIRE','STATUT','ARRIVEE','DEPART','MINUTES','PRESTATIONS_FAITES','SIGNALEMENT',
  'PHOTOS','NOTE','CREE_LE']]);
-creer('CATALOGUE', [['CATEGORIE','DESIGNATION','DETAIL','UNITE','PU_HT','TVA','TYPE','ACTIF','REFERENCE']]);
+creer('CATALOGUE', [
+ ['CATEGORIE','DESIGNATION','DETAIL','UNITE','PU_HT','TVA','TYPE','ACTIF','REFERENCE','NATURES'],
+ ['Sols','Lavage des sols','','m2',1.2,10,'PONCTUEL','OUI','REF-0001',''],
+ ['Sols','Décapage au décapant laitance','','m2',0.5,10,'PONCTUEL','OUI','REF-0002','CHANTIER'],
+ ['Sols','Nettoyage vapeur des sols','','m2',0.5,10,'PONCTUEL','OUI','REF-0003','REMISE'],
+ ['Sols','Passage de courtoisie','','forfait',12,10,'PONCTUEL','OUI','REF-0004','ENTRETIEN'],
+ // une colonne remplie à la main : deux natures, séparateurs mélangés, minuscules
+ ['Sols','Balayage mécanisé','','m2',0.3,10,'PONCTUEL','OUI','REF-0005','chantier ; remise'],
+ // et une saisie fautive : rien de reconnu, donc partout
+ ['Sols','Dépoussiérage','','m2',0.1,10,'PONCTUEL','OUI','REF-0006','n\'importe quoi']]);
 
 const g = charger(CODE_GS);
 const compte = (num) => lire('CHANTIERS').slice(1).filter(r => String(r[1]) === num).length;
@@ -105,6 +114,27 @@ T('rejouer la génération ne double rien', compte('DEV-A') === 6, compte('DEV-A
 T('le réglage par défaut ne sert plus quand le devis dit combien',
   compte('DEV-A') !== 4 && compte('DEV-C') !== 4,
   {A: compte('DEV-A'), C: compte('DEV-C')});
+
+/* ---------- la colonne NATURES du catalogue ---------- */
+const cat = g.lireCatalogue_();
+const nat = (ref) => (cat.find(x => x.reference === ref) || {}).natures;
+T('une prestation sans mention se vend partout',
+  Array.isArray(nat('REF-0001')) && nat('REF-0001').length === 0, nat('REF-0001'));
+T('le décapage est réservé à la fin de chantier',
+  String(nat('REF-0002')) === 'CHANTIER', nat('REF-0002'));
+T('le nettoyage vapeur à la remise en état',
+  String(nat('REF-0003')) === 'REMISE', nat('REF-0003'));
+T('et le passage de courtoisie à l\'entretien',
+  String(nat('REF-0004')) === 'ENTRETIEN', nat('REF-0004'));
+T('deux natures, séparateurs et casse mélangés, sont comprises',
+  String(nat('REF-0005')) === 'CHANTIER,REMISE', nat('REF-0005'));
+T('une saisie fautive ne restreint rien',
+  Array.isArray(nat('REF-0006')) && nat('REF-0006').length === 0, nat('REF-0006'));
+T('un doublon ne compte qu\'une fois',
+  String(g.naturesCatalogue_('REMISE, remise')) === 'REMISE',
+  g.naturesCatalogue_('REMISE, remise'));
+T('une colonne vide ne restreint rien',
+  g.naturesCatalogue_('').length === 0 && g.naturesCatalogue_(null).length === 0);
 
 console.log('\n=== NATURE DU DEVIS (classeur) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));

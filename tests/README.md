@@ -60,6 +60,7 @@ faut jamais en mettre.
 | `tpresta` | les salariés : planning, pointage, ce qui leur est interdit |
 | `tadmin` | l'espace d'administration : qui est qui, ce qu'il voit, ce qu'il peut poser |
 | `tdate` | les dates à l'heure du classeur, pas à celle de Greenwich |
+| `tcontrat` | la nature du devis commande le nombre de chantiers, et la colonne NATURES |
 
 **L'application** — un vrai navigateur, taille d'un téléphone.
 
@@ -78,6 +79,8 @@ faut jamais en mettre.
 | `tvue` | la visionneuse de PDF et l'impression |
 | `tadmapp` | l'espace d'administration côté écran, couleur comprise |
 | `tliste` | la liste fixe des prestations et la remise unique |
+| `tnature` | les trois natures de devis, la mensualisation, l'objet imprimé |
+| `tcatnat` | le catalogue filtré par la nature du devis |
 | `tpdf39` | le devis imprimé, lu en extrayant le texte du PDF produit |
 
 ## La règle

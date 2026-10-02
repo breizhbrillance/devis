@@ -5,6 +5,12 @@ const DIR=APPLI;
 export const recu=[];
 // ok | refus | trop | erreur500 | html | panne | lent
 export const mode={ co:'ok' };
+
+/* Prestations ajoutées au catalogue pour une suite précise. Le banc partage ce
+   faux bureau : on ne touche donc pas au catalogue commun, qui sert de repère
+   de comptage à plusieurs suites. Une suite pousse ici ce dont elle a besoin
+   avant d'appeler lancer(). */
+export const catalogueSup=[];
 const MIME={'.html':'text/html','.js':'application/javascript','.json':'application/json',
             '.webmanifest':'application/manifest+json','.png':'image/png'};
 const CFG={ maj:Date.now(),
@@ -36,7 +42,8 @@ export function lancer(port){
       if(mode.co==='refus') return rep({ok:false,refus:true,erreur:'Nom ou code incorrect'});
       if(mode.co==='trop')  return rep({ok:false,refus:true,erreur:"Trop d'essais. Réessaie dans un quart d'heure."});
       if(mode.co==='lent')  await new Promise(x=>setTimeout(x,3000));
-      return rep({ok:true,nom:'Simon LG',config:CFG});
+      return rep({ok:true,nom:'Simon LG',
+                   config:{...CFG, catalogue:[...CFG.catalogue, ...catalogueSup]}});
     }); return;
   }
   if(q.url.startsWith('/config.js')){
