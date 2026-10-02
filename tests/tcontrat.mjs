@@ -27,7 +27,11 @@ creer('DEVIS', [EN_D,
   // et un autre, sans rien du tout : une intervention
   L({NUMERO:'DEV-D', DATE:new Date(), COMMERCIAL:'SIMON LG', CLIENT:'ANCIEN PONCTUEL',
      ADRESSE:'4 rue', CP:'56000', VILLE:'VANNES', TOTAL_HT:200, TOTAL_TTC:240,
-     STATUT:'SIGNE', SIGNE:'OUI'})]);
+     STATUT:'SIGNE', SIGNE:'OUI'}),
+  // une remise en état : une intervention elle aussi, même si elle est lourde
+  L({NUMERO:'DEV-E', DATE:new Date(), COMMERCIAL:'SIMON LG', CLIENT:'SYNDIC DU PORT',
+     ADRESSE:'2 quai', CP:'56000', VILLE:'VANNES', TOTAL_HT:900, TOTAL_TTC:1080,
+     STATUT:'SIGNE', SIGNE:'OUI', NATURE:'REMISE'})]);
 
 const EN_L = ['NUMERO','ORDRE','CATEGORIE','REFERENCE','DESIGNATION','DETAIL','QTE','UNITE',
  'PU_HT','REMISE_PCT','TYPE','TVA','TOTAL_HT'];
@@ -35,7 +39,8 @@ creer('LIGNES', [EN_L,
  ['DEV-A',1,'Sols','REF-1','Lavage des sols','',100,'m2',1.2,0,'PONCTUEL',20,120],
  ['DEV-B',1,'Vitrerie','REF-2','Nettoyage de vitres','',120,'m2',2.5,0,'PONCTUEL',20,300],
  ['DEV-C',1,'Bureaux','REF-3','Entretien de bureaux','',100,'m2/mois',1.2,0,'MENSUEL',20,120],
- ['DEV-D',1,'Vitrerie','REF-2','Nettoyage de vitres','',80,'m2',2.5,0,'PONCTUEL',20,200]]);
+ ['DEV-D',1,'Vitrerie','REF-2','Nettoyage de vitres','',80,'m2',2.5,0,'PONCTUEL',20,200],
+ ['DEV-E',1,'Sols','REF-1','Lavage des sols','',750,'m2',1.2,0,'PONCTUEL',20,900]]);
 
 creer('COMMERCIAUX', [['NOM','EMAIL','CODE','ACTIF'], ['SIMON LG','s@bb.fr','ab1!','OUI']]);
 creer('PRESTATAIRES', [['NOM','EMAIL','CODE','ACTIF','TELEPHONE']]);
@@ -66,6 +71,24 @@ T('et tous à planifier',
 /* ---------- une fin de chantier ---------- */
 g.genererChantiers_('DEV-B');
 T('une fin de chantier n\'en crée qu\'un', compte('DEV-B') === 1, compte('DEV-B'));
+
+/* ---------- une remise en état ---------- */
+g.genererChantiers_('DEV-E');
+T('une remise en état n\'en crée qu\'un', compte('DEV-E') === 1, compte('DEV-E'));
+T('elle n\'est pas prise pour un contrat',
+  lire('CHANTIERS').slice(1).filter(r => String(r[1]) === 'DEV-E').length === 1);
+
+/* ---------- la nature écrite par le serveur ---------- */
+T('le serveur retient les trois natures',
+  g.natureDevis_('ENTRETIEN') === 'ENTRETIEN' &&
+  g.natureDevis_('REMISE') === 'REMISE' &&
+  g.natureDevis_('CHANTIER') === 'CHANTIER',
+  [g.natureDevis_('ENTRETIEN'), g.natureDevis_('REMISE'), g.natureDevis_('CHANTIER')]);
+T('une nature inconnue devient une intervention unique',
+  g.natureDevis_('') === 'CHANTIER' && g.natureDevis_('n\'importe quoi') === 'CHANTIER');
+T('la casse et les espaces ne la trompent pas',
+  g.natureDevis_(' remise ') === 'REMISE' && g.natureDevis_('Remise en etat') === 'REMISE',
+  [g.natureDevis_(' remise '), g.natureDevis_('Remise en etat')]);
 
 /* ---------- la règle d'avant, pour les devis déjà signés ---------- */
 g.genererChantiers_('DEV-C');
