@@ -407,6 +407,8 @@ var REGLAGES_DEFAUT_ = [
    'Majoration en % quand le commercial déclare le site « sale » — 0 pour retirer le choix'],
   ['majoration_tres_sale', '30',
    'Majoration en % quand le commercial déclare le site « très sale » — 0 pour retirer le choix'],
+  ['banniere_url', 'https://breizhbrillance.github.io/devis/banniere.jpg',
+   'Image placée en bas de tous les courriels envoyés par l\'appli — vide : aucune bannière'],
   ['banque_nom', 'CMB Saint Avé', 'Coordonnées bancaires imprimées sur le devis'],
   ['banque_iban', 'FR76 1558 9569 3900 1258 9684 096', ''],
   ['banque_bic', 'CMBRFR2BXXX', ''],
@@ -819,22 +821,22 @@ function enregistrer_(d, com) {
     if (com.email) copie.push(com.email);
     if (reg.email_copie) copie.push(String(reg.email_copie));
     if (d.envoyerClient && c.email) {
-      MailApp.sendEmail({
+      envoyerMail_({
         to: c.email, cc: copie.join(','),
         subject: 'Devis ' + devis.numero + ' — ' + (reg.societe_nom || ''),
         name: String(reg.societe_nom || 'Devis'),
         replyTo: com.email || String(reg.societe_email || ''),
         htmlBody: corpsMail_(devis, reg), attachments: pj
-      });
+      }, reg);
     } else if (copie.length) {
-      MailApp.sendEmail({
+      envoyerMail_({
         to: copie.join(','),
         subject: 'Devis ' + devis.numero + ' — ' + (c.societe || c.contact || ''),
         name: String(reg.societe_nom || 'Devis'),
         htmlBody: 'Devis enregistré par ' + devis.commercial + '.<br>Montant : ' +
                   eur_(t.ttc) + ' TTC.<br>' + (lienPdf ? '<a href="' + lienPdf + '">Ouvrir le PDF</a>' : ''),
         attachments: pj
-      });
+      }, reg);
     }
   } catch (eMail) { /* un mail raté ne doit pas faire échouer la synchro */ }
 
@@ -1238,7 +1240,7 @@ function poserPlanning_(numero, qui, appareil) {
     'jamais une date ou un nom que tu as posés.\n' +
     SpreadsheetApp.getActive().getUrl();
   try {
-    MailApp.sendEmail(dest, 'Planning — devis ' + numero, corps);
+    envoyerMail_({ to: dest, subject: 'Planning — devis ' + numero, body: corps }, reg);
   } catch (e) { /* sans importance : le classeur reste la source */ }
   return bilan;
 }
@@ -1936,7 +1938,7 @@ function annulerChantiers_(numero, motif, qui, appareil) {
       }).join('\n') +
       '\n\nLe salarié ne les verra plus sur son téléphone à sa prochaine connexion : ' +
       'préviens-le si la date est proche.\n' + SpreadsheetApp.getActive().getUrl();
-    try { MailApp.sendEmail(dest, 'Planning — devis ' + numero + ' annulé', corps); }
+    try { envoyerMail_({ to: dest, subject: 'Planning — devis ' + numero + ' annulé', body: corps }, reg); }
     catch (e) { /* le classeur reste la source */ }
   }
   return annules;
@@ -2019,7 +2021,7 @@ function signalerConflits_(reg) {
     }).join('\n') +
     '\n\nL\'appli ne déplace pas un rendez-vous déjà pris : change la date ou le salarié ' +
     'dans l\'onglet ' + SH.CHANTIERS + '.\n' + SpreadsheetApp.getActive().getUrl();
-  try { MailApp.sendEmail(dest, 'Planning — ' + c.length + ' intervention(s) à replacer', corps); }
+  try { envoyerMail_({ to: dest, subject: 'Planning — ' + c.length + ' intervention(s) à replacer', body: corps }, reg); }
   catch (e) {}
   return c.length;
 }
@@ -2672,6 +2674,47 @@ function eur_(n) {
   return v[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ',' + v[1] + ' €';
 }
 
+/* ====================== LES COURRIELS ======================
+   Tout courriel de l'appli passe par ici, et par ici seulement : c'est ce qui
+   garantit que la bannière de la maison est en bas de chacun, sans exception.
+   Un envoi direct par MailApp ailleurs dans ce fichier est une faute. */
+
+/* Un texte brut rendu lisible en HTML : caractères spéciaux neutralisés, sauts
+   de ligne gardés, adresses web cliquables. */
+function texteEnHtml_(t) {
+  var h = String(t === null || t === undefined ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  h = h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>');
+  return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#1f2937">' +
+         h.replace(/\r?\n/g, '<br>') + '</div>';
+}
+
+/* La bannière, ou rien : une adresse absente ou qui n'est pas en https ne
+   produit aucune image, plutôt qu'un cadre cassé en bas du courriel. */
+function banniereHtml_(reg) {
+  var url = String((reg && reg.banniere_url) || '').trim();
+  if (!/^https:\/\/[^\s"'<>]+$/.test(url)) return '';
+  var alt = String((reg && reg.societe_nom) || '').replace(/[&<>"]/g, '');
+  return '<br><br><img src="' + url + '" alt="' + alt + '" width="600" ' +
+         'style="display:block;width:100%;max-width:600px;height:auto;border:0">';
+}
+
+/**
+ * Envoie un courriel avec la bannière en bas.
+ * m : { to, subject, body (texte) et/ou htmlBody, cc, name, replyTo, attachments }.
+ * Le texte brut, quand il existe, part aussi : une messagerie qui n'affiche pas
+ * le HTML garde un courriel lisible.
+ */
+function envoyerMail_(m, reg) {
+  reg = reg || lireReglages_();
+  var o = {};
+  for (var k in m) { if (m.hasOwnProperty(k) && m[k] !== undefined) o[k] = m[k]; }
+  var html = (m.htmlBody !== undefined && m.htmlBody !== null)
+    ? String(m.htmlBody) : texteEnHtml_(m.body);
+  o.htmlBody = html + banniereHtml_(reg);
+  MailApp.sendEmail(o);
+}
+
 function corpsMail_(devis, reg) {
   var d = new Date(devis.validite);
   var fr = ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear();
@@ -3065,7 +3108,7 @@ function automateQuotidien() {
     corps += 'Tout se règle depuis « Mes devis » dans l\'application.\n\n' +
              (reg.societe_nom || '');
     try {
-      MailApp.sendEmail(c.email, 'Tes devis à suivre — ' + n + ' point' + (n > 1 ? 's' : ''), corps);
+      envoyerMail_({ to: c.email, subject: 'Tes devis à suivre — ' + n + ' point' + (n > 1 ? 's' : ''), body: corps }, reg);
       envoyes++;
     } catch (e) { /* une adresse invalide ne doit pas arrêter les autres */ }
   });
@@ -3113,7 +3156,7 @@ function envoyerRecap_(reg, aFacturer) {
     'Détail par mois et motifs de refus : onglet « ' + SH.BORD + ' ».\n' +
     SpreadsheetApp.getActive().getUrl();
   try {
-    MailApp.sendEmail(dest, 'Devis — récapitulatif de la semaine', corps);
+    envoyerMail_({ to: dest, subject: 'Devis — récapitulatif de la semaine', body: corps }, reg);
   } catch (e) { /* sans importance : les onglets restent la source */ }
 }
 
