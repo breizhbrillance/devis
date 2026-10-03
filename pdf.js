@@ -211,8 +211,11 @@ var PDF = (function () {
     /* ---------------- tableau ---------------- */
     var BAS_UTILE = 246;          // au-delà, on passe à la page suivante
 
+    /* La ligne de titres du tableau (Référence, Désignation…) : bandeau au bleu
+       de la marque, texte blanc — la même teinte que le cadre du total. */
     function enTete(yy) {
-      police('bold', 7.2, [55, 65, 81]);
+      fond(MARQUE); doc.rect(M, yy, R - M, 6.4, 'F');
+      police('bold', 7.2, [255, 255, 255]);
       doc.text('Référence', COL.ref.g, yy + 4.4);
       doc.text('Désignation', COL.des.g, yy + 4.4);
       doc.text('Quantité', COL.qte.d, yy + 4.4, { align: 'right' });
@@ -220,7 +223,6 @@ var PDF = (function () {
       doc.text('PU Vente', COL.pu.d, yy + 4.4, { align: 'right' });
       doc.text('TVA', COL.tva.d, yy + 4.4, { align: 'right' });
       doc.text('Montant HT', COL.ht.d, yy + 4.4, { align: 'right' });
-      ligneH(yy + 6.4);
       return yy + 6.8;
     }
 

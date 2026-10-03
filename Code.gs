@@ -202,8 +202,8 @@ var ENTETES_DEVIS_ = [
   'DATE_SOUHAITEE',
   'MOTIF_REFUS', 'RELANCE_LE', 'DATE_STATUT', 'PREUVE_SIGNATURE', 'NOTE_COMMERCIAL',
   'CONTROLE_TARIF', 'PASSAGES_MOIS', 'NATURE',
-  /* NORMAL, SALE ou TRES_SALE : ce que le commercial a constaté sur place, et
-     qui justifie la ligne de majoration du devis. */
+  /* TRES_SALE ou NORMAL : ce que le commercial a coché sur place, et qui
+     justifie la ligne de majoration du devis. */
   'ETAT_SITE'
 ];
 
@@ -403,10 +403,8 @@ var REGLAGES_DEFAUT_ = [
    'Temps de route compté, en minutes, quand l\'itinéraire ne peut pas être calculé (adresse manquante, Google Maps muet)'],
   ['travail_jours_feries', 'NON',
    'OUI : l\'appli pose aussi des chantiers les jours fériés'],
-  ['majoration_sale', '15',
-   'Majoration en % quand le commercial déclare le site « sale » — 0 pour retirer le choix'],
   ['majoration_tres_sale', '30',
-   'Majoration en % quand le commercial déclare le site « très sale » — 0 pour retirer le choix'],
+   'Majoration en % quand le commercial coche « site très sale » — 0 pour retirer la coche'],
   ['banniere_url', 'https://breizhbrillance.github.io/devis/banniere.jpg',
    'Image placée en bas de tous les courriels envoyés par l\'appli — vide : aucune bannière'],
   ['banque_nom', 'CMB Saint Avé', 'Coordonnées bancaires imprimées sur le devis'],
@@ -2583,10 +2581,10 @@ function pourcentReglage_(v) {
   return n > 100 ? 100 : n;
 }
 
-/* NORMAL, SALE ou TRES_SALE ; tout le reste vaut NORMAL. */
+/* TRES_SALE ou NORMAL ; tout le reste — y compris l'ancien « SALE » — vaut NORMAL. */
 function etatSite_(v) {
   var e = String(v || '').toUpperCase().trim().replace(/[ -]+/g, '_');
-  return (e === 'SALE' || e === 'TRES_SALE') ? e : 'NORMAL';
+  return e === 'TRES_SALE' ? e : 'NORMAL';
 }
 
 function controlerTarifs_(devis, reg) {
@@ -2604,14 +2602,16 @@ function controlerTarifs_(devis, reg) {
   if (max > 100) max = 100;
 
   /* La majoration pour état des lieux n'est pas au catalogue : c'est un
-     pourcentage du reste du devis. On la recalcule ici, avec les deux taux du
-     classeur, et l'on signale tout montant qui ne tombe sur aucun des deux. */
+     pourcentage du reste du devis. On la recalcule ici, avec le taux du
+     classeur, et l'on signale tout montant qui ne tombe pas dessus. Il n'y a
+     qu'un taux — « site très sale » — depuis que Simon a retiré le palier
+     intermédiaire : un ancien réglage majoration_sale est ignoré. */
   var base = 0;
   lignes.forEach(function (l) {
     if (String(l.reference || '').trim() === REF_MAJORATION_) return;
     base += Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) * 100) / 100;
   });
-  var tauxPermis = [pourcentReglage_(reg.majoration_sale), pourcentReglage_(reg.majoration_tres_sale)]
+  var tauxPermis = [pourcentReglage_(reg.majoration_tres_sale)]
     .filter(function (x) { return x > 0; });
   var majorations = 0;
 
@@ -2631,8 +2631,8 @@ function controlerTarifs_(devis, reg) {
       else if (natureDevis_(devis.nature) === 'ENTRETIEN') {
         ecarts.push(rang + ' : majoration sur un contrat d\'entretien');
       } else if (!juste) {
-        ecarts.push(rang + ' : majoration de ' + montant + ' € qui ne correspond à aucun taux du classeur (' +
-                    (tauxPermis.length ? tauxPermis.join(' % ou ') + ' %' : 'aucun') + ' de ' + base + ' €)');
+        ecarts.push(rang + ' : majoration de ' + montant + ' € qui ne correspond pas au taux du classeur (' +
+                    (tauxPermis.length ? tauxPermis[0] + ' %' : 'aucun') + ' de ' + base + ' €)');
       }
     } else if (!p) {
       ecarts.push(rang + ' : hors catalogue');

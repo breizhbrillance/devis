@@ -439,16 +439,14 @@
       <div class="mini">Le devis sera mensualisé : prix par passage × nombre de passages.</div>
     </div>
     <!-- Le catalogue ne sait pas dans quel état est le site ; le commercial, si.
-         Il le dit ici, et le devis porte une ligne de majoration à part : les
-         prix des prestations, eux, ne bougent pas. -->
+         Une seule coche : site très sale. Non cochée, rien ne change ; cochée, le
+         devis porte une ligne de majoration à part, et les prix ne bougent pas. -->
     <div class="card hide" id="cEtat">
       <h2>État du site</h2>
-      <div class="row">
-        <button class="bsel" id="etN" onclick="setEtat('NORMAL')">Normal</button>
-        <button class="bsel" id="etS" onclick="setEtat('SALE')">Sale<br><span id="etSp">+15 %</span></button>
-        <button class="bsel" id="etT" onclick="setEtat('TRES_SALE')">Très sale<br><span id="etTp">+30 %</span></button>
-      </div>
-      <div class="mini">La majoration apparaît sur le devis, sur une ligne à part.</div>
+      <button class="bsel" id="etT" aria-pressed="false" onclick="basculerEtat()"
+              style="width:100%">Site très sale &nbsp;·&nbsp; <span id="etTp">+30 %</span></button>
+      <div class="mini">À cocher seulement si le site est très sale : le devis porte alors
+        une ligne de majoration à part.</div>
     </div>
     <div class="card hide" id="cRem">
       <h2>Remise</h2>
@@ -776,11 +774,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=48"></script>
-<script src="jspdf.umd.min.js?v=48"></script>
-<script src="police.js?v=48"></script>
-<script src="logo.js?v=48"></script>
-<script src="pdf.js?v=48"></script>
-<script src="app.js?v=48"></script>
+<script src="config.js?v=49"></script>
+<script src="jspdf.umd.min.js?v=49"></script>
+<script src="police.js?v=49"></script>
+<script src="logo.js?v=49"></script>
+<script src="pdf.js?v=49"></script>
+<script src="app.js?v=49"></script>
 </body>
 </html>

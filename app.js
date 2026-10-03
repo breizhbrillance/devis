@@ -13,7 +13,7 @@ var REMISE = {valeur:0, muet:false};
    lavage de sols se vend une fois en fin de chantier et quatre fois par mois
    en entretien. */
 var NATURE = null;      // 'ENTRETIEN' | 'CHANTIER' | 'REMISE'
-var ETAT = 'NORMAL';    // état du site constaté : 'NORMAL' | 'SALE' | 'TRES_SALE'
+var ETAT = 'NORMAL';    // état du site constaté : 'NORMAL' | 'TRES_SALE'
 var PASSAGES = 0;       // par mois, seulement pour un entretien
 var ETAPE = 1;
 var TYPE = null;           // 'PRO' ou 'PART' — choisi au début de chaque devis
@@ -288,7 +288,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v48';
+var VERSION_APP = 'v49';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1610,11 +1610,12 @@ function ecranRemise(){
 }
 
 /* ====================== ÉTAT DU SITE ======================
-   Un site sale demande plus de temps que le même site propre, et le catalogue
-   ne le sait pas. Plutôt que de laisser retoucher les prix — c'est ce que la
-   grille verrouillée interdit — le commercial dit ce qu'il a vu, et le devis
-   porte une ligne à part, « Majoration pour état des lieux ». Les deux taux
-   viennent du classeur : l'écran propose, le bureau fixe. */
+   Un site très sale demande plus de temps que le même site propre, et le
+   catalogue ne le sait pas. Plutôt que de laisser retoucher les prix — c'est ce
+   que la grille verrouillée interdit — le commercial coche « site très sale »,
+   et le devis porte une ligne à part, « Majoration pour état des lieux ».
+   Une seule option, décidée par Simon : pas de palier intermédiaire, et rien
+   n'est majoré tant qu'elle n'est pas cochée. Le taux vient du classeur. */
 var REF_MAJ = 'MAJ-ETAT';
 function pctReglage(cle){
   var v = (CFG && CFG.reglages) ? CFG.reglages[cle] : null;
@@ -1627,9 +1628,7 @@ function pctReglage(cle){
    celui d'un passage répété, pas d'une remise à niveau. */
 function majorationPct(){
   if(estEntretien()) return 0;
-  if(ETAT === 'SALE') return pctReglage('majoration_sale');
-  if(ETAT === 'TRES_SALE') return pctReglage('majoration_tres_sale');
-  return 0;
+  return ETAT === 'TRES_SALE' ? pctReglage('majoration_tres_sale') : 0;
 }
 /* La ligne de majoration, recalculée à chaque fois à partir des prestations :
    elle n'est jamais rangée dans LIGNES, qui ne contient que du catalogue. */
@@ -1656,28 +1655,28 @@ function sansMajoration(ls){
   return (ls || []).filter(function(l){ return String((l && l.reference) || '') !== REF_MAJ; });
 }
 function setEtat(e){
-  ETAT = (e === 'SALE' || e === 'TRES_SALE') ? e : 'NORMAL';
+  ETAT = (e === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';
   ecranEtat();
   calculer();
 }
-/* Le bloc n'apparaît que s'il y a quelque chose à choisir : un entretien, ou
-   deux taux à zéro dans le classeur, et il disparaît. */
+/* Le bouton est une coche : un appui majore, un second retire la majoration. */
+function basculerEtat(){
+  setEtat(ETAT === 'TRES_SALE' ? 'NORMAL' : 'TRES_SALE');
+}
+/* Le bloc n'apparaît que s'il y a quelque chose à cocher : un entretien, ou un
+   taux à zéro dans le classeur, et il disparaît. */
 function ecranEtat(){
   var c = $('cEtat');
   if(!c) return;
-  var s = pctReglage('majoration_sale'), t = pctReglage('majoration_tres_sale');
-  var visible = !estEntretien() && (s > 0 || t > 0);
+  var t = pctReglage('majoration_tres_sale');
+  var visible = !estEntretien() && t > 0;
   c.classList.toggle('hide', !visible);
+  // Un taux retiré du classeur ne doit pas rester coché dans un brouillon.
+  if(ETAT !== 'TRES_SALE' || t <= 0) ETAT = 'NORMAL';
   if(!visible) return;
-  $('etS').classList.toggle('hide', s <= 0);
-  $('etT').classList.toggle('hide', t <= 0);
-  // Un taux retiré du classeur ne doit pas rester choisi dans un brouillon.
-  if((ETAT === 'SALE' && s <= 0) || (ETAT === 'TRES_SALE' && t <= 0)) ETAT = 'NORMAL';
-  $('etSp').textContent = '+' + nb(s) + ' %';
   $('etTp').textContent = '+' + nb(t) + ' %';
-  $('etN').classList.toggle('on', ETAT === 'NORMAL');
-  $('etS').classList.toggle('on', ETAT === 'SALE');
   $('etT').classList.toggle('on', ETAT === 'TRES_SALE');
+  $('etT').setAttribute('aria-pressed', ETAT === 'TRES_SALE' ? 'true' : 'false');
 }
 
 /* ====================== MONTANTS ====================== */
@@ -2078,7 +2077,7 @@ function sauverBrouillon(){
 }
 function restaurer(b){
   LIGNES = sansMajoration(b.lignes);
-  ETAT = (b.etat === 'SALE' || b.etat === 'TRES_SALE') ? b.etat : 'NORMAL';
+  ETAT = (b.etat === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';   // l'ancien palier « sale » n'existe plus
   NATURE = b.nature || null;
   PASSAGES = Number(b.passages) || 0;
   REMISE = {valeur:0, muet:false};
@@ -2280,10 +2279,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=48';
+    sc.src = 'visionneuse.js?v=49';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=48';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=49';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2742,7 +2741,7 @@ function dupliquer(id, btn){
     LIGNES = sansMajoration(d.lignes).map(function(l){
       var o = {}; for(var k in l){ if(l.hasOwnProperty(k)) o[k] = l[k]; } return o;
     });
-    ETAT = (d.etatSite === 'SALE' || d.etatSite === 'TRES_SALE') ? d.etatSite : 'NORMAL';
+    ETAT = (d.etatSite === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';
     $('fObjet').value = d.objet || '';
     // La date d'un ancien devis n'a plus cours : on la laisse à choisir.
     $('fDate').value = '';
