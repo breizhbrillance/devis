@@ -541,7 +541,10 @@ var PDF = (function () {
     var src = String((devis.client || {}).societe || (devis.client || {}).contact || 'client');
     var cl = src.normalize ? src.normalize('NFD').replace(/[̀-ͯ]/g, '') : src;
     cl = cl.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 40);
-    return 'Devis-' + devis.numero + (cl ? '-' + cl : '') + '.pdf';
+    /* Le numéro porte des barres (DEV-26-11/ POSK/ SLG-03) : dans un nom de
+       fichier elles passeraient pour des dossiers. */
+    var num = String(devis.numero || '').replace(/\s*\/\s*/g, '-').replace(/\s+/g, '');
+    return 'Devis-' + num + (cl ? '-' + cl : '') + '.pdf';
   }
 
   return {

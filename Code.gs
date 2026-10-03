@@ -147,7 +147,7 @@ function initialiser() {
 
   creerOnglet_(ss, SH.REGLAGES, ['CLE', 'VALEUR', 'COMMENTAIRE']);
   creerOnglet_(ss, SH.CATALOGUE, ['CATEGORIE', 'DESIGNATION', 'DETAIL', 'UNITE', 'PU_HT', 'TVA', 'TYPE', 'ACTIF', 'REFERENCE', 'NATURES']);
-  creerOnglet_(ss, SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF']);
+  creerOnglet_(ss, SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES']);
   creerOnglet_(ss, SH.PRESTATAIRES, ENTETES_PRESTATAIRES_);
   creerOnglet_(ss, SH.ADMINS, ENTETES_ADMINS_);
   creerOnglet_(ss, SH.CHANTIERS, ENTETES_CHANTIERS_);
@@ -204,7 +204,12 @@ var ENTETES_DEVIS_ = [
   'CONTROLE_TARIF', 'PASSAGES_MOIS', 'NATURE',
   /* TRES_SALE ou NORMAL : ce que le commercial a coché sur place, et qui
      justifie la ligne de majoration du devis. */
-  'ETAT_SITE'
+  'ETAT_SITE',
+  /* Le numéro que portait le devis avant d'être signé : en signant, il en
+     reçoit un neuf (mois de signature, suffixe / S). C'est par cette colonne
+     qu'on retrouve le devis quand le client rappelle avec le numéro de
+     l'exemplaire qu'il a reçu avant de signer. */
+  'NUMERO_ORIGINE'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -260,7 +265,8 @@ function majStructure_() {
   creerOnglet_(ss, SH.CHANTIERS, ENTETES_CHANTIERS_);
   creerOnglet_(ss, SH.ABSENCES, ENTETES_ABSENCES_);
   [[SH.PRESTATAIRES, ENTETES_PRESTATAIRES_], [SH.CHANTIERS, ENTETES_CHANTIERS_],
-   [SH.ADMINS, ENTETES_ADMINS_]]
+   [SH.ADMINS, ENTETES_ADMINS_],
+   [SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES']]]
     .forEach(function (o) {
       var sh2 = ss.getSheetByName(o[0]);
       if (!sh2 || sh2.getLastColumn() === 0) return;
@@ -534,7 +540,7 @@ function tropDEssais_(nom) {
 }
 
 /** Ce que l'application reçoit une fois le commercial reconnu. */
-function config_() {
+function config_(com) {
   var reg = lireReglages_();
   delete reg.sel_codes;
   delete reg.dossier_racine_id;
@@ -543,8 +549,11 @@ function config_() {
   return {
     maj: new Date().toISOString(),
     role: 'COMMERCIAL',
-    compteurs: compteurs_(),    // dernier numéro par commercial : évite qu'un
-    reglages: reg,              // téléphone réinstallé reparte à 0001
+    /* Les initiales que porteront les numéros de ce commercial : le téléphone
+       numérote hors connexion, il ne peut pas les demander au moment venu. */
+    initiales: (com && com.initiales) || '',
+    compteurs: compteurs_(),    // dernier rang par série : évite qu'un
+    reglages: reg,              // téléphone réinstallé reparte au rang 01
     catalogue: lireCatalogue_()
   };
 }
@@ -589,7 +598,7 @@ function doPost(e) {
     if (d.action === 'connexion') {
       tracerServeur_(com.nom, 'CONNEXION VALIDEE', com.role, '', d.appareil || '');
       return reponse_({ ok: true, nom: com.nom, role: com.role,
-                        config: configPour_(com.role) });
+                        config: configPour_(com.role, com) });
     }
     if (d.action === 'planning') {
       return reponse_({ ok: true, chantiers: planningDe_(com.nom) });
@@ -604,7 +613,7 @@ function doPost(e) {
       return reponse_({ ok: true, recus: evs.length });
     }
     if (d.action === 'config') {
-      return reponse_({ ok: true, config: configPour_(com.role) });
+      return reponse_({ ok: true, config: configPour_(com.role, com) });
     }
     if (d.action === 'tableau') return reponse_(tableauAdmin_());
     if (d.action === 'planifier') return reponse_(planifierChantier_(d, com));
@@ -621,18 +630,179 @@ function doPost(e) {
   }
 }
 
-/** Plus grand numéro déjà utilisé, par série (préfixe + année + initiales). */
+/* ====================== LE NUMÉRO D'UN DEVIS ======================
+   Forme décidée par Simon le 3 octobre 2026 :
+
+       devis remis     DEV-26-11/ POSK/ SLG-03
+       devis signé     DEV-26-12/ POSK/ SLG-01/ S
+
+   DEV  préfixe réglable (prefixe_devis)
+   26-11  année et mois : celui de l'ÉTABLISSEMENT sur un devis remis, celui de
+          la SIGNATURE sur un devis signé — le numéro change donc en signant
+   POSK  deux premières et deux dernières lettres du client (raison sociale
+         pour un professionnel, nom pour un particulier)
+   SLG   initiales du commercial
+   03    rang du commercial dans le mois
+   / S   signé
+
+   Le rang est ce qui rend le numéro unique : deux devis du même mois, du même
+   commercial, portent deux rangs différents quel que soit le client. Les
+   lettres du client ne comptent donc pas dans la série qui porte le compteur.
+
+   En signant, le devis reçoit un numéro neuf, pris dans la série signée du
+   mois de signature ; l'ancien reste dans NUMERO_ORIGINE et au journal, pour
+   le retrouver si le client rappelle avec le numéro de son premier exemplaire.
+
+   Les anciens numéros (DEV-2026-SL-0009) ne sont pas touchés : ils ne se
+   lisent pas avec cette forme, et tout ce qui suit les laisse tels quels. */
+
+var NUM_FORME_ = /^(.+)-(\d{2})-(\d{2})\/ ([A-Z]+)\/ ([A-Z]+)-(\d+)(\/ S)?$/;
+
+/** Les morceaux d'un numéro, ou null si ce n'est pas la forme en service. */
+function numeroLire_(numero) {
+  var m = String(numero || '').trim().match(NUM_FORME_);
+  if (!m) return null;
+  return { prefixe: m[1], an: m[2], mois: m[3], client: m[4],
+           initiales: m[5], rang: Number(m[6]), signe: !!m[7] };
+}
+
+/** Le numéro écrit, à partir de ses morceaux. */
+function numeroEcrire_(p) {
+  return p.prefixe + '-' + p.an + '-' + p.mois + '/ ' + p.client + '/ ' +
+         p.initiales + '-' + (p.rang < 10 ? '0' + p.rang : String(p.rang)) +
+         (p.signe ? '/ S' : '');
+}
+
+/** La série qui porte le compteur : ni le client, ni le rang. */
+function numeroSerie_(p) {
+  return p.prefixe + '-' + p.an + '-' + p.mois + '/ ' + p.initiales +
+         (p.signe ? '/ S' : '');
+}
+
+/** Deux premières et deux dernières lettres du client. */
+function lettresClient_(nom) {
+  var s = String(nom || '');
+  if (s.normalize) s = s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  s = s.toUpperCase().replace(/[^A-Z]/g, '');
+  if (!s) return 'XXXX';
+  if (s.length < 4) return (s + 'XXXX').slice(0, 4);
+  return s.slice(0, 2) + s.slice(-2);
+}
+
+/**
+ * Initiales du commercial. Celles de la colonne INITIALES si elle est remplie,
+ * sinon la première lettre de chaque mot de son nom, trois au plus.
+ */
+function initialesDe_(nom, imposees) {
+  var f = String(imposees || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  if (f) return f;
+  var p = String(nom || '').trim().split(/\s+/).map(function (m) { return m.charAt(0); }).join('');
+  return (p.toUpperCase().replace(/[^A-Z]/g, '') || 'XX').slice(0, 3);
+}
+
+/** Un numéro qui ne passe pas dans un nom de fichier : les barres gênent. */
+function numeroFichier_(numero) {
+  return String(numero || '').replace(/\s*\/\s*/g, '-').replace(/\s+/g, '');
+}
+
+/** Plus grand rang déjà utilisé, par série. */
 function compteurs_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.DEVIS);
   var out = {};
   if (!sh || sh.getLastRow() < 2) return out;
   sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().forEach(function (r) {
-    var m = String(r[0]).match(/^(.+)-(\d+)$/);          // tout sauf les 4 derniers chiffres
-    if (!m) return;
-    var serie = m[1], n = Number(m[2]);
-    if (!out[serie] || n > out[serie]) out[serie] = n;
+    var p = numeroLire_(r[0]);
+    if (!p) return;
+    var serie = numeroSerie_(p);
+    if (!out[serie] || p.rang > out[serie]) out[serie] = p.rang;
   });
   return out;
+}
+
+/** Tous les numéros déjà pris dans le classeur. */
+function numerosPris_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.DEVIS);
+  var pris = {};
+  if (!sh || sh.getLastRow() < 2) return pris;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues().forEach(function (r) {
+    var k = String(r[0]).trim();
+    if (k) pris[k] = true;
+  });
+  return pris;
+}
+
+/**
+ * Le numéro que prend un devis en devenant signé : mois de la signature,
+ * série signée, premier rang libre. Le téléphone en propose un (c'est celui
+ * qu'il a imprimé sur le PDF signé) : on le garde s'il est libre et de la
+ * bonne forme, sinon on en attribue un à la suite.
+ */
+function numeroSigne_(client, commercial, quand, propose, pris, reg, reference) {
+  pris = pris || numerosPris_();
+  var p = numeroLire_(propose);
+  if (p && p.signe && !pris[String(propose).trim()]) return String(propose).trim();
+
+  /* Le numéro que le devis portait déjà dit quel préfixe et quelles initiales
+     sont les siens : ils valent mieux que ce qu'on devinerait du nom. */
+  var ref = numeroLire_(reference) || p;
+  var d = quand ? new Date(quand) : new Date();
+  var base = {
+    prefixe: ref ? ref.prefixe : String((reg || {}).prefixe_devis || 'DEV'),
+    an: String(d.getFullYear()).slice(-2),
+    mois: ('0' + (d.getMonth() + 1)).slice(-2),
+    client: lettresClient_(client),
+    initiales: ref ? ref.initiales : initialesDe_(commercial),
+    rang: 1, signe: true
+  };
+  while (pris[numeroEcrire_(base)]) base.rang++;
+  return numeroEcrire_(base);
+}
+
+/**
+ * Le devis change de numéro. Tout ce qui le désigne suit : ses lignes, ses
+ * chantiers. Le journal garde les deux numéros, et NUMERO_ORIGINE dit d'où il
+ * vient — c'est par là qu'on retrouve le devis si le client rappelle avec le
+ * numéro de son premier exemplaire.
+ */
+function renommerDevis_(ancien, nouveau, origine, qui, appareil) {
+  ancien = String(ancien || '').trim();
+  nouveau = String(nouveau || '').trim();
+  if (!ancien || !nouveau || ancien === nouveau) return false;
+  var ss = SpreadsheetApp.getActive();
+
+  var shD = ss.getSheetByName(SH.DEVIS);
+  if (!shD || shD.getLastRow() < 2) return false;
+  var en = shD.getRange(1, 1, 1, shD.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cNum = en.indexOf('NUMERO'), cOri = en.indexOf('NUMERO_ORIGINE');
+  if (cNum < 0) return false;
+  var nums = shD.getRange(2, cNum + 1, shD.getLastRow() - 1, 1).getValues();
+  var trouve = false;
+  for (var i = 0; i < nums.length; i++) {
+    if (String(nums[i][0]).trim() !== ancien) continue;
+    shD.getRange(i + 2, cNum + 1).setValue(nouveau);
+    if (cOri >= 0) shD.getRange(i + 2, cOri + 1).setValue(origine === undefined ? ancien : origine);
+    trouve = true;
+    break;
+  }
+  if (!trouve) return false;
+
+  // Les lignes du devis et ses chantiers portent le numéro : ils suivent.
+  [SH.LIGNES, SH.CHANTIERS].forEach(function (nom) {
+    var sh = ss.getSheetByName(nom);
+    if (!sh || sh.getLastRow() < 2) return;
+    var e = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+      .map(function (x) { return String(x).trim(); });
+    var c = e.indexOf('NUMERO');
+    if (c < 0) return;
+    var v = sh.getRange(2, c + 1, sh.getLastRow() - 1, 1).getValues();
+    for (var k = 0; k < v.length; k++) {
+      if (String(v[k][0]).trim() === ancien) sh.getRange(k + 2, c + 1).setValue(nouveau);
+    }
+  });
+
+  tracerServeur_(qui || 'SYSTEME', 'NUMERO CHANGE', 'ancien ' + ancien, nouveau, appareil || '');
+  return true;
 }
 
 /**
@@ -646,12 +816,29 @@ function compteurs_() {
  */
 function signerDevisRecu_(ligne, col, d, devis, reg, com) {
   var numero = String(ligne[col.NUMERO]);
+  var avant = numero;
+
+  /* En signant, le devis change de numéro : mois de la signature, suffixe / S.
+     Le téléphone a imprimé le sien sur le PDF signé — on le garde s'il est
+     libre, sinon on en donne un à la suite et le téléphone s'alignera. */
+  var quandS = devis.signeLe ? new Date(Number(devis.signeLe)) : new Date();
+  var pAv = numeroLire_(numero);
+  if (pAv && !pAv.signe) {
+    var neuf = numeroSigne_(
+      String(ligne[col.CLIENT] || ''), devis.commercial || (com && com.nom) || '',
+      quandS, devis.numero, numerosPris_(), reg, numero);
+    if (neuf !== numero && renommerDevis_(numero, neuf, avant,
+                                          devis.commercial || (com && com.nom), d.appareil)) {
+      numero = neuf;
+    }
+  }
+
   var ancien = String(col.LIEN_PDF != null ? (ligne[col.LIEN_PDF] || '') : '');
   var lien = ancien;
 
   if (d.pdf) {
     var blob = Utilities.newBlob(Utilities.base64Decode(d.pdf), 'application/pdf',
-      d.nomFichier || ('Devis ' + numero + '.pdf'));
+      d.nomFichier || ('Devis ' + numeroFichier_(numero) + '.pdf'));
     lien = dossierDevis_(reg, new Date(devis.date), devis.commercial)
              .createFile(blob).getUrl();
     // L'ancien fichier ne part à la corbeille qu'une fois le nouveau en place :
@@ -664,14 +851,13 @@ function signerDevisRecu_(ligne, col, d, devis, reg, com) {
     }
   }
 
-  var quand = devis.signeLe ? new Date(Number(devis.signeLe)) : new Date();
   majDevis_(numero, {
     LIEN_PDF: lien,
     PREUVE_SIGNATURE: lien,          // le devis signé est sa propre preuve
     SIGNE: 'OUI',
     SIGNATAIRE: devis.signataire || '',
     STATUT: 'SIGNE',
-    DATE_STATUT: quand
+    DATE_STATUT: quandS
   });
 
   tracerServeur_(devis.commercial || com.nom, 'DEVIS SIGNE RECU',
@@ -691,7 +877,7 @@ function signerDevisRecu_(ligne, col, d, devis, reg, com) {
     tracerServeur_('SYSTEME', 'CHANTIERS ECHEC', String(eC && eC.message || eC), numero, '');
   }
 
-  return { ok: true, signe: true, numero: numero, pdfUrl: lien };
+  return { ok: true, signe: true, numero: numero, numeroOrigine: avant, pdfUrl: lien };
 }
 
 function enregistrer_(d, com) {
@@ -733,15 +919,24 @@ function enregistrer_(d, com) {
     var pris = {};
     lignes.forEach(function (r) { pris[String(r[0])] = true; });
     if (pris[String(devis.numero)]) {
-      var m = String(devis.numero).match(/^(.+)-(\d+)$/);
-      if (m) {
-        var serie = m[1], n = Number(m[2]);
-        while (pris[serie + '-' + ('000' + n).slice(-4)]) n++;
+      var pN = numeroLire_(devis.numero);
+      if (pN) {
+        // On avance le rang jusqu'au premier libre : le mois, le client et la
+        // série du commercial ne bougent pas.
+        while (pris[numeroEcrire_(pN)]) pN.rang++;
         renumerote = devis.numero;
-        devis.numero = serie + '-' + ('000' + n).slice(-4);
+        devis.numero = numeroEcrire_(pN);
       } else {
-        renumerote = devis.numero;
-        devis.numero = devis.numero + '-B';
+        var m = String(devis.numero).match(/^(.+)-(\d+)$/);        // ancienne forme
+        if (m) {
+          var serie = m[1], n = Number(m[2]);
+          while (pris[serie + '-' + ('000' + n).slice(-4)]) n++;
+          renumerote = devis.numero;
+          devis.numero = serie + '-' + ('000' + n).slice(-4);
+        } else {
+          renumerote = devis.numero;
+          devis.numero = devis.numero + '-B';
+        }
       }
     }
   }
@@ -750,7 +945,7 @@ function enregistrer_(d, com) {
   var lienPdf = '', blob = null;
   if (d.pdf) {
     blob = Utilities.newBlob(Utilities.base64Decode(d.pdf), 'application/pdf',
-      d.nomFichier || ('Devis ' + devis.numero + '.pdf'));
+      d.nomFichier || ('Devis ' + numeroFichier_(devis.numero) + '.pdf'));
     lienPdf = dossierDevis_(reg, new Date(devis.date), devis.commercial).createFile(blob).getUrl();
   }
 
@@ -860,7 +1055,7 @@ function enregistrerPhoto_(d) {
 
   var signee = (String(d.type || '') === 'SIGNE');
   var n = Number(d.index) || 1;
-  var nom = 'Devis-' + String(d.numero || 'sans-numero') +
+  var nom = 'Devis-' + (numeroFichier_(d.numero) || 'sans-numero') +
             (signee ? '-signe-' : '-photo-') + ('0' + n).slice(-2) + '.jpg';
 
   // déjà reçue ? (l'appareil peut réessayer après une coupure de réseau)
@@ -894,17 +1089,28 @@ function majDevis_(numero, valeurs) {
     .map(function (x) { return String(x).trim(); });
   var cNum = en.indexOf('NUMERO');
   if (cNum < 0) return false;
+  var cible = String(numero).trim();
   var nums = sh.getRange(2, cNum + 1, sh.getLastRow() - 1, 1).getValues();
+  var ligne = -1;
   for (var i = 0; i < nums.length; i++) {
-    if (String(nums[i][0]).trim() !== String(numero).trim()) continue;
-    for (var k in valeurs) {
-      if (!valeurs.hasOwnProperty(k)) continue;
-      var c = en.indexOf(k);
-      if (c >= 0) sh.getRange(i + 2, c + 1).setValue(valeurs[k]);
-    }
-    return true;
+    if (String(nums[i][0]).trim() === cible) { ligne = i; break; }
   }
-  return false;
+  /* Rien à ce numéro : c'est peut-être celui d'avant la signature, que le
+     téléphone garde tant qu'il n'a pas reçu le nouveau. */
+  var cOri = en.indexOf('NUMERO_ORIGINE');
+  if (ligne < 0 && cOri >= 0) {
+    var oris = sh.getRange(2, cOri + 1, sh.getLastRow() - 1, 1).getValues();
+    for (var j = 0; j < oris.length; j++) {
+      if (String(oris[j][0]).trim() === cible) { ligne = j; break; }
+    }
+  }
+  if (ligne < 0) return false;
+  for (var k in valeurs) {
+    if (!valeurs.hasOwnProperty(k)) continue;
+    var c = en.indexOf(k);
+    if (c >= 0) sh.getRange(ligne + 2, c + 1).setValue(valeurs[k]);
+  }
+  return true;
 }
 
 /**
@@ -935,13 +1141,33 @@ function enregistrerStatut_(d, com) {
   // La note ne s'écrit que si l'envoi en portait une : un résultat transmis
   // seul ne doit pas effacer ce que le commercial avait déjà noté.
   if (d.note !== undefined) v.NOTE_COMMERCIAL = note;
-  /* L'état d'avant : c'est lui qui dit si une « relance » défait une signature. */
-  var statutAvant = '';
-  if (statut) {
-    lireDevis_().forEach(function (x) {
-      if (String(x.NUMERO).trim() === num) statutAvant = String(x.STATUT || '').toUpperCase().trim();
+  /* La ligne telle qu'elle est aujourd'hui : son état dit si une « relance »
+     défait une signature, et ses coordonnées servent au nouveau numéro. */
+  var avant = null, tous = lireDevis_();
+  tous.forEach(function (x) { if (String(x.NUMERO).trim() === num) avant = x; });
+  if (!avant) {
+    /* Le téléphone peut répondre avec le numéro d'avant la signature : c'est
+       celui qu'il a en mémoire s'il n'a pas encore reçu le nouveau. */
+    tous.forEach(function (x) {
+      if (String(x.NUMERO_ORIGINE || '').trim() === num) avant = x;
     });
+    if (avant) num = String(avant.NUMERO).trim();
   }
+  var statutAvant = avant ? String(avant.STATUT || '').toUpperCase().trim() : '';
+  var qui = com ? com.nom : (d.nom || '');
+  var numeroAvant = '';
+
+  /* Signer change le numéro : mois de la signature, suffixe / S. Le devis a
+     été signé sur le papier — aucun PDF neuf n'arrive, celui du client garde
+     donc l'ancien numéro, que NUMERO_ORIGINE conserve. */
+  var pNum = numeroLire_(num);
+  if (statut === 'SIGNE' && statutAvant && statutAvant !== 'SIGNE' && pNum && !pNum.signe) {
+    var neufS = numeroSigne_(avant ? avant.CLIENT : '',
+                             (avant && avant.COMMERCIAL) || qui,
+                             quand, '', numerosPris_(), lireReglages_(), num);
+    if (renommerDevis_(num, neufS, num, qui, d.appareil)) { numeroAvant = num; num = neufS; }
+  }
+
   var trouve = majDevis_(num, v);
 
   tracerServeur_(com ? com.nom : (d.nom || ''),
@@ -973,12 +1199,23 @@ function enregistrerStatut_(d, com) {
   var annules = 0;
   if (statut === 'REFUSE' || (statut === 'A RELANCER' && statutAvant === 'SIGNE')) {
     try {
-      annules = annulerChantiers_(num, statut, com ? com.nom : (d.nom || ''), d.appareil || '').length;
+      annules = annulerChantiers_(num, statut, qui, d.appareil || '').length;
     } catch (eA) {
       tracerServeur_('SYSTEME', 'ANNULATION ECHEC', String(eA && eA.message || eA), num, '');
     }
   }
-  return { ok: true, statut: statut || '(note seule)', chantiers: nes, annules: annules };
+
+  /* Un devis qui n'est plus signé reprend le numéro qu'il portait avant de
+     l'être : le suffixe / S ne doit rester sur rien d'autre qu'un devis signé.
+     Si quelqu'un a repris ce numéro entre-temps, on n'y touche pas. */
+  if (statutAvant === 'SIGNE' && statut && statut !== 'SIGNE') {
+    var ori = avant ? String(avant.NUMERO_ORIGINE || '').trim() : '';
+    if (ori && !numerosPris_()[ori] && renommerDevis_(num, ori, '', qui, d.appareil)) {
+      numeroAvant = num; num = ori;
+    }
+  }
+  return { ok: true, statut: statut || '(note seule)', numero: num,
+           numeroOrigine: numeroAvant, chantiers: nes, annules: annules };
 }
 
 /* ====================== ESPACE PRESTATAIRE ======================
@@ -1141,10 +1378,10 @@ function planifierChantier_(d, com) {
 }
 
 /* Un seul endroit décide de ce que chaque métier reçoit à la connexion. */
-function configPour_(role) {
+function configPour_(role, com) {
   if (role === 'PRESTATAIRE') return configPrestataire_();
   if (role === 'ADMIN') return configAdmin_();
-  return config_();
+  return config_(com);
 }
 
 /**
@@ -2501,10 +2738,18 @@ function lireAdmins_() {
 function lireCommerciaux_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.COMMERCIAUX);
   if (!sh || sh.getLastRow() < 2) return [];
-  return sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues()
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim().toUpperCase(); });
+  var cIni = en.indexOf('INITIALES');
+  return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
     .filter(function (r) { return String(r[0]).trim() && String(r[3]).toUpperCase() !== 'NON'; })
     .map(function (r) {
-      return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(), code: String(r[2] || '').trim() };
+      /* Les initiales du numéro de devis. Devinées à partir du nom, sauf si la
+         colonne INITIALES en impose d'autres : « SIMON LG » donne SL, alors que
+         Simon veut lire SLG sur ses devis — personne ne devine cela. */
+      var ini = cIni >= 0 ? String(r[cIni] || '').trim() : '';
+      return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(),
+               code: String(r[2] || '').trim(), initiales: initialesDe_(r[0], ini) };
     });
 }
 

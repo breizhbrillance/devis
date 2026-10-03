@@ -288,7 +288,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v49';
+var VERSION_APP = 'v50';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1861,6 +1861,16 @@ function appliquerSignature(id, image, nom){
     e.devis.signature = image;
     e.devis.signataire = nom;
     e.devis.signeLe = Date.now();
+    /* Un devis qui devient signé change de numéro : mois de la signature et
+       suffixe / S. L'ancien reste noté — c'est celui qui figure sur
+       l'exemplaire que le client avait déjà, et celui que le bureau garde
+       dans NUMERO_ORIGINE. */
+    if(estNumeroCourant(e.numero) && !estNumeroSigne(e.numero)){
+      e.numeroOrigine = e.numero;
+      e.numero = prochainNumero(e.devis.commercial, nomClient(e.devis.client),
+                                true, e.devis.signeLe, initialesDuNumero(e.numeroOrigine));
+      e.devis.numero = e.numero;
+    }
     try{
       e.pdf = PDF.base64(e.devis, CFG.reglages);       // le PDF signé remplace l'autre
       e.nomFichier = PDF.nomFichier(e.devis);
@@ -2112,20 +2122,76 @@ function restaurer(b){
   $('fNotes').value = b.notes||'';
 }
 
-/* ====================== NUMÉROTATION LOCALE ====================== */
+/* ====================== NUMÉROTATION LOCALE ======================
+   La forme décidée par Simon le 3 octobre 2026 :
+
+       devis remis     DEV-26-11/ POSK/ SLG-03
+       devis signé     DEV-26-12/ POSK/ SLG-01/ S
+
+   Année et mois sont ceux de l'établissement du devis, ou ceux de la SIGNATURE
+   dès que le client signe : un devis signé change donc de numéro. POSK, ce sont
+   les deux premières et les deux dernières lettres du client ; SLG les
+   initiales du commercial ; 03 son rang dans le mois.
+
+   Le rang est ce qui rend le numéro unique : deux devis du même mois, du même
+   commercial, portent deux rangs différents quel que soit le client. Les
+   lettres du client ne comptent donc pas dans la série qui porte le compteur,
+   sans quoi tout le monde serait au rang 01. */
 function initiales(nom){
   var p = String(nom).trim().split(/\s+/).map(function(m){ return m.charAt(0); }).join('');
   return (p.toUpperCase().replace(/[^A-Z]/g,'') || 'XX').slice(0,3);
 }
-function serieDe(nom){
-  var an = new Date().getFullYear();
-  return String((CFG.reglages||{}).prefixe_devis||'DEV')+'-'+an+'-'+initiales(nom);
+/* Deux premières et deux dernières lettres du client. Moins de quatre lettres :
+   complété par des X, pour que le numéro garde toujours la même longueur. */
+function lettresClient(nom){
+  var s = String(nom||'');
+  if(s.normalize) s = s.normalize('NFD').replace(/[̀-ͯ]/g,'');
+  s = s.toUpperCase().replace(/[^A-Z]/g,'');
+  if(!s) return 'XXXX';
+  if(s.length < 4) return (s+'XXXX').slice(0,4);
+  return s.slice(0,2) + s.slice(-2);
 }
-function prochainNumero(nom){
-  var serie = serieDe(nom), cle = 'seq_'+serie;
+function nomClient(c){
+  c = c || {};
+  return String(c.type||'').toUpperCase() === 'PART'
+    ? (c.contact || c.societe || '')
+    : (c.societe || c.contact || '');
+}
+/* Les initiales qui iront sur le numéro : celles que le bureau impose dans la
+   colonne INITIALES de l'onglet COMMERCIAUX, sinon celles du nom. « SIMON LG »
+   donnerait SL, alors que le devis doit lire SLG : personne ne devine cela. */
+function initialesMoi(nom){
+  var f = String((CFG||{}).initiales||'').toUpperCase().replace(/[^A-Z]/g,'').slice(0,4);
+  return f || initiales(nom);
+}
+/* Celles que porte déjà un numéro : un devis garde les siennes en signant. */
+function initialesDuNumero(numero){
+  var m = String(numero||'').match(/^.+-\d{2}-\d{2}\/ [A-Z]+\/ ([A-Z]+)-\d+(\/ S)?$/);
+  return m ? m[1] : '';
+}
+function serieDe(nom, signe, quand, ini){
+  var d = quand ? new Date(quand) : new Date();
+  return String((CFG.reglages||{}).prefixe_devis||'DEV') + '-' +
+         String(d.getFullYear()).slice(-2) + '-' +
+         ('0'+(d.getMonth()+1)).slice(-2) + '/ ' + (ini || initialesMoi(nom)) +
+         (signe ? '/ S' : '');
+}
+function rangLisible(n){ return n < 10 ? '0'+n : String(n); }
+/* Un numéro de devis signé se reconnaît à son suffixe. */
+function estNumeroSigne(numero){ return /\/ S$/.test(String(numero||'')); }
+/* La forme en service. Les numéros d'avant (DEV-2026-SL-0009) ne la suivent
+   pas : on ne les renumérote pas en signant, ils sont antérieurs à la règle. */
+function estNumeroCourant(numero){
+  return /^.+-\d{2}-\d{2}\/ [A-Z]+\/ [A-Z]+-\d+(\/ S)?$/.test(String(numero||''));
+}
+/* Le numéro suivant de la série, et le compteur avance d'autant. */
+function prochainNumero(nomCommercial, client, signe, quand, ini){
+  var serie = serieDe(nomCommercial, signe, quand, ini), cle = 'seq_'+serie;
   var n = Number(ls(cle)||0)+1;
   ls(cle, String(n));
-  return serie+'-'+('000'+n).slice(-4);
+  var p = serie.split('/ ');                       // [ DEV-26-11, SLG (, S) ]
+  return p[0] + '/ ' + lettresClient(client) + '/ ' + p[1] + '-' + rangLisible(n) +
+         (signe ? '/ S' : '');
 }
 /* Le bureau nous dit où en est chaque série : un téléphone réinstallé
    (compteur reparti à zéro) ne réutilise pas un numéro déjà pris. */
@@ -2173,12 +2239,16 @@ function debloquer(b, secours){
 function enregistrerSuite(b, envoi, moi, secours){
   try{
     var jours = Number((CFG.reglages||{}).validite_jours||30);
+    var client = lireClient();
+    /* Le client qui a signé à l'écran repart avec un devis signé : son numéro
+       porte le mois de la signature et le suffixe / S dès maintenant. */
+    var quandSig = SIG.image ? (SIG.quand || Date.now()) : 0;
     var devis = {
-      numero: prochainNumero(moi.nom),
+      numero: prochainNumero(moi.nom, nomClient(client), !!SIG.image, quandSig || Date.now()),
       date: new Date().toISOString(),
       validite: new Date(Date.now()+jours*86400000).toISOString(),
       commercial: moi.nom,
-      client: lireClient(),
+      client: client,
       lignes: lignesDevis(),
       etatSite: majorationPct() ? ETAT : 'NORMAL',   // ce que le commercial a constaté
       objet: val('fObjet'),
@@ -2190,7 +2260,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       notes: val('fNotes'),
       signataire: val('fSignataire'),
       signature: SIG.image || '',
-      signeLe: SIG.image ? (SIG.quand || Date.now()) : 0,
+      signeLe: quandSig,
       totaux: totaux()
     };
     var pdf64 = PDF.base64(devis, CFG.reglages);
@@ -2279,10 +2349,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=49';
+    sc.src = 'visionneuse.js?v=50';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=49';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=50';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2492,6 +2562,14 @@ function envoyerVerdict(enr){
   .then(function(d){
     if(!d || !d.ok) throw new Error((d && d.erreur) || 'refusé');
     enr.verdictEnvoye = true;
+    /* Un devis marqué signé prend un numéro neuf côté bureau : on le reprend,
+       sinon le prochain envoi parlerait d'un devis que le classeur ne connaît
+       plus sous ce nom. */
+    if(d.numero && d.numero !== enr.numero){
+      if(d.numeroOrigine && !enr.numeroOrigine) enr.numeroOrigine = d.numeroOrigine;
+      enr.numero = d.numero;
+      if(enr.devis) enr.devis.numero = d.numero;
+    }
     return DB.put(enr);
   })
   .catch(function(){});
@@ -2548,9 +2626,14 @@ function envoyerDevis(enr){
       throw new Error(d.erreur||'refusé');
     }
     enr.statut='envoye'; enr.pdfUrl=d.pdfUrl||''; enr.envoye=Date.now();
-    if(d.numero && d.numero !== enr.numero){   // le bureau a dû renuméroter
-      enr.numeroPdf = enr.numero; enr.numero = d.numero;
+    /* Le bureau a donné un autre numéro : soit le nôtre était déjà pris, soit
+       le devis vient d'être signé et change de numéro. Dans les deux cas c'est
+       le sien qui fait foi — le PDF déjà remis au client, lui, garde l'ancien. */
+    if(d.numero && d.numero !== enr.numero){
+      if(!enr.numeroOrigine || !estNumeroSigne(d.numero)) enr.numeroPdf = enr.numero;
+      enr.numero = d.numero; enr.devis.numero = d.numero;
     }
+    if(d.numeroOrigine && !enr.numeroOrigine) enr.numeroOrigine = d.numeroOrigine;
     return DB.put(enr);
   })
   .catch(function(e){
@@ -2642,6 +2725,7 @@ function rendreHistorique(){
         (e.statut==='envoye'?'':' \u00b7\u00a0à envoyer')+
         (phAtt?' \u00b7\u00a0'+phAtt+'\u00a0photo'+(phAtt>1?'s':'')+' à envoyer':'')+
         (e.numeroPdf?' · renuméroté (PDF client : '+ech(e.numeroPdf)+')':'')+
+        (e.numeroOrigine?' · avant signature : '+ech(e.numeroOrigine):'')+
         detailVerdict(e)+'</span></div>'+
         '<div class="acts">'+
         '<button class="btn sec sm" onclick="voirPdfId(\''+e.id+'\', this)">Voir le PDF</button>'+
