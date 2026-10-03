@@ -64,6 +64,7 @@ faut jamais en mettre.
 | `tplan` | la planification : durée déduite du montant, découpage, jours travaillés, salarié le moins chargé |
 | `tplan47` | la planification corrigée après l'audit : journée de 7 h sous 8 h, vraie fréquence des contrats, jours fériés, absences, itinéraire calculé entre deux chantiers (et forfait quand Google Maps ne répond pas), devis refusé qui rend ses créneaux |
 | `tmaj` | la majoration pour état des lieux recalculée par le classeur, et la grille par défaut alignée sur le classeur (29 prestations) |
+| `tmail` | la bannière en bas de chaque courriel, et l'absence de tout autre chemin d'envoi dans le script |
 
 **L'application** — un vrai navigateur, taille d'un téléphone.
 
