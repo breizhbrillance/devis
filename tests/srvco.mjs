@@ -14,6 +14,9 @@ export const catalogueSup=[];
 /* Réglages ajoutés par une suite, sur le même principe : les autres suites ne
    les voient pas, et gardent le classeur d'avant. */
 export const reglagesSup={};
+/* Ce que le bureau ajoute à la config du commercial : ses initiales imposées,
+   les compteurs de ses séries. Posé par la suite avant lancer(). */
+export const configSup={};
 const MIME={'.html':'text/html','.js':'application/javascript','.json':'application/json',
             '.webmanifest':'application/manifest+json','.png':'image/png'};
 const CFG={ maj:Date.now(),
@@ -46,7 +49,8 @@ export function lancer(port){
       if(mode.co==='trop')  return rep({ok:false,refus:true,erreur:"Trop d'essais. Réessaie dans un quart d'heure."});
       if(mode.co==='lent')  await new Promise(x=>setTimeout(x,3000));
       return rep({ok:true,nom:'Simon LG',
-                   config:{...CFG, reglages:{...CFG.reglages, ...reglagesSup},
+                   config:{...CFG, ...configSup,
+                           reglages:{...CFG.reglages, ...reglagesSup},
                            catalogue:[...CFG.catalogue, ...catalogueSup]}});
     }); return;
   }

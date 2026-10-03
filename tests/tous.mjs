@@ -16,10 +16,10 @@ import { fileURLToPath } from 'node:url';
 
 const ICI = path.dirname(fileURLToPath(import.meta.url));
 
-const CLASSEUR = ['tgs', 'tsigne', 'ttarif', 'tpresta', 'tadmin', 'tdate', 'tcontrat', 'tplan', 'tplan47', 'tmaj', 'tmail'];
+const CLASSEUR = ['tgs', 'tsigne', 'ttarif', 'tpresta', 'tadmin', 'tdate', 'tcontrat', 'tplan', 'tplan47', 'tmaj', 'tmail', 'tnum'];
 const APPLI = ['tco', 'tchamps', 'tv', 'tnote', 'verif24', 'tplafond', 'tprix',
                'tclavier', 'tagent', 'tsign', 'tsign2', 'tvue', 'tadmapp',
-               'tliste', 'tpdf39', 'tnature', 'tcatnat', 'tetat'];
+               'tliste', 'tpdf39', 'tnature', 'tcatnat', 'tetat', 'tnumapp'];
 
 const arg = (process.argv[2] || '').toLowerCase();
 let suites;
