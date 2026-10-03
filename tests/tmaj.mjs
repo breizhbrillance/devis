@@ -43,32 +43,33 @@ const maj = (pu, extra) => Object.assign({reference:'MAJ-ETAT', categorie:'État
 let g = socle(); let reg = g.lireReglages_();
 const ctl = (lignes, nature) => g.controlerTarifs_({lignes, nature: nature || 'CHANTIER'}, reg);
 T('sans majoration, un devis au tarif ne déclenche rien', ctl([vitres, sols]) === '', ctl([vitres, sols]));
-T('15 % de 200 € = 30 € : la majoration « sale » est acceptée', ctl([vitres, sols, maj(30)]) === '', ctl([vitres, sols, maj(30)]));
-T('30 % de 200 € = 60 € : la majoration « très sale » aussi', ctl([vitres, sols, maj(60)]) === '', ctl([vitres, sols, maj(60)]));
-T('elle n\'est plus rangée parmi les « hors catalogue »', !/hors catalogue/.test(ctl([vitres, sols, maj(30)])));
+T('30 % de 200 € = 60 € : la majoration « très sale » est acceptée', ctl([vitres, sols, maj(60)]) === '', ctl([vitres, sols, maj(60)]));
+T('15 % de 200 € = 30 € : l\'ancien palier « sale » est refusé, même avec son réglage resté au classeur',
+  /majoration de 30/.test(ctl([vitres, sols, maj(30)])), ctl([vitres, sols, maj(30)]));
+T('elle n\'est plus rangée parmi les « hors catalogue »', !/hors catalogue/.test(ctl([vitres, sols, maj(60)])));
 let r = ctl([vitres, sols, maj(100)]);
 T('une majoration de 50 % est signalée', /majoration de 100/.test(r), r);
-T('le message rappelle les taux permis et la base', /15 % ou 30 %/.test(r) && /200/.test(r), r);
+T('le message rappelle le taux permis et la base', /\(30 % de 200 €\)/.test(r), r);
 r = ctl([vitres, sols, maj(10)]);
 T('une majoration rabotée est signalée aussi', /majoration de 10/.test(r), r);
-r = ctl([vitres, sols, maj(15, {qte:2})]);
-T('deux fois 15 € font bien 30 € : le montant compte, pas la façon de l\'écrire', r === '', r);
-r = ctl([vitres, sols, maj(30), maj(30)]);
+r = ctl([vitres, sols, maj(30, {qte:2})]);
+T('deux fois 30 € font bien 60 € : le montant compte, pas la façon de l\'écrire', r === '', r);
+r = ctl([vitres, sols, maj(60), maj(60)]);
 T('deux lignes de majoration : la seconde est signalée', /comptée deux fois/.test(r), r);
 T('la base ne compte pas la majoration elle-même',
-  ctl([vitres, maj(22.5)]) === '' && /majoration/.test(ctl([vitres, maj(25.88)])),
-  [ctl([vitres, maj(22.5)]), ctl([vitres, maj(25.88)])]);
-r = ctl([vitres, maj(22.5)], 'ENTRETIEN');
+  ctl([vitres, maj(45)]) === '' && /majoration/.test(ctl([vitres, maj(58.5)])),
+  [ctl([vitres, maj(45)]), ctl([vitres, maj(58.5)])]);
+r = ctl([vitres, maj(45)], 'ENTRETIEN');
 T('une majoration sur un contrat d\'entretien est signalée', /contrat d'entretien/.test(r), r);
-r = ctl([Object.assign({}, vitres, {pu:1}), maj(7.5)]);
+r = ctl([Object.assign({}, vitres, {pu:1}), maj(15)]);
 T('les autres lignes restent contrôlées', /prix 1 au lieu de 3/.test(r), r);
-r = ctl([vitres, maj(22.5, {rem:25})]);
+r = ctl([vitres, maj(45, {rem:25})]);
 T('et la remise de la ligne de majoration reste plafonnée', /remise 25 %/.test(r), r);
 r = ctl([vitres, {reference:'XX-1', designation:'Autre chose', qte:1, pu:5, rem:0}]);
 T('une vraie ligne hors catalogue est toujours signalée', /hors catalogue/.test(r), r);
 
 g = socle([]); reg = g.lireReglages_();
-r = g.controlerTarifs_({lignes:[vitres, maj(22.5)], nature:'CHANTIER'}, reg);
+r = g.controlerTarifs_({lignes:[vitres, maj(45)], nature:'CHANTIER'}, reg);
 T('un classeur sans taux n\'accepte aucune majoration', /aucun/.test(r), r);
 T('un pourcentage illisible vaut zéro', g.pourcentReglage_('abc') === 0 && g.pourcentReglage_('') === 0 &&
   g.pourcentReglage_('12,5') === 12.5 && g.pourcentReglage_('250') === 100);
@@ -79,20 +80,21 @@ const devis = (extra)=>Object.assign({
   numero:'DEV-2026-SL-0011', date:new Date().toISOString(),
   validite:new Date(Date.now()+30*86400000).toISOString(), commercial:'SIMON LG',
   client:{type:'PRO', societe:'SYNDIC ARMOR', contact:'Mme Le Gall', adresse:'12 rue Nicolazic', cp:'56000', ville:'VANNES'},
-  lignes:[vitres, maj(22.5, {designation:'Majoration pour état des lieux (+15 %)'})],
-  totaux:{ht:172.5, tva:34.5, ttc:207, htPonctuel:172.5, htMensuel:0},
-  nature:'CHANTIER', etatSite:'SALE', objet:'', delai:'', notes:'', signataire:'', signature:''}, extra||{});
+  lignes:[vitres, maj(45, {designation:'Majoration pour état des lieux (+30 %)'})],
+  totaux:{ht:195, tva:39, ttc:234, htPonctuel:195, htMensuel:0},
+  nature:'CHANTIER', etatSite:'TRES_SALE', objet:'', delai:'', notes:'', signataire:'', signature:''}, extra||{});
 const COM = {nom:'SIMON LG', email:'simon@test.fr', role:'COMMERCIAL'};
 const r1 = g.enregistrer_({id:'d-11', nom:'SIMON LG', code:'ab1!', appareil:'APP-1', devis:devis(), pdf:'AAAA', nomFichier:'d.pdf'}, COM);
 const D = lire('DEVIS'); const col = (n) => D[1] ? D[1][D[0].indexOf(n)] : undefined;
 T('le devis majoré est enregistré', r1 && r1.ok === true, r1);
 T('la colonne ETAT_SITE a été créée', D[0].includes('ETAT_SITE'), D[0]);
-T('et porte ce que le commercial a constaté', col('ETAT_SITE') === 'SALE', col('ETAT_SITE'));
+T('et porte ce que le commercial a coché', col('ETAT_SITE') === 'TRES_SALE', col('ETAT_SITE'));
 T('le contrôle des prix ne signale rien', String(col('CONTROLE_TARIF') || '') === '', col('CONTROLE_TARIF'));
-T('le total reçu est gardé', col('TOTAL_HT') === 172.5, col('TOTAL_HT'));
+T('le total reçu est gardé', col('TOTAL_HT') === 195, col('TOTAL_HT'));
 const LG = lire('LIGNES').slice(1);
 T('les deux lignes sont dans l\'onglet LIGNES', LG.length === 2 && LG[1][3] === 'MAJ-ETAT', LG.map(l=>l[3]));
 T('un état inconnu vaut NORMAL', g.etatSite_('n\'importe quoi') === 'NORMAL' && g.etatSite_('') === 'NORMAL');
+T('l\'ancien « SALE » aussi', g.etatSite_('SALE') === 'NORMAL', g.etatSite_('SALE'));
 T('« très sale » s\'écrit de plusieurs façons', g.etatSite_('tres sale') === 'TRES_SALE' && g.etatSite_('TRES-SALE') === 'TRES_SALE');
 
 /* ---------- 3. le salarié ne voit pas la majoration comme une tâche ---------- */
@@ -103,17 +105,16 @@ T('Maxime voit son chantier', pl.length === 1, pl.length);
 T('avec la prestation à faire', pl[0] && pl[0].taches.some(t => t.designation === 'Nettoyage de vitres'), pl[0] && pl[0].taches);
 T('mais pas la ligne de majoration : ce n\'est pas un travail à cocher',
   pl[0] && !pl[0].taches.some(t => /Majoration/.test(t.designation)) && pl[0].taches.length === 1, pl[0] && pl[0].taches);
-T('et toujours sans un seul montant', pl[0] && !JSON.stringify(pl[0]).match(/"pu"|22\.5|172\.5/), pl[0]);
+T('et toujours sans un seul montant', pl[0] && !JSON.stringify(pl[0]).match(/"pu"|\b45\b|195/), pl[0]);
 
 /* ---------- 4. les réglages et la grille par défaut ---------- */
 const cles = g.REGLAGES_DEFAUT_.map(x => x[0]);
-T('les deux taux sont dans les réglages par défaut',
-  cles.includes('majoration_sale') && cles.includes('majoration_tres_sale'));
-T('à 15 % et 30 %', g.REGLAGES_DEFAUT_.find(x=>x[0]==='majoration_sale')[1] === '15' &&
-  g.REGLAGES_DEFAUT_.find(x=>x[0]==='majoration_tres_sale')[1] === '30');
+T('le taux « très sale » est dans les réglages par défaut, à 30 %',
+  cles.includes('majoration_tres_sale') && g.REGLAGES_DEFAUT_.find(x=>x[0]==='majoration_tres_sale')[1] === '30');
+T('le palier « sale » n\'y est plus', !cles.includes('majoration_sale'), cles.filter(k=>/majoration/.test(k)));
 g = socle([]); g.majStructure_();
-T('la mise à jour de structure les ajoute à un classeur qui ne les a pas',
-  lire('REGLAGES').some(l => l[0] === 'majoration_sale' && String(l[1]) === '15') &&
+T('la mise à jour de structure l\'ajoute à un classeur qui ne l\'a pas, et n\'ajoute pas l\'ancien palier',
+  !lire('REGLAGES').some(l => l[0] === 'majoration_sale') &&
   lire('REGLAGES').some(l => l[0] === 'majoration_tres_sale' && String(l[1]) === '30'), lire('REGLAGES').map(l=>l[0]));
 
 const G = g.CATALOGUE_DEFAUT_;

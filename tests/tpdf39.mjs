@@ -189,6 +189,73 @@ T('le bloc client, lui, ne porte que la société',
   /PLOEREN\s+1 place de la Mairie/.test(signeSansNom.slice(0, 1200)),
   signeSansNom.slice(0, 1200).slice(-300));
 
+/* ---------- v49 : la ligne de titres du tableau est un bandeau bleu ----------
+   On dessine la page et on regarde les points : le fond du bandeau doit être
+   au bleu de la marque, et les titres écrits en blanc dessus. */
+const bandeau = await p.evaluate(async () => {
+  const lignes = [];
+  for(let i = 0; i < 46; i++) lignes.push({categorie:'Vitrerie', reference:'REF-0001',
+    designation:'Nettoyage de vitres ' + (i + 1), detail:'', qte:10, unite:'m²', pu:2.5,
+    rem:0, tva:20, type:'PONCTUEL'});
+  const devis = {
+    numero:'DEV-2026-SL-0011', date:new Date().toISOString(),
+    validite:new Date(Date.now()+30*86400000).toISOString(), commercial:'SIMON LG',
+    client:{type:'PRO', societe:'MAIRIE DE PLOEREN', contact:'', adresse:'1 place de la Mairie',
+            cp:'56880', ville:'Ploeren', siret:'', tva:'', tel:'', email:''},
+    lignes:lignes, objet:'', delai:'sous 15 jours', remise:0, notes:'',
+    signataire:'', signature:'', signeLe:0,
+    totaux:{ht:1150, tva:230, ttc:1380, htPonctuel:1150, htMensuel:0, parTaux:{20:230}}
+  };
+  const b64 = PDF.base64(devis, CFG.reglages);
+  const bin = atob(b64.split(',').pop());
+  const oct = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) oct[i] = bin.charCodeAt(i);
+  const doc = await window.pdfjsLib.getDocument({data:oct}).promise;
+  const E = 3, res = [];
+  let image = '';
+  for(let n = 1; n <= doc.numPages; n++){
+    const page = await doc.getPage(n);
+    const vp = page.getViewport({scale:E});
+    const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
+    const cx = cv.getContext('2d');
+    await page.render({canvasContext:cx, viewport:vp}).promise;
+    if(n === 1) image = cv.toDataURL('image/png');
+    const tc = await page.getTextContent();
+    const it = tc.items.find(i => i.str === 'Référence');
+    if(!it){ res.push(null); continue; }
+    const pt = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
+    const x0 = Math.round(pt[0]), y0 = Math.round(pt[1]);
+    // le fond : juste à gauche du mot, à mi-hauteur des lettres
+    const f = cx.getImageData(x0 - 4, y0 - 6, 1, 1).data;
+    // tout au bout à droite du bandeau, sous « Montant HT »
+    const d = cx.getImageData(Math.round(vp.width - 16 * E * 72 / 25.4 / 1), y0 - 6, 1, 1).data;
+    // l'encre : le point le plus clair parmi les lettres du mot
+    const z = cx.getImageData(x0, y0 - 16, 90, 18).data;
+    let clair = 0;
+    for(let k = 0; k < z.length; k += 4) clair = Math.max(clair, Math.min(z[k], z[k+1], z[k+2]));
+    // juste sous le bandeau, la page redevient claire
+    const s = cx.getImageData(x0 - 4, y0 + 22, 1, 1).data;
+    res.push({fond:[f[0],f[1],f[2]], droite:[d[0],d[1],d[2]], clair:clair, sous:[s[0],s[1],s[2]]});
+  }
+  return {pages:doc.numPages, res:res, image:image};
+});
+const bleu = c => c && Math.abs(c[0] - 0) <= 6 && Math.abs(c[1] - 76) <= 6 && Math.abs(c[2] - 146) <= 6;
+T('le devis long tient sur plusieurs pages', bandeau.pages >= 2, bandeau.pages);
+T('page 1 : le bandeau des titres est au bleu de la marque',
+  bandeau.res[0] && bleu(bandeau.res[0].fond), bandeau.res[0]);
+T('page 1 : le bandeau va jusqu\'au bord droit du tableau',
+  bandeau.res[0] && bleu(bandeau.res[0].droite), bandeau.res[0]);
+T('page 1 : les titres sont écrits en blanc',
+  bandeau.res[0] && bandeau.res[0].clair >= 245, bandeau.res[0]);
+T('page 1 : sous le bandeau, la page redevient claire',
+  bandeau.res[0] && Math.min.apply(null, bandeau.res[0].sous) >= 230, bandeau.res[0]);
+T('page 2 : le bandeau repris en haut de page est bleu lui aussi',
+  bandeau.res[1] && bleu(bandeau.res[1].fond) && bandeau.res[1].clair >= 245, bandeau.res[1]);
+if(process.env.IMAGE_BANDEAU){
+  const fs = await import('fs');
+  fs.writeFileSync(process.env.IMAGE_BANDEAU, Buffer.from(bandeau.image.split(',').pop(), 'base64'));
+}
+
 await b.close();
 console.log('\n=== LE DEVIS IMPRIMÉ (v39) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));

@@ -1,9 +1,12 @@
-/* L'état du site (v48).
+/* L'état du site (v48, simplifié en v49).
 
    Le commercial ne peut pas retoucher un prix : la grille est verrouillée. Mais
-   un site très sale prend plus de temps que le même site propre. Il le dit donc
-   sur l'écran de validation — normal, sale, très sale — et le devis porte une
-   ligne à part, « Majoration pour état des lieux », calculée sur le reste.
+   un site très sale prend plus de temps que le même site propre. Il coche donc
+   « Site très sale » sur l'écran de validation, et le devis porte une ligne à
+   part, « Majoration pour état des lieux », calculée sur le reste.
+
+   Décision de Simon, v49 : UNE seule option. Plus de « normal » ni de « sale » ;
+   rien n'est majoré tant que la coche n'est pas mise, et elle vaut 30 %.
 
    Ce que ces contrôles gardent : la majoration n'entre jamais dans LIGNES (qui
    ne contient que du catalogue), elle ne se compte jamais deux fois, elle passe
@@ -60,44 +63,53 @@ await p.evaluate(()=>setEtat('TRES_SALE')); await p.waitForTimeout(200);
 T('même forcé, un état sans taux ne majore rien', (await tot(p)).ht === 250, await tot(p));
 await p.context().close();
 
-/* ---------- 2. le classeur fixe 15 % et 30 % ---------- */
+/* ---------- 2. le classeur fixe 30 % ----------
+   On laisse exprès l'ancien réglage du palier « sale » : il doit être ignoré. */
 reglagesSup.majoration_sale = '15'; reglagesSup.majoration_tres_sale = '30';
 p = await ouvrir();
+T('à l\'ouverture de l\'appli, rien n\'est coché', await p.evaluate(()=>ETAT === 'NORMAL'), await p.evaluate(()=>ETAT));
 await jusquaValidation(p);
 T('le bloc « État du site » est là', await p.isVisible('#cEtat'));
-T('« Normal » est choisi au départ',
-  await p.evaluate(()=>document.getElementById('etN').classList.contains('on') && ETAT === 'NORMAL'));
-T('les deux taux du classeur sont affichés',
-  /\+15 %/.test(await p.innerText('#etS')) && /\+30 %/.test(await p.innerText('#etT')),
-  [await p.innerText('#etS'), await p.innerText('#etT')]);
-T('au départ, le total est celui des prestations', (await tot(p)).ht === 250, await tot(p));
+T('il ne propose qu\'une seule option', await p.evaluate(()=>document.querySelectorAll('#cEtat button').length) === 1,
+  await p.evaluate(()=>[...document.querySelectorAll('#cEtat button')].map(b=>b.id)));
+T('les boutons « Normal » et « Sale » n\'existent plus',
+  await p.evaluate(()=>!document.getElementById('etN') && !document.getElementById('etS')));
+T('elle s\'appelle « Site très sale » et affiche le taux du classeur',
+  /Site très sale/.test(await p.innerText('#etT')) && /\+30 %/.test(await p.innerText('#etT')), await p.innerText('#etT'));
+T('elle n\'est pas cochée au départ',
+  await p.evaluate(()=>!etT.classList.contains('on') && etT.getAttribute('aria-pressed') === 'false' && ETAT === 'NORMAL'));
+T('non cochée, le total est celui des prestations : rien n\'est majoré', (await tot(p)).ht === 250, await tot(p));
+T('et aucune ligne de majoration n\'existe',
+  await p.evaluate(()=>!lignesDevis().some(l=>l.reference === 'MAJ-ETAT')) && !/État des lieux/.test(await recap(p)));
 
-await p.click('#etS'); await p.waitForTimeout(300);
+await p.click('#etT'); await p.waitForTimeout(300);
 let t = await tot(p);
-T('« Sale » ajoute 15 % : 250 + 37,50 = 287,50 € HT', t.ht === 287.5, t);
-T('la TVA suit', t.tva === 57.5 && t.ttc === 345, t);
-T('le récapitulatif montre la majoration sur sa ligne', /État des lieux\s*37,50/.test(await recap(p)), await recap(p));
+T('cochée, elle ajoute 30 % : 250 + 75 = 325 € HT', t.ht === 325, t);
+T('la TVA suit', t.tva === 65 && t.ttc === 390, t);
+T('le récapitulatif montre la majoration sur sa ligne', /État des lieux\s*75,00/.test(await recap(p)), await recap(p));
 T('et le poste des prestations n\'a pas bougé', /Vitrerie\s*250,00/.test(await recap(p)), await recap(p));
-T('la barre du bas suit', /287,50/.test(await p.innerText('#bTot')), await p.innerText('#bTot'));
-T('le bouton « Sale » est allumé, les autres éteints',
-  await p.evaluate(()=>etS.classList.contains('on') && !etN.classList.contains('on') && !etT.classList.contains('on')));
+T('la barre du bas suit', /325,00/.test(await p.innerText('#bTot')), await p.innerText('#bTot'));
+T('le bouton est allumé',
+  await p.evaluate(()=>etT.classList.contains('on') && etT.getAttribute('aria-pressed') === 'true' && ETAT === 'TRES_SALE'));
 T('la majoration n\'est PAS rangée dans les prestations',
   await p.evaluate(()=>LIGNES.length === 1 && !LIGNES.some(l=>l.reference === 'MAJ-ETAT')),
   await p.evaluate(()=>LIGNES.map(l=>l.reference)));
 
 await p.click('#etT'); await p.waitForTimeout(300);
-T('« Très sale » ajoute 30 % : 325 € HT, et non 30 % par-dessus les 15',
-  (await tot(p)).ht === 325, await tot(p));
-await p.click('#etN'); await p.waitForTimeout(300);
-T('« Normal » retire la majoration', (await tot(p)).ht === 250 && !/État des lieux/.test(await recap(p)),
-  [await tot(p), await recap(p)]);
+T('un second appui la retire', (await tot(p)).ht === 250 && !/État des lieux/.test(await recap(p)) &&
+  await p.evaluate(()=>!etT.classList.contains('on') && ETAT === 'NORMAL'), [await tot(p), await recap(p)]);
+T('le calcul lui-même ignore un état « sale » : il n\'a plus de taux',
+  await p.evaluate(()=>{ ETAT = 'SALE'; const h = totaux().ht; ETAT = 'NORMAL'; return h; }) === 250);
+await p.evaluate(()=>setEtat('SALE')); await p.waitForTimeout(200);
+T('l\'ancien palier « sale » n\'existe plus : il ne majore rien, même avec son réglage au classeur',
+  (await tot(p)).ht === 250 && await p.evaluate(()=>ETAT === 'NORMAL'), await tot(p));
 
 /* ---------- 3. la remise porte sur le devis entier, majoration comprise ---------- */
-await p.click('#etS'); await p.waitForTimeout(200);
+await p.click('#etT'); await p.waitForTimeout(200);
 await p.fill('#remG','10'); await p.waitForTimeout(400);
 t = await tot(p);
-T('10 % de remise sur 287,50 € : 258,75 € HT', t.ht === 258.75, t);
-T('la remise affichée est de 28,75 €', t.remise === 28.75, t);
+T('10 % de remise sur 325 € : 292,50 € HT', t.ht === 292.5, t);
+T('la remise affichée est de 32,50 €', t.remise === 32.5, t);
 
 /* ---------- 4. revenir aux prestations ne double rien ---------- */
 await p.click('#bPrec'); await p.waitForTimeout(400);
@@ -106,26 +118,33 @@ T('de retour sur les prestations, aucun bloc « hors catalogue »',
 await poserQte(p, 0, 200);                       // 200 m² : 500 € de prestations
 await p.click('#bSuiv'); await p.waitForTimeout(700);
 t = await tot(p);
-T('la majoration se recalcule sur les nouvelles quantités : (500 + 75) × 0,9 = 517,50 €',
-  t.ht === 517.5, t);
-T('l\'état choisi est resté « Sale »', await p.evaluate(()=>ETAT === 'SALE' && etS.classList.contains('on')));
+T('la majoration se recalcule sur les nouvelles quantités : (500 + 150) × 0,9 = 585 €',
+  t.ht === 585, t);
+T('la coche est restée mise', await p.evaluate(()=>ETAT === 'TRES_SALE' && etT.classList.contains('on')));
 
 /* ---------- 5. le brouillon garde l'état, pas la ligne ---------- */
 const br = await p.evaluate(()=>{ sauverBrouillon(); return lsj('brouillon'); });
-T('le brouillon note l\'état du site', br.etat === 'SALE', br.etat);
+T('le brouillon note l\'état du site', br.etat === 'TRES_SALE', br.etat);
 T('et ne contient que les prestations', br.lignes.length === 1 && br.lignes[0].reference !== 'MAJ-ETAT',
   br.lignes.map(l=>l.reference));
 /* Un brouillon abîmé, où la majoration se serait glissée dans les lignes. */
 await p.evaluate((b0)=>{ const b = JSON.parse(JSON.stringify(b0));
   b.lignes.push({categorie:'État des lieux', designation:'Majoration', qte:1, unite:'forfait',
-                 pu:75, rem:10, tva:20, type:'PONCTUEL', reference:'MAJ-ETAT'});
+                 pu:150, rem:10, tva:20, type:'PONCTUEL', reference:'MAJ-ETAT'});
   nouveauDevis(); restaurer(b); etape(4); }, br);
 await p.waitForTimeout(500);
 t = await tot(p);
-T('repris, le brouillon retrouve l\'état « Sale »', await p.evaluate(()=>ETAT === 'SALE'));
-T('et la majoration n\'est comptée qu\'une fois', t.ht === 517.5, t);
+T('repris, le brouillon retrouve la coche', await p.evaluate(()=>ETAT === 'TRES_SALE' && etT.classList.contains('on')));
+T('et la majoration n\'est comptée qu\'une fois', t.ht === 585, t);
 T('les prestations ne contiennent toujours que du catalogue',
   await p.evaluate(()=>LIGNES.length === 1), await p.evaluate(()=>LIGNES.map(l=>l.reference)));
+/* Un brouillon de la v48, resté sur le palier « sale » qui n'existe plus. */
+await p.evaluate((b0)=>{ const b = JSON.parse(JSON.stringify(b0)); b.etat = 'SALE';
+  nouveauDevis(); restaurer(b); etape(4); }, br);
+await p.waitForTimeout(500);
+T('un brouillon resté sur « sale » revient sans majoration : 500 × 0,9 = 450 €',
+  (await tot(p)).ht === 450 && await p.evaluate(()=>ETAT === 'NORMAL' && !etT.classList.contains('on')), await tot(p));
+await p.click('#etT'); await p.waitForTimeout(300);
 
 /* ---------- 6. ce qui part au bureau ---------- */
 await p.fill('#fDate', DEMAIN);
@@ -141,13 +160,13 @@ T('le devis part au bureau', !!envoi);
 const lg = envoi ? envoi.devis.lignes : [];
 T('avec deux lignes : la prestation, puis la majoration', lg.length === 2 && lg[1].reference === 'MAJ-ETAT',
   lg.map(l=>l.reference));
-T('la majoration vaut 15 % des prestations : 75 €', lg[1] && lg[1].pu === 75 && lg[1].qte === 1, lg[1]);
-T('elle dit son taux en toutes lettres', lg[1] && /Majoration pour état des lieux \(\+15 %\)/.test(lg[1].designation), lg[1]);
+T('la majoration vaut 30 % des prestations : 150 €', lg[1] && lg[1].pu === 150 && lg[1].qte === 1, lg[1]);
+T('elle dit son taux en toutes lettres', lg[1] && /Majoration pour état des lieux \(\+30 %\)/.test(lg[1].designation), lg[1]);
 T('elle porte la remise du devis', lg[1] && lg[1].rem === 10, lg[1]);
 T('et le taux de TVA du devis', lg[1] && lg[1].tva === 20, lg[1]);
 T('le prix de la prestation, lui, est resté celui du catalogue', lg[0] && lg[0].pu === 2.5, lg[0]);
-T('l\'état du site est transmis', envoi && envoi.devis.etatSite === 'SALE', envoi && envoi.devis.etatSite);
-T('le total envoyé est celui de l\'écran', envoi && envoi.devis.totaux.ht === 517.5, envoi && envoi.devis.totaux);
+T('l\'état du site est transmis', envoi && envoi.devis.etatSite === 'TRES_SALE', envoi && envoi.devis.etatSite);
+T('le total envoyé est celui de l\'écran', envoi && envoi.devis.totaux.ht === 585, envoi && envoi.devis.totaux);
 
 /* ---------- 7. le devis imprimé ---------- */
 const texte = await p.evaluate(async (devis) => {
@@ -164,15 +183,28 @@ const texte = await p.evaluate(async (devis) => {
   }
   return txt.replace(/\s+/g, ' ');
 }, envoi.devis);
-T('le devis imprimé porte la ligne de majoration', /Majoration pour état des lieux \(\+15 %\)/.test(texte), texte.slice(0, 900));
+T('le devis imprimé porte la ligne de majoration', /Majoration pour état des lieux \(\+30 %\)/.test(texte), texte.slice(0, 900));
 T('sous son propre poste', /ÉTAT DES LIEUX/.test(texte), texte.slice(0, 900));
-T('avec son montant', /75,00/.test(texte), texte.slice(0, 900));
-T('et le total remisé', /517,50/.test(texte), texte.slice(0, 1200));
+T('avec son montant', /150,00/.test(texte), texte.slice(0, 900));
+T('et le total remisé', /585,00/.test(texte), texte.slice(0, 1200));
 
-/* ---------- 8. un nouveau devis repart de « Normal » ---------- */
+/* Un devis non coché ne porte rien de tout cela. */
 await jusquaValidation(p);
-T('le devis suivant repart de « Normal »', await p.evaluate(()=>ETAT === 'NORMAL') && (await tot(p)).ht === 250,
+T('le devis suivant repart sans coche', await p.evaluate(()=>ETAT === 'NORMAL' && !etT.classList.contains('on')) && (await tot(p)).ht === 250,
   await tot(p));
+await p.fill('#fDate', DEMAIN);
+recu.length = 0;
+for(let i = 0; i < 4; i++){
+  if(await p.isVisible('#e5')) break;
+  if(!(await p.isVisible('#bSuiv'))) break;
+  await p.click('#bSuiv'); await p.waitForTimeout(1300);
+}
+await p.waitForTimeout(1200);
+const sans = recu.find(x => x && x.devis);
+T('sans la coche, le devis part avec sa seule prestation', !!sans && sans.devis.lignes.length === 1 &&
+  sans.devis.lignes[0].reference !== 'MAJ-ETAT', sans && sans.devis.lignes.map(l=>l.reference));
+T('au prix du catalogue, sans un euro de plus', !!sans && sans.devis.totaux.ht === 250 && sans.devis.etatSite === 'NORMAL',
+  sans && [sans.devis.totaux.ht, sans.devis.etatSite]);
 
 /* ---------- 9. un entretien n'a pas de majoration ---------- */
 await jusquaValidation(p, '#chENT');
@@ -184,33 +216,38 @@ T('aucune ligne de majoration ne partirait',
   await p.evaluate(()=>!lignesDevis().some(l=>l.reference === 'MAJ-ETAT')));
 
 /* ---------- 10. reprendre un ancien devis majoré ---------- */
-await p.evaluate(async ()=>{
+const ancien = (etat) => p.evaluate(async (e)=>{
   await DB.put({id:'ANCIEN', numero:'DEV-2026-SL-0001', devis:{
-    numero:'DEV-2026-SL-0001', etatSite:'TRES_SALE', objet:'', delai:'', notes:'',
+    numero:'DEV-2026-SL-0001', etatSite:e, objet:'', delai:'', notes:'',
     client:{type:'PRO', societe:'SYNDIC', contact:'M. X', adresse:'2 rue', cp:'56000', ville:'Vannes'},
     lignes:[{categorie:'Vitrerie', reference:'REF-0001', designation:'Nettoyage de vitres', qte:40,
              unite:'m²', pu:2.5, rem:0, tva:20, type:'PONCTUEL'},
             {categorie:'État des lieux', reference:'MAJ-ETAT', designation:'Majoration pour état des lieux (+25 %)',
              qte:1, unite:'forfait', pu:25, rem:0, tva:20, type:'PONCTUEL'}]}});
   dupliquer('ANCIEN');
-});
-await p.waitForTimeout(900);
+}, etat);
+await ancien('TRES_SALE'); await p.waitForTimeout(900);
 T('repris, l\'ancien devis ne ramène que ses prestations',
   await p.evaluate(()=>LIGNES.length === 1 && LIGNES[0].reference === 'REF-0001'),
   await p.evaluate(()=>LIGNES.map(l=>l.reference)));
-T('il garde l\'état noté à l\'époque', await p.evaluate(()=>ETAT === 'TRES_SALE'));
+T('il garde la coche notée à l\'époque', await p.evaluate(()=>ETAT === 'TRES_SALE'));
 T('et sa majoration est recalculée au taux d\'aujourd\'hui : 100 + 30 = 130 €',
   await p.evaluate(()=>{ NATURE = 'CHANTIER'; return totaux().ht; }) === 130,
   await p.evaluate(()=>totaux()));
+await ancien('SALE'); await p.waitForTimeout(900);
+T('un ancien devis « sale » est repris sans majoration : 100 €',
+  await p.evaluate(()=>{ NATURE = 'CHANTIER'; return ETAT === 'NORMAL' && LIGNES.length === 1 && totaux().ht === 100; }),
+  await p.evaluate(()=>[ETAT, totaux().ht]));
 await p.context().close();
 
-/* ---------- 11. un seul taux au classeur ---------- */
+/* ---------- 11. le taux à zéro au classeur ---------- */
 reglagesSup.majoration_tres_sale = '0';
 p = await ouvrir();
 await jusquaValidation(p);
-T('un taux à zéro retire son bouton', (await p.isVisible('#etS')) && !(await p.isVisible('#etT')));
+T('un taux à zéro retire le bloc entier, même si l\'ancien réglage « sale » est resté',
+  !(await p.isVisible('#cEtat')));
 await p.evaluate(()=>{ ETAT = 'TRES_SALE'; ecranEtat(); calculer(); }); await p.waitForTimeout(200);
-T('et un état qui n\'a plus de taux retombe sur « Normal »',
+T('et une coche qui n\'a plus de taux tombe',
   await p.evaluate(()=>ETAT === 'NORMAL') && (await tot(p)).ht === 250, await tot(p));
 
 await b.close();
