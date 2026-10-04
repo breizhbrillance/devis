@@ -1,4 +1,4 @@
-/* L'éloignement du client, côté classeur (v51).
+/* L'éloignement du client, côté classeur (v52).
 
    Sur un contrat d'entretien, et sur lui seul, chaque kilomètre au-delà de la
    franchise ajoute des euros au prix d'un passage. La majoration ne s'écrit
@@ -25,8 +25,7 @@ const COM = {nom:'SIMON LG', email:'simon@test.fr'};
 function socle(communes = [['56000','VANNES',3,'MAPS',''],
                            ['56250','MONTERBLANC',12,'MAPS',''],
                            ['56400','AURAY',20,'MAPS','']],
-               reglages = [['majoration_km_eur','0,90',''],
-                           ['majoration_km_franchise','10',''],
+               reglages = [['majoration_km_bareme','10:0 ; 20:0,70 ; 50:0,80 ; *:0,90',''],
                            ['majoration_km_arrondi','0,10',''],
                            ['agence_adresse','39 avenue de Verdun, 56000 Vannes','']]){
   creer('DEVIS',[EN_D]);
@@ -91,37 +90,88 @@ T('une ligne sans kilomètre n\'entre pas dans la table', (() => {
 g = socle();
 let reg = g.lireReglages_();
 const sup = (d) => g.supplementKm_(d, reg, g.lireCommunes_());
-/* 0,90 € du kilomètre au-delà de dix, par passage. */
-T('à 20 km, dix kilomètres facturés font 9 €',
-  sup(devisEnt('56400','Auray', 20)) === 9, sup(devisEnt('56400','Auray', 20)));
-T('dans la franchise, rien', sup(devisEnt('56000','Vannes', 3)) === 0);
-T('juste à la franchise, rien non plus', sup(devisEnt('56250','X', 10)) === 0);
-T('un kilomètre au-dessus, 0,90 €', sup(devisEnt('56250','X', 11)) === 0.9);
-T('les demi-kilomètres comptent', sup(devisEnt('56250','X', 12.5)) === 2.25,
+/* Le barème : 10 km gratuits, puis 0,70 € du km jusqu'à 20, 0,80 jusqu'à 50,
+   0,90 au-delà. Les tranches se cumulent. */
+T('le barème se lit', g.baremeKm_(reg).length === 4, g.baremeKm_(reg));
+T('ses tranches sont dans l\'ordre',
+  g.baremeKm_(reg).map(x => x.jusqua).join(' ') === '10 20 50 Infinity',
+  g.baremeKm_(reg).map(x => x.jusqua));
+T('et leurs tarifs lus avec la virgule',
+  g.baremeKm_(reg).map(x => x.taux).join(' ') === '0 0.7 0.8 0.9',
+  g.baremeKm_(reg).map(x => x.taux));
+T('un barème vide ne donne rien', g.baremeKm_({}).length === 0);
+T('une tranche mal écrite est ignorée, pas fatale',
+  g.baremeKm_({majoration_km_bareme:'10:0 ; bonjour ; 20:0,70'}).length === 2,
+  g.baremeKm_({majoration_km_bareme:'10:0 ; bonjour ; 20:0,70'}));
+T('l\'étoile vaut « au-delà »',
+  (g.baremeKm_({majoration_km_bareme:'*:0,90'})[0] || {}).jusqua === Infinity,
+  g.baremeKm_({majoration_km_bareme:'*:0,90'}));
+T('le plus aussi',
+  (g.baremeKm_({majoration_km_bareme:'+:0,90'})[0] || {}).jusqua === Infinity,
+  g.baremeKm_({majoration_km_bareme:'+:0,90'}));
+T('sans elle, la dernière tranche du barème de Simon manquerait',
+  g.baremeKm_(reg).filter(x => x.jusqua === Infinity).length === 1, g.baremeKm_(reg));
+T('les tranches données dans le désordre sont remises en ordre',
+  g.baremeKm_({majoration_km_bareme:'50:0,80 ; 10:0 ; *:0,90 ; 20:0,70'})
+    .map(x => x.taux).join(' ') === '0 0.7 0.8 0.9',
+  g.baremeKm_({majoration_km_bareme:'50:0,80 ; 10:0 ; *:0,90 ; 20:0,70'}).map(x => x.taux));
+
+T('dans les dix premiers kilomètres, rien', sup(devisEnt('56000','Vannes', 3)) === 0);
+T('juste à dix, rien non plus', sup(devisEnt('56250','X', 10)) === 0);
+T('à 15 km : cinq kilomètres à 0,70 €', sup(devisEnt('56250','X', 15)) === 3.5,
+  sup(devisEnt('56250','X', 15)));
+T('à 20 km : dix kilomètres à 0,70 €', sup(devisEnt('56400','Auray', 20)) === 7,
+  sup(devisEnt('56400','Auray', 20)));
+T('à 30 km : 7 € puis dix kilomètres à 0,80 €', sup(devisEnt('56250','X', 30)) === 15,
+  sup(devisEnt('56250','X', 30)));
+T('à 50 km : 7 € puis trente kilomètres à 0,80 €', sup(devisEnt('56250','X', 50)) === 31,
+  sup(devisEnt('56250','X', 50)));
+T('à 60 km : et dix de plus à 0,90 €', sup(devisEnt('56250','X', 60)) === 40,
+  sup(devisEnt('56250','X', 60)));
+T('les demi-kilomètres comptent', sup(devisEnt('56250','X', 12.5)) === 1.75,
   sup(devisEnt('56250','X', 12.5)));
+
+/* Aucun saut aux frontières : c'est tout l'intérêt des tranches cumulées. */
+T('passer de 19,9 à 20,1 km ne fait pas bondir le prix',
+  Math.abs(sup(devisEnt('56250','X', 20.1)) - sup(devisEnt('56250','X', 19.9))) < 0.2,
+  [sup(devisEnt('56250','X', 19.9)), sup(devisEnt('56250','X', 20.1))]);
+T('ni de 49,9 à 50,1 km',
+  Math.abs(sup(devisEnt('56250','X', 50.1)) - sup(devisEnt('56250','X', 49.9))) < 0.2,
+  [sup(devisEnt('56250','X', 49.9)), sup(devisEnt('56250','X', 50.1))]);
+T('le supplément ne décroît jamais quand on s\'éloigne', (() => {
+  var p0 = -1;
+  for(var k = 0; k <= 80; k += 0.5){
+    var v = sup(devisEnt('56250','X', k));
+    if(v < p0 - 1e-9) return false;
+    p0 = v;
+  }
+  return true;
+})());
+
 T('une remise en état n\'est jamais majorée',
   sup(Object.assign(devisEnt('56400','Auray', 20), {nature:'REMISE'})) === 0);
 T('une fin de chantier non plus',
   sup(Object.assign(devisEnt('56400','Auray', 20), {nature:'CHANTIER'})) === 0);
 T('sans distance au devis, c\'est la table qui parle',
-  sup(devisEnt('56400','Auray', '')) === 9, sup(devisEnt('56400','Auray', '')));
+  sup(devisEnt('56400','Auray', '')) === 7, sup(devisEnt('56400','Auray', '')));
 T('ni distance ni commune connue : rien', sup(devisEnt('29000','Quimper', '')) === 0);
 T('la distance du devis l\'emporte sur la table',
-  sup(devisEnt('56400','Auray', 30)) === 18, sup(devisEnt('56400','Auray', 30)));
-T('un réglage à zéro retire la majoration', (() => {
-  const gg = socle(undefined, [['majoration_km_eur','0',''],['majoration_km_franchise','10','']]);
+  sup(devisEnt('56400','Auray', 30)) === 15, sup(devisEnt('56400','Auray', 30)));
+T('un barème vidé retire la majoration', (() => {
+  const gg = socle(undefined, [['majoration_km_bareme','',''],['majoration_km_arrondi','0,10','']]);
   return gg.supplementKm_(devisEnt('56400','Auray', 20), gg.lireReglages_(), gg.lireCommunes_()) === 0;
 })());
-T('une franchise à zéro majore dès le premier kilomètre', (() => {
-  const gg = socle(undefined, [['majoration_km_eur','0,90',''],['majoration_km_franchise','0','']]);
-  return gg.supplementKm_(devisEnt('56000','Vannes', 3), gg.lireReglages_(), gg.lireCommunes_()) === 2.7;
+T('sans tranche ouverte, les kilomètres du bout ne sont pas comptés', (() => {
+  const gg = socle(undefined, [['majoration_km_bareme','10:0 ; 20:0,70',''],
+                               ['majoration_km_arrondi','0,10','']]);
+  return gg.supplementKm_(devisEnt('56250','X', 60), gg.lireReglages_(), gg.lireCommunes_()) === 7;
 })());
 
 /* ---------- 4. le supplément et le taux ---------- */
 g = socle(); reg = g.lireReglages_();
 const sup2 = (d) => g.supplementKm_(d, reg, g.lireCommunes_());
-T('0,90 € par kilomètre au-delà de la franchise',
-  sup2(devisEnt('56400','Auray', 20)) === 9, sup2(devisEnt('56400','Auray', 20)));
+T('le supplément visé à 20 km vaut 7 €',
+  sup2(devisEnt('56400','Auray', 20)) === 7, sup2(devisEnt('56400','Auray', 20)));
 T('dans la franchise, rien', sup2(devisEnt('56000','Vannes', 3)) === 0);
 T('une remise en état n\'est jamais majorée',
   sup2(Object.assign(devisEnt('56400','Auray', 20), {nature:'REMISE'})) === 0);
@@ -129,7 +179,7 @@ T('une remise en état n\'est jamais majorée',
 const cat = {}; g.lireCatalogue_().forEach(p2 => { if(p2.reference) cat[p2.reference] = p2; });
 let taux = g.tauxSupKm_(devisEnt('56400','Auray', 20), reg, cat, g.lireCommunes_());
 T('le taux vise le passage majoré du supplément',
-  Math.abs(17.5 * (1 + taux) - 26.5) < 0.001, [taux, 17.5 * (1 + taux)]);
+  Math.abs(17.5 * (1 + taux) - 24.5) < 0.001, [taux, 17.5 * (1 + taux)]);
 T('sans supplément, pas de taux',
   g.tauxSupKm_(devisEnt('56000','Vannes', 3), reg, cat, g.lireCommunes_()) === 0);
 
@@ -160,7 +210,7 @@ T('un taux nul laisse le prix du catalogue intact',
 T('le passage majoré tombe à quelques dizaines de centimes de la cible', (() => {
   var reel = Math.round((50 * g.prixAttendu_(0.15, taux, reg) +
                          50 * g.prixAttendu_(0.20, taux, reg)) * 100) / 100;
-  return Math.abs(reel - 26.5) <= 1;
+  return Math.abs(reel - 24.5) <= 1;
 })(), Math.round((50 * g.prixAttendu_(0.15, taux, reg) +
                  50 * g.prixAttendu_(0.20, taux, reg)) * 100) / 100);
 
@@ -203,9 +253,10 @@ T('une commune inconnue ne déclenche aucun reproche de distance',
 g = socle();
 let cfg = g.config_({nom:'SIMON LG', initiales:'SLG'});
 T('la table des communes part au téléphone', cfg.communes['56400 AURAY'] === 20, cfg.communes);
-T('les réglages de la majoration aussi',
-  cfg.reglages.majoration_km_eur === '0,90' && cfg.reglages.majoration_km_franchise === '10',
-  [cfg.reglages.majoration_km_eur, cfg.reglages.majoration_km_franchise]);
+T('le barème part au téléphone avec les réglages',
+  cfg.reglages.majoration_km_bareme === '10:0 ; 20:0,70 ; 50:0,80 ; *:0,90' &&
+  cfg.reglages.majoration_km_arrondi === '0,10',
+  [cfg.reglages.majoration_km_bareme, cfg.reglages.majoration_km_arrondi]);
 T('l\'adresse de l\'agence n\'est pas un secret', !!cfg.reglages.agence_adresse, cfg.reglages.agence_adresse);
 
 /* ---------- 7. l'enregistrement ---------- */
@@ -251,7 +302,7 @@ g.enregistrer_(envoi(devisEnt('56400','Auray', 20, releve(20))), COM);
 T('une commune déjà connue n\'est pas réécrite',
   lire('COMMUNES').length === 5, lire('COMMUNES').map(x => x[1]));
 
-console.log('\n=== L\'ÉLOIGNEMENT DU CLIENT (v51) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
+console.log('\n=== L\'ÉLOIGNEMENT DU CLIENT (v52) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
 ko.forEach(x => console.log('  ✗ ' + x));
 process.exit(ko.length ? 1 : 0);

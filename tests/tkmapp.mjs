@@ -1,4 +1,4 @@
-/* L'éloignement du client, côté téléphone (v51).
+/* L'éloignement du client, côté téléphone (v52).
 
    Le devis se chiffre chez le client, souvent sans réseau : la distance vient
    d'une table de communes que le bureau envoie à la connexion, et le
@@ -19,8 +19,7 @@ const ok=[],ko=[]; const T=(n,c,d)=>{ (c?ok:ko).push(n+(c?'':'  → '+JSON.strin
 
 configSup.initiales = 'SLG';
 configSup.communes = {'56000 VANNES':3, '56250 MONTERBLANC':12, '56400 AURAY':20};
-reglagesSup.majoration_km_eur = '0,90';
-reglagesSup.majoration_km_franchise = '10';
+reglagesSup.majoration_km_bareme = '10:0 ; 20:0,70 ; 50:0,80 ; *:0,90';
 reglagesSup.majoration_km_arrondi = '0,10';
 
 const PORT = 8482; await lancer(PORT);
@@ -76,20 +75,52 @@ await p.fill('#cCp','56400'); await p.fill('#cVille','Auray'); await p.waitForTi
 T('sur un entretien, la distance est demandée', await p.isVisible('#blocKm'));
 T('et remplie d\'après la commune', await p.inputValue('#cKm') === '20', await p.inputValue('#cKm'));
 T('la note dit ce que ça coûte au client',
-  /environ 9,00\s*€ de plus par passage/.test(await p.textContent('#kmNote')),
+  /environ 7,00\s*€ de plus par passage/.test(await p.textContent('#kmNote')),
   await p.textContent('#kmNote'));
 
-/* ---------- 3. le supplément ---------- */
-T('à 20 km, dix kilomètres facturés font 9 €',
-  await p.evaluate(() => supplementKm()) === 9);
+/* ---------- 3. le barème et le supplément ---------- */
+const bar = await p.evaluate(() => baremeKm().map(x => [x.jusqua === Infinity ? '*' : x.jusqua, x.taux]));
+T('le barème du bureau est lu par le téléphone', bar.length === 4, bar);
+T('ses tranches sont dans l\'ordre et leurs tarifs justes',
+  JSON.stringify(bar) === JSON.stringify([[10,0],[20,0.7],[50,0.8],['*',0.9]]), bar);
+/* Un barème écrit dans le désordre au classeur doit donner le même résultat :
+   sans tri, les tranches se cumuleraient n'importe comment. */
+const desordre = await p.evaluate(() => {
+  const g = CFG.reglages.majoration_km_bareme;
+  CFG.reglages.majoration_km_bareme = '50:0,80 ; 10:0 ; *:0,90 ; 20:0,70';
+  const ordre = baremeKm().map(x => x.taux);
+  const k = KM, a = KM_AUTO; KM = '30'; KM_AUTO = false;
+  const v = supplementKm();
+  KM = k; KM_AUTO = a; CFG.reglages.majoration_km_bareme = g;
+  return {ordre:ordre, sup:v};
+});
+T('un barème en désordre est remis en ordre',
+  desordre.ordre.join(' ') === '0 0.7 0.8 0.9', desordre);
+T('et donne le même supplément qu\'en ordre', desordre.sup === 15, desordre);
+
+T('à 20 km, dix kilomètres à 0,70 €', await p.evaluate(() => supplementKm()) === 7);
 const poser = async (km) => { await p.fill('#cKm', String(km)); await p.waitForTimeout(250); };
 await poser(10);
 T('à dix kilomètres, rien', await p.evaluate(() => supplementKm()) === 0);
 T('et la note le dit', /compris/.test(await p.textContent('#kmNote')), await p.textContent('#kmNote'));
-await poser(11);
-T('onze kilomètres, 0,90 €', await p.evaluate(() => supplementKm()) === 0.9);
+await poser(15);
+T('à 15 km, cinq kilomètres à 0,70 €', await p.evaluate(() => supplementKm()) === 3.5);
+await poser(30);
+T('à 30 km, les deux premières tranches se cumulent',
+  await p.evaluate(() => supplementKm()) === 15);
+await poser(60);
+T('à 60 km, les trois tranches', await p.evaluate(() => supplementKm()) === 40);
 await poser(12.5);
-T('les demi-kilomètres comptent', await p.evaluate(() => supplementKm()) === 2.25);
+T('les demi-kilomètres comptent', await p.evaluate(() => supplementKm()) === 1.75);
+T('le téléphone et le classeur calculent le même supplément',
+  JSON.stringify(await p.evaluate(() => [10,15,20,30,50,60].map(k => {
+    const g = KM, a = KM_AUTO; KM = String(k); KM_AUTO = false;
+    const v = supplementKm(); KM = g; KM_AUTO = a; return v;
+  }))) === JSON.stringify([0, 3.5, 7, 15, 31, 40]),
+  await p.evaluate(() => [10,15,20,30,50,60].map(k => {
+    const g = KM, a = KM_AUTO; KM = String(k); KM_AUTO = false;
+    const v = supplementKm(); KM = g; KM_AUTO = a; return v;
+  })));
 await poser('');
 T('sans distance, pas de supplément', await p.evaluate(() => supplementKm()) === 0);
 T('et la note invite à la saisir', /saisir/.test(await p.textContent('#kmNote')), await p.textContent('#kmNote'));
@@ -131,7 +162,7 @@ const etat = await p.evaluate(() => ({
   envoi:lignesDevis().map(l => [l.reference, l.qte, l.pu]),
   t:totaux()
 }));
-T('le supplément visé vaut 9 € le passage', etat.sup === 9, etat);
+T('le supplément visé vaut 7 € le passage', etat.sup === 7, etat);
 T('la liste de travail garde les prix du catalogue', etat.travail[0][2] === 2.5, etat.travail);
 T('aucune ligne n\'est ajoutée au devis', etat.envoi.length === 1, etat.envoi);
 /* 2,50 € est au-dessus d'un euro : le prix s'arrondit au dixième, donc 2,60 €
@@ -139,7 +170,7 @@ T('aucune ligne n\'est ajoutée au devis', etat.envoi.length === 1, etat.envoi);
    coûte une grille lisible, et l'écart reste petit. */
 T('c\'est le prix unitaire qui porte l\'éloignement', etat.envoi[0][2] === 2.6, etat.envoi);
 T('le passage monte d\'à peu près le supplément',
-  Math.abs(etat.t.parPassage - 259) <= 1, etat.t);
+  Math.abs(etat.t.parPassage - 257) <= 3, etat.t);
 T('et le mois suit les passages', etat.t.ht === etat.t.parPassage * 4, etat.t);
 T('un second calcul ne majore pas une seconde fois',
   (await p.evaluate(() => { calculer(); calculer(); return totaux().parPassage; }))
@@ -190,7 +221,7 @@ T('les prix envoyés sont relevés une fois, pas deux', dup.envoi[0][1] === 2.6,
 T('et le total du devis dupliqué est le même que l\'original', dup.t.ht === 1040, dup);
 
 await b.close();
-console.log('\n=== L\'ÉLOIGNEMENT, CÔTÉ TÉLÉPHONE (v51) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
+console.log('\n=== L\'ÉLOIGNEMENT, CÔTÉ TÉLÉPHONE (v52) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
 ko.forEach(x => console.log('  ✗ ' + x));
 console.log('\nerreurs JS : ' + (err.length ? err.join(' | ') : 'aucune'));
