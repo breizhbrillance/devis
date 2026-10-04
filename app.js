@@ -288,7 +288,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v51';
+var VERSION_APP = 'v52';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1703,13 +1703,41 @@ function kmDevis(){
   var n = Number(String(KM).replace(',', '.'));
   return (String(KM).trim() !== '' && isFinite(n) && n >= 0) ? n : 0;
 }
-/* Les euros ajoutés à UN passage. Zéro hors entretien, zéro sous la franchise. */
+/* Le barème au kilomètre, lu dans un seul réglage :
+       10:0 ; 20:0,70 ; 50:0,80 ; *:0,90
+   « jusqu'à 10 km : rien ; de 10 à 20 : 0,70 € du km ; de 20 à 50 : 0,80 ;
+   au-delà : 0,90 ». Les tranches se cumulent comme un barème d'impôt : à 30 km,
+   10 km à 0,70 € puis 10 km à 0,80 €, soit 15 €. Aucun saut aux frontières. */
+function baremeKm(){
+  var txt = String(((CFG||{}).reglages||{}).majoration_km_bareme || '').trim();
+  if(!txt) return [];
+  var out = [];
+  txt.split(/[;\n]+/).forEach(function(m){
+    var p = String(m).split(':');
+    if(p.length < 2) return;
+    var borne = String(p[0]).trim();
+    var taux = Number(String(p[1]).replace(',', '.').trim());
+    if(!isFinite(taux) || taux < 0) return;
+    var jusqua = /^[*+]|illimit/i.test(borne) ? Infinity : Number(borne.replace(',', '.'));
+    if(jusqua !== Infinity && (!isFinite(jusqua) || jusqua < 0)) return;
+    out.push({jusqua:jusqua, taux:taux});
+  });
+  out.sort(function(a,b){ return a.jusqua - b.jusqua; });
+  return out;
+}
+/* Les euros ajoutés à UN passage. Zéro hors entretien, zéro dans la tranche
+   gratuite, zéro si le barème est vide. */
 function supplementKm(){
   if(!estEntretien()) return 0;
-  var eur = nbReglage('majoration_km_eur');
-  if(!(eur > 0)) return 0;
-  var sup = eur * Math.max(0, kmDevis() - nbReglage('majoration_km_franchise'));
-  return Math.round(sup * 100) / 100;
+  var bareme = baremeKm();
+  if(!bareme.length) return 0;
+  var km = kmDevis(), bas = 0, total = 0;
+  for(var i = 0; i < bareme.length && bas < km; i++){
+    var haut = Math.min(bareme[i].jusqua, km);
+    if(haut > bas) total += (haut - bas) * bareme[i].taux;
+    bas = bareme[i].jusqua;
+  }
+  return Math.round(total * 100) / 100;
 }
 /* Le taux dont les prix unitaires sont relevés : rien ne s'écrit sur le devis,
    ce sont les prix eux-mêmes qui portent l'éloignement. */
@@ -1741,7 +1769,7 @@ function prixAvecKm(pu, taux){
 function majKm(){
   var b = $('blocKm');
   if(!b) return;
-  var visible = estEntretien() && nbReglage('majoration_km_eur') > 0;
+  var visible = estEntretien() && baremeKm().length > 0;
   b.classList.toggle('hide', !visible);
   if(!visible){ KM = ''; KM_AUTO = false; if($('cKm')) $('cKm').value = ''; return; }
   var t = kmTable(val('cCp'), val('cVille'));
@@ -1761,14 +1789,16 @@ function saisirKm(){
 function noteKm(){
   var n = $('kmNote');
   if(!n) return;
-  var fr = nbReglage('majoration_km_franchise'), sup = supplementKm();
+  var sup = supplementKm();
   if(String(KM).trim() === ''){
     n.textContent = 'km depuis l\'agence — commune inconnue du bureau, à saisir';
     return;
   }
+  var b = baremeKm();
+  var gratuit = b.length && b[0].taux === 0 ? b[0].jusqua : 0;
   n.textContent = 'km' + (sup > 0
     ? ' · environ ' + eur(sup) + ' de plus par passage'
-    : ' · dans les ' + nb(fr) + ' km compris') +
+    : (gratuit ? ' · dans les ' + nb(gratuit) + ' km compris' : ' · sans majoration')) +
     (KM_AUTO ? '' : ' (saisi)');
 }
 
@@ -2495,10 +2525,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=51';
+    sc.src = 'visionneuse.js?v=52';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=51';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=52';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };

@@ -426,10 +426,8 @@ var REGLAGES_DEFAUT_ = [
    'Majoration en % quand le commercial coche « site très sale » — 0 pour retirer la coche'],
   ['agence_adresse', '39 avenue de Verdun, 56000 Vannes',
    'D\'où partent les tournées — sert à mesurer la distance des communes'],
-  ['majoration_km_eur', '0,90',
-   'Entretien : euros ajoutés par kilomètre et par passage, au-delà de la franchise — 0 pour retirer'],
-  ['majoration_km_franchise', '10',
-   'Entretien : kilomètres compris dans le prix, sans majoration'],
+  ['majoration_km_bareme', '10:0 ; 20:0,70 ; 50:0,80 ; *:0,90',
+   'Entretien : barème au km, par tranches cumulées — « jusqu\'à ce km : tarif », * pour au-delà. Vide : aucune majoration'],
   ['majoration_km_arrondi', '0,10',
    'Entretien : les prix relevés de l\'éloignement sont arrondis à ce pas, à partir d\'un euro (au centime en dessous)'],
   ['banniere_url', 'https://breizhbrillance.github.io/devis/banniere.jpg',
@@ -2941,13 +2939,52 @@ function kmDevis_(devis, communes) {
   return t >= 0 ? t : 0;
 }
 
+/**
+ * Le barème au kilomètre, lu dans un seul réglage :
+ *
+ *     10:0 ; 20:0,70 ; 50:0,80 ; *:0,90
+ *
+ * « jusqu'à 10 km : rien ; de 10 à 20 : 0,70 € du km ; de 20 à 50 : 0,80 ;
+ * au-delà : 0,90 ». Les tranches se cumulent, comme un barème d'impôt : un
+ * client à 30 km paie 10 km à 0,70 € puis 10 km à 0,80 €, soit 15 €. Aucun
+ * saut aux frontières, et une tranche se change sans toucher au code.
+ *
+ * La dernière tranche doit porter * — sans elle, les kilomètres au-delà de la
+ * dernière borne ne seraient pas comptés.
+ */
+function baremeKm_(reg) {
+  var txt = String((reg || {}).majoration_km_bareme || '').trim();
+  if (!txt) return [];
+  var out = [];
+  txt.split(/[;\n]+/).forEach(function (m) {
+    var p = String(m).split(':');
+    if (p.length < 2) return;
+    var borne = String(p[0]).trim();
+    var taux = Number(String(p[1]).replace(',', '.').trim());
+    if (!isFinite(taux) || taux < 0) return;
+    var jusqua = /^[*+]|illimit/i.test(borne)
+      ? Infinity
+      : Number(borne.replace(',', '.'));
+    if (jusqua !== Infinity && (!isFinite(jusqua) || jusqua < 0)) return;
+    out.push({ jusqua: jusqua, taux: taux });
+  });
+  out.sort(function (a, b) { return a.jusqua - b.jusqua; });
+  return out;
+}
+
 /** Les euros ajoutés à UN passage par l'éloignement du client. */
 function supplementKm_(devis, reg, communes) {
   if (natureDevis_(devis && devis.nature) !== 'ENTRETIEN') return 0;
-  var eur = nombreReglage_(reg.majoration_km_eur);
-  if (!(eur > 0)) return 0;
-  var sup = eur * Math.max(0, kmDevis_(devis, communes) - nombreReglage_(reg.majoration_km_franchise));
-  return Math.round(sup * 100) / 100;
+  var bareme = baremeKm_(reg);
+  if (!bareme.length) return 0;
+  var km = kmDevis_(devis, communes);
+  var bas = 0, total = 0;
+  for (var i = 0; i < bareme.length && bas < km; i++) {
+    var haut = Math.min(bareme[i].jusqua, km);
+    if (haut > bas) total += (haut - bas) * bareme[i].taux;
+    bas = bareme[i].jusqua;
+  }
+  return Math.round(total * 100) / 100;
 }
 
 /**
