@@ -256,6 +256,166 @@ if(process.env.IMAGE_BANDEAU){
   fs.writeFileSync(process.env.IMAGE_BANDEAU, Buffer.from(bandeau.image.split(',').pop(), 'base64'));
 }
 
+/* ---------- v51 : un titre de poste rejeté en haut de page reste lisible ----
+   Le bandeau de titres repris en haut de chaque page s'écrit en blanc. Si la
+   couleur n'était pas remise avant le titre du poste, celui-ci s'écrirait en
+   blanc sur blanc : invisible, et le client ne saurait plus ce qu'il lit.
+
+   Le défaut ne se montre que si c'est le TITRE qui provoque le saut de page,
+   pas la ligne ni le sous-total d'avant. On balaie donc plusieurs longueurs de
+   devis : l'une d'elles tombe forcément sur ce cas. */
+const titres = await p.evaluate(async () => {
+  const lire = async (n, cale) => {
+    const lignes = [];
+    for(let i = 0; i < n; i++) lignes.push({categorie:'Vitrerie', reference:'REF-0001',
+      designation:'Nettoyage de vitres ' + (i + 1),
+      detail:(cale && i === 0) ? 'Hall et cage d\'escalier' : '',
+      qte:10, unite:'m²', pu:2.5, rem:0, tva:20, type:'PONCTUEL'});
+    lignes.push({categorie:'Finitions', reference:'REF-0003', designation:'Contrôle qualité',
+      detail:'', qte:1, unite:'forfait', pu:40, rem:0, tva:20, type:'PONCTUEL'});
+    const devis = {
+      numero:'DEV-2026-SL-0012', date:new Date().toISOString(),
+      validite:new Date(Date.now()+30*86400000).toISOString(), commercial:'SIMON LG',
+      client:{type:'PRO', societe:'MAIRIE DE PLOEREN', contact:'', adresse:'1 place de la Mairie',
+              cp:'56880', ville:'Ploeren', siret:'', tva:'', tel:'', email:''},
+      lignes:lignes, objet:'', delai:'', remise:0, notes:'',
+      signataire:'', signature:'', signeLe:0,
+      totaux:{ht:25*n+40, tva:(25*n+40)*0.2, ttc:(25*n+40)*1.2,
+              htPonctuel:25*n+40, htMensuel:0, parTaux:{20:(25*n+40)*0.2}}
+    };
+    const b64 = PDF.base64(devis, CFG.reglages);
+    const bin = atob(b64.split(',').pop());
+    const oct = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) oct[i] = bin.charCodeAt(i);
+    const doc = await window.pdfjsLib.getDocument({data:oct}).promise;
+    const E = 3;
+    for(let k = 1; k <= doc.numPages; k++){
+      const page = await doc.getPage(k);
+      const tc = await page.getTextContent();
+      const it = tc.items.find(i => /FINITIONS/.test(i.str));
+      if(!it) continue;
+      const vp = page.getViewport({scale:E});
+      const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
+      const cx = cv.getContext('2d');
+      await page.render({canvasContext:cx, viewport:vp}).promise;
+      const pt = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
+      /* Au-dessus de la ligne de base seulement : le soulignement du titre est
+         tracé en bleu quoi qu'il arrive, et masquerait un texte invisible. */
+      const z = cx.getImageData(Math.round(pt[0]), Math.round(pt[1]) - 14, 110, 11).data;
+      let sombre = 255, encre = null, encres = 0;
+      for(let j = 0; j < z.length; j += 4){
+        const m = Math.max(z[j], z[j+1], z[j+2]);
+        if(m < 200) encres++;
+        if(m < sombre){ sombre = m; encre = [z[j], z[j+1], z[j+2]]; }
+      }
+      return {n:n, cale:!!cale, page:k, pages:doc.numPages, haut:Math.round(pt[1]),
+              sombre:sombre, encre:encre, encres:encres};
+    }
+    return {n:n, cale:!!cale, page:0};
+  };
+  const out = [];
+  for(let n = 34; n <= 46; n++){ out.push(await lire(n, false)); out.push(await lire(n, true)); }
+  return out;
+});
+const vus = titres.filter(x => x.page >= 2);
+T('un titre de poste finit par être rejeté en page suivante', vus.length > 0, titres.map(x => x.page));
+/* Celui qui est tout en haut de la page : c'est lui qui suit le bandeau blanc. */
+const hauts = vus.filter(x => x.haut < 300);
+T('et l\'un d\'eux se retrouve juste sous le bandeau de titres', hauts.length > 0,
+  vus.map(x => [x.n, x.cale, x.haut]));
+T('aucun titre n\'est écrit en blanc sur blanc',
+  vus.every(x => x.sombre < 200), vus.map(x => [x.n, x.cale, x.haut, x.sombre]));
+T('chacun porte de l\'encre sur toute sa longueur',
+  vus.every(x => x.encres > 80), vus.map(x => [x.n, x.encres]));
+T('et tous sont au bleu de la marque',
+  vus.every(x => x.encre && Math.abs(x.encre[0]) <= 60 && Math.abs(x.encre[1] - 76) <= 60 &&
+                 Math.abs(x.encre[2] - 146) <= 60), vus.map(x => [x.n, x.cale, x.encre]));
+
+/* ---------- v51 : un contrat d'entretien se lit au mois -----------------
+   Les lignes d'un entretien sont celles d'UN passage, mais le devis se vend
+   au mois. Le total HT et le TTC sont déjà mensuels ; si la TVA et le
+   sous-total restaient au passage, le client lirait trois chiffres qui ne
+   tombent pas ensemble, et la remise d'un contrat n'apparaîtrait nulle part. */
+const mois = async (passages, remise) => p.evaluate(async (o) => {
+  const lignes = [
+    {categorie:'Entretien des sols', reference:'REF-0016', designation:'Aspiration des sols',
+     detail:'', qte:50, unite:'m²', pu:0.15, rem:o.remise, tva:20, type:'MENSUEL'},
+    {categorie:'Déplacement', reference:'DEP-KM', designation:'Déplacement sur site',
+     detail:'Site à 20 km de l’agence', qte:1, unite:'forfait', pu:10, rem:0,
+     tva:20, type:'MENSUEL'}
+  ];
+  const brutP = 7.5 + 10;
+  const netP = Math.round((7.5 * (1 - o.remise / 100) + 10) * 100) / 100;
+  const ht = Math.round(netP * o.passages * 100) / 100;
+  const devis = {
+    numero:'DEV-26-10/ MAEN/ SLG-03', date:new Date().toISOString(),
+    validite:new Date(Date.now()+30*86400000).toISOString(), commercial:'SIMON LG',
+    nature:'ENTRETIEN', passages:o.passages,
+    client:{type:'PRO', societe:'MAIRIE DE PLOEREN', contact:'', adresse:'1 place',
+            cp:'56400', ville:'Auray', siret:'', tva:'', tel:'', email:''},
+    lignes:lignes, objet:'', delai:'', remise:o.remise, notes:'',
+    signataire:'', signature:'', signeLe:0,
+    totaux:{ht:ht, tva:Math.round(ht*20)/100, ttc:Math.round(ht*120)/100,
+            htPonctuel:0, htMensuel:ht, parTaux:{20:Math.round(ht*20)/100}}
+  };
+  const b64 = PDF.base64(devis, CFG.reglages);
+  const bin = atob(b64.split(',').pop());
+  const oct = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) oct[i] = bin.charCodeAt(i);
+  const doc = await window.pdfjsLib.getDocument({data:oct}).promise;
+  let txt = '';
+  for(let n=1; n<=doc.numPages; n++){
+    const tc = await (await doc.getPage(n)).getTextContent();
+    txt += tc.items.map(i=>i.str).join(' ') + '\n';
+  }
+  return {texte:txt.replace(/\s+/g,' '), ht:ht, brutP:brutP, netP:netP};
+}, {passages:passages, remise:remise});
+
+let m = await mois(4, 0);
+T('le prix d\'un passage est imprimé', /Prix d'un passage HT 17,50/.test(m.texte), m.texte.slice(-700));
+T('le nombre de passages aussi', /Passages par mois 4/.test(m.texte), m.texte.slice(-700));
+T('le total mensuel est celui des quatre passages', /Total mensuel HT 70,00/.test(m.texte), m.texte.slice(-700));
+T('la TVA imprimée est celle du mois, pas celle d\'un passage',
+  /TVA \( 20 % \) 14,00/.test(m.texte), m.texte.slice(-700));
+T('et le TTC mensuel tombe avec les deux autres',
+  /Total TTC \/ mois 84,00/.test(m.texte), m.texte.slice(-700));
+
+m = await mois(1, 0);
+T('un seul passage par mois reste juste lui aussi',
+  /Total mensuel HT 17,50/.test(m.texte) && /TVA \( 20 % \) 3,50/.test(m.texte),
+  m.texte.slice(-700));
+
+m = await mois(4, 10);
+T('la remise d\'un contrat d\'entretien apparaît bien',
+  /Sous-total HT/.test(m.texte), m.texte.slice(-800));
+T('le sous-total remisé est celui du mois', /Sous-total HT 70,00/.test(m.texte), m.texte.slice(-800));
+T('la remise est chiffrée au mois', /- 3,00/.test(m.texte), m.texte.slice(-800));
+T('le total mensuel est bien le montant remisé',
+  /Total mensuel HT 67,00/.test(m.texte), m.texte.slice(-800));
+T('et la TVA suit', /TVA \( 20 % \) 13,40/.test(m.texte), m.texte.slice(-800));
+
+/* Une intervention, elle, n'a qu'un seul montant : rien ne doit être multiplié. */
+const ponctuel = await p.evaluate(async () => {
+  const lignes = [{categorie:'Vitrerie', reference:'REF-0001', designation:'Nettoyage de vitres',
+    detail:'', qte:20, unite:'m²', pu:2.5, rem:0, tva:20, type:'PONCTUEL'}];
+  const devis = {numero:'DEV-26-10/ MAEN/ SLG-04', date:new Date().toISOString(),
+    validite:new Date().toISOString(), commercial:'SIMON LG', nature:'REMISE', passages:0,
+    client:{type:'PRO', societe:'A', contact:'', adresse:'1', cp:'56400', ville:'Auray',
+            siret:'', tva:'', tel:'', email:''},
+    lignes:lignes, objet:'', delai:'', remise:0, notes:'', signataire:'', signature:'', signeLe:0,
+    totaux:{ht:50, tva:10, ttc:60, htPonctuel:50, htMensuel:0, parTaux:{20:10}}};
+  const b64 = PDF.base64(devis, CFG.reglages);
+  const bin = atob(b64.split(',').pop());
+  const oct = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) oct[i] = bin.charCodeAt(i);
+  const doc = await window.pdfjsLib.getDocument({data:oct}).promise;
+  const tc = await (await doc.getPage(1)).getTextContent();
+  return tc.items.map(i=>i.str).join(' ').replace(/\s+/g,' ');
+});
+T('une intervention garde un total HT simple', /Total HT 50,00/.test(ponctuel), ponctuel.slice(-500));
+T('sa TVA n\'est pas multipliée', /TVA \( 20 % \) 10,00/.test(ponctuel), ponctuel.slice(-500));
+T('et elle ne parle pas de passages', !/Passages par mois/.test(ponctuel), ponctuel.slice(-500));
+
 await b.close();
 console.log('\n=== LE DEVIS IMPRIMÉ (v39) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
