@@ -288,7 +288,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v50';
+var VERSION_APP = 'v51';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1092,6 +1092,7 @@ function choisirType(t){
   purgerSelonNature();
   majType();
   majNature();
+  majKm();
   sauverBrouillon();
 }
 
@@ -1100,6 +1101,7 @@ function choisirNature(n){
   if(n !== 'ENTRETIEN') PASSAGES = 0;
   var retirees = purgerSelonNature();
   majNature();
+  majKm();
   if(ETAPE === 3) rendreLignes();
   if(retirees) majBarre();
   sauverBrouillon();
@@ -1266,6 +1268,16 @@ function catalogueVisible(){
 /* Les écrans désignent une prestation par son rang dans la liste affichée.
    C'est donc cette liste-là, et pas le catalogue entier, qu'il faut consulter. */
 function presta(i){ return CATV[i] || null; }
+/* La prestation du catalogue qui porte cette référence, ou null. */
+function prestationRef(ref){
+  ref = String(ref || '').trim();
+  if(!ref) return null;
+  var c = (CFG && CFG.catalogue) || [];
+  for(var i = 0; i < c.length; i++){
+    if(String(c[i].reference || '').trim() === ref) return c[i];
+  }
+  return null;
+}
 
 /* Changer de nature en cours de devis peut retirer du catalogue une prestation
    déjà chiffrée. On ne la laisse pas dans l'ombre, comptée au total sans être
@@ -1647,12 +1659,139 @@ function ligneMajoration(){
 }
 /* Ce que le devis contient vraiment : les prestations, puis la majoration. C'est
    cette liste que reçoivent le total, le PDF et le classeur. */
-function lignesDevis(){
-  var m = ligneMajoration();
-  return m ? LIGNES.concat([m]) : LIGNES.slice();
+/* ====================== L'ÉLOIGNEMENT DU CLIENT ======================
+   Sur un contrat d'entretien, et sur lui seul, chaque kilomètre au-delà de la
+   franchise ajoute quelques euros au prix d'un passage : un entretien, ce sont
+   des passages répétés, et chaque passage est un trajet depuis l'agence.
+
+   La majoration ne s'écrit pas sur le devis. Elle est fondue dans les prix
+   unitaires, relevés tous du même pourcentage, de sorte que le passage monte
+   d'exactement le supplément. Le classeur refait ce calcul pour vérifier les
+   prix reçus : c'est pourquoi les deux côtés arrondissent au dix-millième.
+
+   La distance vient de la table des communes que le bureau envoie à la
+   connexion — le devis se chiffre chez le client, souvent sans réseau. Le
+   commercial peut la corriger ; le bureau compare et signale un écart. */
+var KM = '';            // ce qui est écrit dans le champ, '' si rien
+var KM_AUTO = false;    // vrai tant que le chiffre vient de la table
+
+function nbReglage(cle){
+  var v = (CFG && CFG.reglages) ? CFG.reglages[cle] : null;
+  if(v === undefined || v === null || String(v).trim() === '') return 0;
+  var n = Number(String(v).replace(',', '.'));
+  return isFinite(n) && n >= 0 ? n : 0;
 }
+function cleCommune(cp, ville){
+  var c = String(cp||'').replace(/\D/g,'').slice(0,5);
+  var v = String(ville||'');
+  if(v.normalize) v = v.normalize('NFD').replace(/[̀-ͯ]/g,'');
+  v = v.toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+  return (c || v) ? c + ' ' + v : '';
+}
+/* Ce que le bureau sait de cette commune, ou -1. */
+function kmTable(cp, ville){
+  var t = (CFG && CFG.communes) || {};
+  var cle = cleCommune(cp, ville);
+  if(cle && t.hasOwnProperty(cle)) return Number(t[cle]);
+  var cp5 = String(cp||'').replace(/\D/g,'').slice(0,5);
+  if(cp5){
+    for(var k in t){ if(t.hasOwnProperty(k) && k.indexOf(cp5+' ') === 0) return Number(t[k]); }
+  }
+  return -1;
+}
+function kmDevis(){
+  var n = Number(String(KM).replace(',', '.'));
+  return (String(KM).trim() !== '' && isFinite(n) && n >= 0) ? n : 0;
+}
+/* Les euros ajoutés à UN passage. Zéro hors entretien, zéro sous la franchise. */
+function supplementKm(){
+  if(!estEntretien()) return 0;
+  var eur = nbReglage('majoration_km_eur');
+  if(!(eur > 0)) return 0;
+  var sup = eur * Math.max(0, kmDevis() - nbReglage('majoration_km_franchise'));
+  return Math.round(sup * 100) / 100;
+}
+/* Le taux dont les prix unitaires sont relevés : rien ne s'écrit sur le devis,
+   ce sont les prix eux-mêmes qui portent l'éloignement. */
+function tauxSupKm(){
+  var sup = supplementKm();
+  if(!(sup > 0)) return 0;
+  var base = 0;
+  LIGNES.forEach(function(l){
+    if(String(l.reference||'') === REF_MAJ) return;
+    base += (Number(l.qte)||0) * (Number(l.pu)||0);
+  });
+  return base > 0 ? sup / base : 0;
+}
+/* Le pas d'arrondi d'un prix relevé : au dixième d'euro à partir d'un euro,
+   au centime en dessous. Un prix au m² vaut quelques centimes — l'arrondir au
+   dixième le ferait bondir d'un tiers, et le supplément n'aurait plus aucun
+   rapport avec la distance. */
+function pasArrondi(pu){
+  var p = nbReglage('majoration_km_arrondi');
+  if(!(p > 0)) return 0.01;
+  return Math.abs(Number(pu)||0) >= 1 ? p : 0.01;
+}
+function prixAvecKm(pu, taux){
+  var pas = pasArrondi(pu);
+  var v = (Number(pu)||0) * (1 + (taux||0));
+  return Math.round(Math.round(v / pas) * pas * 100) / 100;
+}
+/* Le champ : rempli d'après la commune, et modifiable. */
+function majKm(){
+  var b = $('blocKm');
+  if(!b) return;
+  var visible = estEntretien() && nbReglage('majoration_km_eur') > 0;
+  b.classList.toggle('hide', !visible);
+  if(!visible){ KM = ''; KM_AUTO = false; if($('cKm')) $('cKm').value = ''; return; }
+  var t = kmTable(val('cCp'), val('cVille'));
+  if(t >= 0 && (KM_AUTO || String(KM).trim() === '')){
+    KM = String(t); KM_AUTO = true;
+  }
+  if($('cKm')) $('cKm').value = KM;
+  noteKm();
+  if(ETAPE === 4) calculer();
+}
+function saisirKm(){
+  KM = val('cKm');
+  KM_AUTO = false;
+  noteKm();
+  if(ETAPE === 4) calculer();
+}
+function noteKm(){
+  var n = $('kmNote');
+  if(!n) return;
+  var fr = nbReglage('majoration_km_franchise'), sup = supplementKm();
+  if(String(KM).trim() === ''){
+    n.textContent = 'km depuis l\'agence — commune inconnue du bureau, à saisir';
+    return;
+  }
+  n.textContent = 'km' + (sup > 0
+    ? ' · environ ' + eur(sup) + ' de plus par passage'
+    : ' · dans les ' + nb(fr) + ' km compris') +
+    (KM_AUTO ? '' : ' (saisi)');
+}
+
+/* Ce que le devis contient vraiment : les prestations, prix relevés de
+   l'éloignement du client sur un entretien, puis la majoration d'état des
+   lieux sur une intervention. Jamais les deux : un entretien n'est pas majoré,
+   et une intervention ne paie pas la distance. */
+function lignesDevis(){
+  var taux = tauxSupKm();
+  var ls = LIGNES.map(function(l){
+    if(!taux) return l;
+    var c = {}; for(var k in l){ if(l.hasOwnProperty(k)) c[k] = l[k]; }
+    c.pu = prixAvecKm(l.pu, taux);
+    return c;
+  });
+  var m = ligneMajoration();
+  return m ? ls.concat([m]) : ls;
+}
+/* Les prestations seules : la majoration, elle, se recalcule. */
 function sansMajoration(ls){
-  return (ls || []).filter(function(l){ return String((l && l.reference) || '') !== REF_MAJ; });
+  return (ls || []).filter(function(l){
+    return String((l && l.reference) || '') !== REF_MAJ;
+  });
 }
 function setEtat(e){
   ETAT = (e === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';
@@ -2083,13 +2222,16 @@ function sauverBrouillon(){
                     plus2ans:PLUS2ANS, taux:TAUX, dateSouhaitee:val('fDate'),
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
-                    nature:NATURE, passages:PASSAGES, etat:ETAT});
+                    nature:NATURE, passages:PASSAGES, etat:ETAT,
+                    km:KM, kmAuto:KM_AUTO});
 }
 function restaurer(b){
   LIGNES = sansMajoration(b.lignes);
   ETAT = (b.etat === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';   // l'ancien palier « sale » n'existe plus
   NATURE = b.nature || null;
   PASSAGES = Number(b.passages) || 0;
+  KM = (b.km === undefined || b.km === null) ? '' : String(b.km);
+  KM_AUTO = b.kmAuto !== false;
   REMISE = {valeur:0, muet:false};
   if(b.remise && typeof b.remise === 'object'){
     REMISE = {valeur:Number(b.remise.valeur)||0, muet:!!b.remise.muet};
@@ -2113,6 +2255,7 @@ function restaurer(b){
   majNature();
   ['Societe','Siret','Tva','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
     $('c'+k).value = c[k.toLowerCase()]||''; });
+  majKm();
   $('fObjet').value = b.objet||'';
   $('fDate').value = b.dateSouhaitee||'';
   $('fDelai').value = b.delai||'';
@@ -2245,6 +2388,9 @@ function enregistrerSuite(b, envoi, moi, secours){
     var quandSig = SIG.image ? (SIG.quand || Date.now()) : 0;
     var devis = {
       numero: prochainNumero(moi.nom, nomClient(client), !!SIG.image, quandSig || Date.now()),
+      /* La distance retenue : c'est elle qui a relevé les prix unitaires, et
+         c'est sur elle que le bureau refera le calcul. */
+      km: estEntretien() && String(KM).trim() !== '' ? kmDevis() : '',
       date: new Date().toISOString(),
       validite: new Date(Date.now()+jours*86400000).toISOString(),
       commercial: moi.nom,
@@ -2349,10 +2495,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=50';
+    sc.src = 'visionneuse.js?v=51';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=50';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=51';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2822,9 +2968,22 @@ function dupliquer(id, btn){
     tracer('DEVIS DUPLIQUE', 'repris de ' + e.numero, e.numero);
     /* La majoration d'un ancien devis ne se recopie pas : elle se recalcule,
        à partir de l'état noté et des taux d'aujourd'hui. */
+    /* Les prix d'un devis d'entretien portent déjà l'éloignement du client :
+       les recopier tels quels le compterait deux fois. On repart donc du
+       catalogue d'aujourd'hui, seul prix que le bureau accepte de toute façon. */
     LIGNES = sansMajoration(d.lignes).map(function(l){
       var o = {}; for(var k in l){ if(l.hasOwnProperty(k)) o[k] = l[k]; } return o;
     });
+    LIGNES.forEach(function(l){
+      var pr = prestationRef(l.reference);
+      if(pr) l.pu = Number(pr.pu) || 0;
+    });
+    NATURE = d.nature || NATURE;
+    PASSAGES = Number(d.passages) || 0;
+    KM = (d.km === undefined || d.km === null) ? '' : String(d.km);
+    KM_AUTO = true;
+    majNature();
+    majKm();
     ETAT = (d.etatSite === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';
     $('fObjet').value = d.objet || '';
     // La date d'un ancien devis n'a plus cours : on la laisse à choisir.
@@ -3561,11 +3720,12 @@ function nouveauDevis(){
   REMISE = {valeur:0, muet:false};
   NATURE = null; PASSAGES = 0;
   ETAT = 'NORMAL';
+  KM = ''; KM_AUTO = true;
   GRP = {};
   PHOTO_ID = null;
   cacherSugg();
-  ['cSociete','cSiret','cTva','cContact','cTel','cEmail','cAdresse','cCp','cVille','fSignataire','fNotes','fObjet','fDelai','fDate']
-    .forEach(function(id){ $(id).value=''; });
+  ['cSociete','cSiret','cTva','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate']
+    .forEach(function(id){ if($(id)) $(id).value=''; });
   $('fObjet').value = '';
   $('fEnvoi').checked = false;
   $('mSiret').textContent = 'Le n° de TVA se complète tout seul à partir du SIRET.';

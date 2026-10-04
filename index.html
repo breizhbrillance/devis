@@ -394,8 +394,16 @@
     <label id="lAdresse">Adresse du site à nettoyer</label>
     <input id="cAdresse">
     <div class="row">
-      <div style="max-width:130px"><label>Code postal</label><input id="cCp" inputmode="numeric"></div>
-      <div><label>Ville</label><input id="cVille"></div>
+      <div style="max-width:130px"><label>Code postal</label><input id="cCp" inputmode="numeric" oninput="majKm()"></div>
+      <div><label>Ville</label><input id="cVille" oninput="majKm()" onchange="majKm()"></div>
+    </div>
+    <!-- La distance ne sert qu'à l'entretien : chaque passage est un trajet. -->
+    <div id="blocKm" class="hide">
+      <label>Distance depuis l'agence</label>
+      <div class="row">
+        <div style="max-width:130px"><input id="cKm" inputmode="decimal" oninput="saisirKm()"></div>
+        <div class="mini" id="kmNote" style="align-self:center"></div>
+      </div>
     </div>
     <div id="blocAge" class="hide">
       <label>Le logement a-t-il plus de deux ans ?</label>
@@ -774,11 +782,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=50"></script>
-<script src="jspdf.umd.min.js?v=50"></script>
-<script src="police.js?v=50"></script>
-<script src="logo.js?v=50"></script>
-<script src="pdf.js?v=50"></script>
-<script src="app.js?v=50"></script>
+<script src="config.js?v=51"></script>
+<script src="jspdf.umd.min.js?v=51"></script>
+<script src="police.js?v=51"></script>
+<script src="logo.js?v=51"></script>
+<script src="pdf.js?v=51"></script>
+<script src="app.js?v=51"></script>
 </body>
 </html>

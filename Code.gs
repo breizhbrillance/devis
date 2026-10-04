@@ -21,7 +21,8 @@ var SH = {
   PRESTATAIRES: 'PRESTATAIRES',
   CHANTIERS: 'CHANTIERS',
   ADMINS: 'ADMINS',
-  ABSENCES: 'ABSENCES'
+  ABSENCES: 'ABSENCES',
+  COMMUNES: 'COMMUNES'
 };
 
 /* Les agents qui exécutent le travail. Feuille séparée des COMMERCIAUX : ce ne
@@ -82,10 +83,11 @@ function onOpen() {
     .addItem('6. Mettre à jour la structure du fichier', 'majStructure')
     .addItem('7. Charger la grille de prix', 'chargerGrillePrix')
     .addItem('8. Purger le journal des actions', 'purgerJournal')
+    .addItem('9. Mesurer la distance des communes', 'mesurerCommunes')
     .addSeparator()
-    .addItem('9. Rafraîchir « À facturer » et le tableau de bord', 'rafraichirSuivi')
-    .addItem('10. Activer le rappel quotidien aux commerciaux', 'activerAutomate')
-    .addItem('11. Arrêter le rappel quotidien', 'arreterAutomate')
+    .addItem('10. Rafraîchir « À facturer » et le tableau de bord', 'rafraichirSuivi')
+    .addItem('11. Activer le rappel quotidien aux commerciaux', 'activerAutomate')
+    .addItem('12. Arrêter le rappel quotidien', 'arreterAutomate')
     .addToUi();
 }
 
@@ -209,7 +211,10 @@ var ENTETES_DEVIS_ = [
      reçoit un neuf (mois de signature, suffixe / S). C'est par cette colonne
      qu'on retrouve le devis quand le client rappelle avec le numéro de
      l'exemplaire qu'il a reçu avant de signer. */
-  'NUMERO_ORIGINE'
+  'NUMERO_ORIGINE',
+  /* Distance routière entre l'agence et le client, en kilomètres. Elle ne sert
+     que sur un contrat d'entretien, où chaque passage est un trajet. */
+  'KM_AGENCE'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -218,6 +223,13 @@ var ENTETES_DEVIS_ = [
    A RELANCER : le client réfléchit, une date de relance est posée.
    REFUSE : perdu, avec son motif. EXPIRE : validité dépassée sans réponse. */
 var STATUTS_ = ['REMIS', 'SIGNE', 'A RELANCER', 'REFUSE', 'EXPIRE'];
+
+/* Les communes du secteur et leur distance routière depuis l'agence. Le
+   téléphone reçoit cette table à la connexion : il chiffre le devis chez le
+   client, souvent sans réseau, et ne peut pas interroger Google Maps à ce
+   moment-là. SOURCE dit d'où vient le chiffre — MAPS, ou le commercial qui
+   l'a saisi pour une commune que la table ne connaissait pas encore. */
+var ENTETES_COMMUNES_ = ['CP', 'VILLE', 'KM', 'SOURCE', 'CALCULE_LE'];
 
 var ENTETES_LIGNES_ = [
   'NUMERO', 'ORDRE', 'CATEGORIE', 'REFERENCE', 'DESIGNATION', 'DETAIL', 'QTE', 'UNITE',
@@ -264,8 +276,9 @@ function majStructure_() {
   creerOnglet_(ss, SH.ADMINS, ENTETES_ADMINS_);
   creerOnglet_(ss, SH.CHANTIERS, ENTETES_CHANTIERS_);
   creerOnglet_(ss, SH.ABSENCES, ENTETES_ABSENCES_);
+  creerOnglet_(ss, SH.COMMUNES, ENTETES_COMMUNES_);
   [[SH.PRESTATAIRES, ENTETES_PRESTATAIRES_], [SH.CHANTIERS, ENTETES_CHANTIERS_],
-   [SH.ADMINS, ENTETES_ADMINS_],
+   [SH.ADMINS, ENTETES_ADMINS_], [SH.COMMUNES, ENTETES_COMMUNES_],
    [SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES']]]
     .forEach(function (o) {
       var sh2 = ss.getSheetByName(o[0]);
@@ -411,6 +424,14 @@ var REGLAGES_DEFAUT_ = [
    'OUI : l\'appli pose aussi des chantiers les jours fériés'],
   ['majoration_tres_sale', '30',
    'Majoration en % quand le commercial coche « site très sale » — 0 pour retirer la coche'],
+  ['agence_adresse', '39 avenue de Verdun, 56000 Vannes',
+   'D\'où partent les tournées — sert à mesurer la distance des communes'],
+  ['majoration_km_eur', '0,90',
+   'Entretien : euros ajoutés par kilomètre et par passage, au-delà de la franchise — 0 pour retirer'],
+  ['majoration_km_franchise', '10',
+   'Entretien : kilomètres compris dans le prix, sans majoration'],
+  ['majoration_km_arrondi', '0,10',
+   'Entretien : les prix relevés de l\'éloignement sont arrondis à ce pas, à partir d\'un euro (au centime en dessous)'],
   ['banniere_url', 'https://breizhbrillance.github.io/devis/banniere.jpg',
    'Image placée en bas de tous les courriels envoyés par l\'appli — vide : aucune bannière'],
   ['banque_nom', 'CMB Saint Avé', 'Coordonnées bancaires imprimées sur le devis'],
@@ -552,6 +573,9 @@ function config_(com) {
     /* Les initiales que porteront les numéros de ce commercial : le téléphone
        numérote hors connexion, il ne peut pas les demander au moment venu. */
     initiales: (com && com.initiales) || '',
+    /* La distance des communes du secteur : le téléphone chiffre l'entretien
+       chez le client, souvent sans réseau, et ne peut pas la demander. */
+    communes: lireCommunes_(),
     compteurs: compteurs_(),    // dernier rang par série : évite qu'un
     reglages: reg,              // téléphone réinstallé reparte au rang 01
     catalogue: lireCatalogue_()
@@ -950,7 +974,14 @@ function enregistrer_(d, com) {
   }
 
   var c = devis.client || {}, t = devis.totaux || {};
-  var controleTarif = controlerTarifs_(devis, reg);
+  var communes = lireCommunes_();
+  var controleTarif = controlerTarifs_(devis, reg, communes);
+  var kmDevis = natureDevis_(devis.nature) === 'ENTRETIEN' ? kmDevis_(devis, communes) : '';
+  /* Une commune encore inconnue entre dans la table avec le chiffre du
+     commercial : le prochain devis n'aura plus à le ressaisir. */
+  if (kmDevis !== '' && kmTable_(c.cp, c.ville, communes) < 0) {
+    try { noterCommune_(c.cp, c.ville, kmDevis, 'COMMERCIAL'); } catch (eC2) {}
+  }
   var v = {
     NUMERO: devis.numero, DATE: new Date(devis.date), COMMERCIAL: devis.commercial,
     CLIENT: c.societe || c.contact || '',
@@ -984,6 +1015,7 @@ function enregistrer_(d, com) {
        intervention unique, c'est le cas le moins coûteux à corriger. */
     NATURE: natureDevis_(devis.nature),
     ETAT_SITE: etatSite_(devis.etatSite),
+    KM_AGENCE: kmDevis,
     PASSAGES_MOIS: Number(devis.passages) || ''
   };
   if (controleTarif) {
@@ -2832,7 +2864,219 @@ function etatSite_(v) {
   return e === 'TRES_SALE' ? e : 'NORMAL';
 }
 
-function controlerTarifs_(devis, reg) {
+/* ====================== LA DISTANCE DEPUIS L'AGENCE ======================
+   Décision de Simon (3 octobre 2026) : sur un contrat d'entretien, et sur lui
+   seul, chaque kilomètre au-delà de 10 km ajoute 0,90 € au prix d'un passage.
+
+   Pourquoi là et pas ailleurs : un entretien, ce sont des passages répétés, et
+   chaque passage est un trajet. Les agents partent de l'agence et enchaînent
+   un secteur dans la journée ; ramené au client, le trajet revient donc à peu
+   près à un aller simple, soit environ 0,88 € du kilomètre entre le temps de
+   route et le véhicule. Les dix premiers kilomètres sont compris dans le prix
+   de base ; au-delà, le client paie ce que son éloignement coûte en plus.
+
+   La majoration ne s'écrit pas sur le devis : elle est fondue dans les prix
+   unitaires, relevés tous du même pourcentage. C'est ce qui explique que
+   controlerTarifs_ n'attende pas le prix du catalogue tel quel, mais le prix
+   du catalogue relevé de ce pourcentage.
+
+   La distance vient de l'onglet COMMUNES, que le téléphone reçoit à la
+   connexion : il chiffre chez le client, souvent sans réseau. Le commercial
+   peut la corriger ; le classeur compare alors sa saisie à la table et le
+   signale si les deux divergent. */
+
+function nombreReglage_(v) {
+  var n = Number(String(v === undefined || v === null ? '' : v).replace(',', '.').trim());
+  return isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** La clé d'une commune : code postal et ville, sans accent ni casse. */
+function cleCommune_(cp, ville) {
+  var c = String(cp || '').replace(/\D/g, '').slice(0, 5);
+  var v = String(ville || '');
+  if (v.normalize) v = v.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  v = v.toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+  if (!c && !v) return '';
+  return c + ' ' + v;
+}
+
+/** La table des communes, prête pour le téléphone : { '56000 VANNES': 0 }. */
+function lireCommunes_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.COMMUNES);
+  var out = {};
+  if (!sh || sh.getLastRow() < 2) return out;
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim().toUpperCase(); });
+  var cCp = en.indexOf('CP'), cV = en.indexOf('VILLE'), cK = en.indexOf('KM');
+  if (cCp < 0 || cV < 0 || cK < 0) return out;
+  sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues().forEach(function (r) {
+    var cle = cleCommune_(r[cCp], r[cV]);
+    var km = Number(String(r[cK] === undefined ? '' : r[cK]).replace(',', '.'));
+    if (cle && isFinite(km) && km >= 0 && String(r[cK]).trim() !== '') out[cle] = km;
+  });
+  return out;
+}
+
+/** La distance que le classeur connaît pour ce client, ou -1. */
+function kmTable_(cp, ville, communes) {
+  communes = communes || lireCommunes_();
+  var cle = cleCommune_(cp, ville);
+  if (cle && communes.hasOwnProperty(cle)) return communes[cle];
+  /* Même code postal, autre orthographe de la ville : on retombe dessus. */
+  var cp5 = String(cp || '').replace(/\D/g, '').slice(0, 5);
+  if (cp5) {
+    for (var k in communes) {
+      if (communes.hasOwnProperty(k) && k.indexOf(cp5 + ' ') === 0) return communes[k];
+    }
+  }
+  return -1;
+}
+
+/** La distance retenue pour un devis : celle qu'il porte, sinon la table. */
+function kmDevis_(devis, communes) {
+  var c = (devis && devis.client) || {};
+  var k = Number(String(devis && devis.km !== undefined ? devis.km : '').replace(',', '.'));
+  if (isFinite(k) && k >= 0 && String(devis && devis.km).trim() !== '') return k;
+  var t = kmTable_(c.cp, c.ville, communes);
+  return t >= 0 ? t : 0;
+}
+
+/** Les euros ajoutés à UN passage par l'éloignement du client. */
+function supplementKm_(devis, reg, communes) {
+  if (natureDevis_(devis && devis.nature) !== 'ENTRETIEN') return 0;
+  var eur = nombreReglage_(reg.majoration_km_eur);
+  if (!(eur > 0)) return 0;
+  var sup = eur * Math.max(0, kmDevis_(devis, communes) - nombreReglage_(reg.majoration_km_franchise));
+  return Math.round(sup * 100) / 100;
+}
+
+/**
+ * Le pas d'arrondi d'un prix relevé. Au dixième d'euro à partir d'un euro :
+ * c'est ce qui donne une grille lisible. Au centime en dessous, parce qu'un
+ * prix au m² vaut quelques centimes — l'arrondir au dixième le ferait bondir
+ * d'un tiers, et le supplément n'aurait plus aucun rapport avec la distance.
+ */
+function pasArrondi_(pu, reg) {
+  var p = nombreReglage_((reg || {}).majoration_km_arrondi);
+  if (!(p > 0)) return 0.01;
+  return Math.abs(Number(pu) || 0) >= 1 ? p : 0.01;
+}
+
+/**
+ * Le pourcentage dont les prix unitaires sont relevés. Il se déduit du
+ * supplément et du prix catalogue des prestations : relever chaque prix de ce
+ * pourcentage fait monter le passage d'à peu près le supplément — « à peu
+ * près » parce que l'arrondi reprend d'une main ce qu'il donne de l'autre,
+ * de quelques dizaines de centimes au plus.
+ */
+function tauxSupKm_(devis, reg, cat, communes) {
+  var sup = supplementKm_(devis, reg, communes);
+  if (!(sup > 0)) return 0;
+  var base = 0;
+  ((devis && devis.lignes) || []).forEach(function (l) {
+    if (String(l.reference || '').trim() === REF_MAJORATION_) return;
+    var p = cat[String(l.reference || '').trim()];
+    if (!p) return;
+    base += (Number(l.qte) || 0) * (Number(p.pu) || 0);
+  });
+  if (!(base > 0)) return 0;
+  return sup / base;
+}
+
+/** Le prix unitaire attendu sur le devis, éloignement compris et arrondi. */
+function prixAttendu_(pu, taux, reg) {
+  var pas = pasArrondi_(pu, reg);
+  var v = (Number(pu) || 0) * (1 + (taux || 0));
+  return Math.round(Math.round(v / pas) * pas * 100) / 100;
+}
+
+/** La distance routière agence → commune, en kilomètres, ou -1. */
+function kmDepuisAgence_(cp, ville, reg) {
+  var depart = String((reg || {}).agence_adresse || '').trim();
+  var arrivee = String(cp || '').trim() + ' ' + String(ville || '').trim() + ', France';
+  if (!depart || !String(ville || '').trim()) return -1;
+  try {
+    var r = Maps.newDirectionFinder()
+      .setOrigin(depart).setDestination(arrivee)
+      .setMode(Maps.DirectionFinder.Mode.DRIVING)
+      .setRegion('fr')
+      .getDirections();
+    var jambe = r && r.routes && r.routes[0] && r.routes[0].legs && r.routes[0].legs[0];
+    if (jambe && jambe.distance && isFinite(Number(jambe.distance.value))) {
+      return Math.round(Number(jambe.distance.value) / 100) / 10;   // au dixième de km
+    }
+  } catch (e) {}
+  return -1;
+}
+
+/**
+ * Ajoute une commune à la table, si elle n'y est pas déjà. Appelée quand un
+ * devis arrive d'une commune inconnue : la table se remplit toute seule au fil
+ * des clients, et Simon n'a qu'à vérifier les kilomètres mesurés.
+ */
+function noterCommune_(cp, ville, km, source) {
+  var cle = cleCommune_(cp, ville);
+  if (!cle || !String(ville || '').trim()) return false;
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.COMMUNES);
+  if (!sh) return false;
+  if (sh.getLastRow() > 1) {
+    var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+      .map(function (x) { return String(x).trim().toUpperCase(); });
+    var cCp = en.indexOf('CP'), cV = en.indexOf('VILLE');
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+    for (var i = 0; i < v.length; i++) {
+      if (cleCommune_(v[i][cCp], v[i][cV]) === cle) return false;
+    }
+  }
+  sh.appendRow([String(cp || ''), String(ville || ''),
+                (km >= 0 ? km : ''), source || '', new Date()]);
+  return true;
+}
+
+/**
+ * Mesure la distance des communes qui n'en ont pas encore. Les villes des
+ * devis déjà reçus sont ajoutées à la table au passage : un seul appui et le
+ * secteur est couvert.
+ */
+function mesurerCommunes() {
+  var ui = SpreadsheetApp.getUi();
+  majStructure_();
+  var reg = lireReglages_();
+  if (!String(reg.agence_adresse || '').trim()) {
+    ui.alert('Renseigne d\'abord le réglage agence_adresse dans l\'onglet REGLAGES.');
+    return;
+  }
+
+  // les communes vues sur les devis, ajoutées si elles manquent
+  lireDevis_().forEach(function (d) { noterCommune_(d.CP, d.VILLE, -1, ''); });
+
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.COMMUNES);
+  if (!sh || sh.getLastRow() < 2) {
+    ui.alert('Aucune commune à mesurer : la table est vide et aucun devis n\'en nomme.');
+    return;
+  }
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim().toUpperCase(); });
+  var cCp = en.indexOf('CP'), cV = en.indexOf('VILLE'), cK = en.indexOf('KM'),
+      cS = en.indexOf('SOURCE'), cD = en.indexOf('CALCULE_LE');
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+  var faits = 0, rates = [];
+  for (var i = 0; i < v.length; i++) {
+    if (String(v[i][cK]).trim() !== '') continue;        // déjà mesurée ou saisie
+    var km = kmDepuisAgence_(v[i][cCp], v[i][cV], reg);
+    if (km < 0) { rates.push(String(v[i][cV] || v[i][cCp])); continue; }
+    sh.getRange(i + 2, cK + 1).setValue(km);
+    if (cS >= 0) sh.getRange(i + 2, cS + 1).setValue('MAPS');
+    if (cD >= 0) sh.getRange(i + 2, cD + 1).setValue(new Date());
+    faits++;
+  }
+  ui.alert('Communes mesurées : ' + faits +
+           (rates.length ? '\n\nSans réponse de Google Maps : ' + rates.join(', ') +
+                           '\nÉcris leur distance à la main dans la colonne KM.' : '') +
+           '\n\nLes kilomètres déjà écrits n\'ont pas été touchés.');
+}
+
+function controlerTarifs_(devis, reg, communes) {
   var lignes = (devis && devis.lignes) || [];
   if (!lignes.length) return '';
 
@@ -2841,6 +3085,10 @@ function controlerTarifs_(devis, reg) {
     if (p.reference) cat[p.reference] = p;
     parNom[normNom_(p.designation)] = p;
   });
+
+  /* Les prix d'un entretien sont relevés de l'éloignement du client : ce n'est
+     pas le prix du catalogue qu'on attend, mais ce prix relevé puis arrondi. */
+  var tauxKm = tauxSupKm_(devis, reg, cat, communes);
 
   var max = Number(String(reg.remise_max === undefined ? 0 : reg.remise_max).replace(',', '.'));
   if (!isFinite(max) || max < 0) max = 0;
@@ -2882,9 +3130,10 @@ function controlerTarifs_(devis, reg) {
     } else if (!p) {
       ecarts.push(rang + ' : hors catalogue');
     } else {
-      var attendu = Number(p.pu) || 0, recu = Number(l.pu) || 0;
+      var attendu = prixAttendu_(p.pu, tauxKm, reg), recu = Number(l.pu) || 0;
       if (Math.abs(attendu - recu) > 0.005) {
-        ecarts.push(rang + ' : prix ' + recu + ' au lieu de ' + attendu);
+        ecarts.push(rang + ' : prix ' + recu + ' au lieu de ' + attendu +
+                    (tauxKm > 0 ? ' (éloignement compris)' : ''));
       }
     }
 
@@ -2893,6 +3142,19 @@ function controlerTarifs_(devis, reg) {
       ecarts.push(rang + ' : remise ' + rem + ' % au lieu de ' + max + ' % maximum');
     }
   });
+
+  /* La distance saisie par le commercial contre celle que le classeur connaît :
+     c'est elle qui fixe le supplément, elle ne doit pas être inventée. */
+  if (natureDevis_(devis.nature) === 'ENTRETIEN' &&
+      String(devis.km === undefined || devis.km === null ? '' : devis.km).trim() !== '') {
+    var c = devis.client || {};
+    var vue = kmTable_(c.cp, c.ville, communes);
+    var dite = Number(String(devis.km).replace(',', '.'));
+    if (vue >= 0 && isFinite(dite) && Math.abs(vue - dite) > 1.01) {
+      ecarts.push('distance ' + dite + ' km au lieu de ' + vue + ' km pour ' +
+                  (c.cp || '') + ' ' + (c.ville || ''));
+    }
+  }
 
   if (!ecarts.length) return '';
   return 'À VÉRIFIER — ' + ecarts.join(' ; ');

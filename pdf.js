@@ -246,7 +246,12 @@ var PDF = (function () {
       var hG = 2.6 + tg.length * 4;
       // un titre de poste ne reste jamais seul en bas de page :
       // on exige la place d'au moins une prestation en dessous
-      if (y + hG + 12 > BAS_UTILE) { y = nouvellePage(); zebre = 0; }
+      if (y + hG + 12 > BAS_UTILE) {
+        y = nouvellePage(); zebre = 0;
+        /* Le bandeau de titres repris en haut de page écrit en blanc : sans ce
+           rappel, le titre du poste s'écrirait en blanc sur blanc. */
+        police('bold', 8.6, MARQUE);
+      }
       var yg = y + 4.4;
       tg.forEach(function (t) {
         doc.text(t, COL.des.g, yg);
@@ -317,20 +322,29 @@ var PDF = (function () {
     });
     ordreTaux.sort(function (a, b) { return a - b; });
 
-    /* Le brut se recalcule à partir des lignes plutôt que de se lire dans les
-       totaux : un devis établi avant la remise unique n'a pas ce champ, et son
-       PDF doit continuer à sortir juste. */
-    var brutTotal = Math.round((devis.lignes || []).reduce(
-      function (s, l) { return s + brutLigne(l); }, 0) * 100) / 100;
-    var remiseEur = Math.round((brutTotal - (Number(t.ht) || 0)) * 100) / 100;
-    var remisePct = Number(devis.remise) || 0;
-    var avecRemise = remiseEur > 0.005;
-
     /* Un contrat d'entretien se chiffre au passage et se vend au mois : le
        client doit lire les deux, sinon le montant mensuel tombe du ciel. */
     var passages = Math.round(Number(devis.passages) || 0);
     var entretien = String(devis.nature || '').toUpperCase() === 'ENTRETIEN' && passages > 0;
     var parPassage = entretien ? Math.round((Number(t.ht) || 0) / passages * 100) / 100 : 0;
+
+    /* Les lignes d'un entretien sont celles d'UN passage. Tout ce qui se
+       recalcule à partir d'elles doit donc être porté au mois, comme le sont
+       déjà le total HT et le TTC : sans cela le client lirait un HT mensuel,
+       une TVA de passage et un TTC mensuel — trois chiffres qui ne tombent
+       pas ensemble — et la remise d'un contrat disparaîtrait du devis. */
+    if (entretien) {
+      ordreTaux.forEach(function (taux) { parTaux[taux] = parTaux[taux] * passages; });
+    }
+
+    /* Le brut se recalcule à partir des lignes plutôt que de se lire dans les
+       totaux : un devis établi avant la remise unique n'a pas ce champ, et son
+       PDF doit continuer à sortir juste. */
+    var brutTotal = Math.round((devis.lignes || []).reduce(
+      function (s, l) { return s + brutLigne(l); }, 0) * (entretien ? passages : 1) * 100) / 100;
+    var remiseEur = Math.round((brutTotal - (Number(t.ht) || 0)) * 100) / 100;
+    var remisePct = Number(devis.remise) || 0;
+    var avecRemise = remiseEur > 0.005;
 
     var hBoite = 18 + ordreTaux.length * 5.4 + (avecRemise ? 10.8 : 0)
                  + (entretien ? 10.8 : 0);
