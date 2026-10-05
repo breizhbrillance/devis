@@ -361,11 +361,18 @@
         <b>Remise en état</b>
         <span>Un local ou un logement à reprendre à fond. Une intervention, facturée une fois.</span>
       </button>
+      <!-- Les vitrages font toujours un devis à part : ils ne passent pas à la
+           même fréquence que les sols, et un devis ne porte qu'un nombre de
+           passages. Ils se vendent au contrat ou en une seule fois. -->
+      <button class="choix" id="chVIT" onclick="choisirNature('VITRERIE')">
+        <b>Vitrages et menuiseries</b>
+        <span>Vitres, rails, appuis, volets. Toujours un devis séparé.</span>
+      </button>
       <div id="blocFreq" class="hide">
-        <label>Passages par mois</label>
+        <label id="lFreq">Passages par mois</label>
         <input id="fPassages" type="number" inputmode="numeric" min="1" max="31" step="1"
                placeholder="4" oninput="setPassages(this.value)">
-        <div class="mini">Tu peux laisser vide : la question revient avant d'enregistrer le devis.</div>
+        <div class="mini" id="mFreq">Tu peux laisser vide : la question revient avant d'enregistrer le devis.</div>
       </div>
     </div>
   </section>
@@ -782,11 +789,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=52"></script>
-<script src="jspdf.umd.min.js?v=52"></script>
-<script src="police.js?v=52"></script>
-<script src="logo.js?v=52"></script>
-<script src="pdf.js?v=52"></script>
-<script src="app.js?v=52"></script>
+<script src="config.js?v=53"></script>
+<script src="jspdf.umd.min.js?v=53"></script>
+<script src="police.js?v=53"></script>
+<script src="logo.js?v=53"></script>
+<script src="pdf.js?v=53"></script>
+<script src="app.js?v=53"></script>
 </body>
 </html>

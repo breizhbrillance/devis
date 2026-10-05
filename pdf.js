@@ -196,11 +196,14 @@ var PDF = (function () {
        n'en porte pas — on n'écrit alors rien plutôt que de lui en prêter une. */
     var natD = String(devis.nature || '').toUpperCase().trim();
     var nomNature = natD === 'ENTRETIEN' ? 'Entretien des locaux'
+                  : natD === 'VITRERIE'  ? 'Vitrages et menuiseries'
                   : natD === 'REMISE'    ? 'Remise en état'
                   : natD === 'CHANTIER'  ? 'Nettoyage de fin de chantier' : '';
     if (nomNature) {
       var nbP = Math.round(Number(devis.passages) || 0);
-      if (natD === 'ENTRETIEN' && nbP > 0) {
+      /* Une vitrerie se vend au contrat ou en une fois : c'est le nombre de
+         passages qui le dit, et le devis doit le dire aussi. */
+      if ((natD === 'ENTRETIEN' || natD === 'VITRERIE') && nbP > 0) {
         nomNature += ' \u2014 ' + nbP + ' passage' + (nbP > 1 ? 's' : '') + ' par mois';
       }
       police('normal', 9, [55, 65, 81]);
@@ -325,7 +328,10 @@ var PDF = (function () {
     /* Un contrat d'entretien se chiffre au passage et se vend au mois : le
        client doit lire les deux, sinon le montant mensuel tombe du ciel. */
     var passages = Math.round(Number(devis.passages) || 0);
-    var entretien = String(devis.nature || '').toUpperCase() === 'ENTRETIEN' && passages > 0;
+    /* « mensualisé » ne veut pas dire « entretien » : une vitrerie vendue au
+       contrat se lit au mois elle aussi. */
+    var nat0 = String(devis.nature || '').toUpperCase().trim();
+    var entretien = (nat0 === 'ENTRETIEN' || nat0 === 'VITRERIE') && passages > 0;
     var parPassage = entretien ? Math.round((Number(t.ht) || 0) / passages * 100) / 100 : 0;
 
     /* Les lignes d'un entretien sont celles d'UN passage. Tout ce qui se
@@ -352,39 +358,44 @@ var PDF = (function () {
     y += 6;
 
     var xB = 118, wB = R - xB;
+    /* Les intitulés sont calés à droite sur cette colonne. À 52 mm du bord
+       droit, le plus long d'entre eux — « Total TTC / mois », en gras — touchait
+       le bord gauche du cadre et le mordait d'un cheveu. Six millimètres de
+       marge en plus : il respire, et la colonne des montants reste large. */
+    var xL = xB + wB - 46;
     fond(MARQUE); doc.rect(xB, y, wB, hBoite, 'F');
     var yt = y + 6.2;
     if (entretien) {
       police('normal', 9, [255, 255, 255]);
-      doc.text('Prix d\'un passage HT', xB + wB - 52, yt, { align: 'right' });
+      doc.text('Prix d\'un passage HT', xL, yt, { align: 'right' });
       doc.text(eur(parPassage), R - 4, yt, { align: 'right' });
       yt += 5.4;
-      doc.text('Passages par mois', xB + wB - 52, yt, { align: 'right' });
+      doc.text('Passages par mois', xL, yt, { align: 'right' });
       doc.text(String(passages), R - 4, yt, { align: 'right' });
       yt += 5.4;
     }
     if (avecRemise) {
       police('normal', 9, [255, 255, 255]);
-      doc.text('Sous-total HT', xB + wB - 52, yt, { align: 'right' });
+      doc.text('Sous-total HT', xL, yt, { align: 'right' });
       doc.text(eur(brutTotal), R - 4, yt, { align: 'right' });
       yt += 5.4;
       doc.text('Remise' + (remisePct ? ' ( ' + nombre(remisePct, 2) + ' % )' : ''),
-               xB + wB - 52, yt, { align: 'right' });
+               xL, yt, { align: 'right' });
       doc.text('- ' + eur(remiseEur), R - 4, yt, { align: 'right' });
       yt += 5.4;
     }
     police('normal', 9, [255, 255, 255]);
-    doc.text(entretien ? 'Total mensuel HT' : 'Total HT', xB + wB - 52, yt, { align: 'right' });
+    doc.text(entretien ? 'Total mensuel HT' : 'Total HT', xL, yt, { align: 'right' });
     doc.text(eur(t.ht), R - 4, yt, { align: 'right' });
     yt += 5.4;
     ordreTaux.forEach(function (taux) {
       police('normal', 9, [255, 255, 255]);
-      doc.text('TVA ( ' + nombre(taux, 0) + ' % )', xB + wB - 52, yt, { align: 'right' });
+      doc.text('TVA ( ' + nombre(taux, 0) + ' % )', xL, yt, { align: 'right' });
       doc.text(eur(Math.round(parTaux[taux] * 100) / 100), R - 4, yt, { align: 'right' });
       yt += 5.4;
     });
     police('bold', entretien ? 11 : 12, [255, 255, 255]);
-    doc.text(entretien ? 'Total TTC / mois' : 'Total TTC', xB + wB - 52, yt + 1.4, { align: 'right' });
+    doc.text(entretien ? 'Total TTC / mois' : 'Total TTC', xL, yt + 1.4, { align: 'right' });
     doc.text(eur(t.ttc), R - 4, yt + 1.4, { align: 'right' });
 
     /* ---------------- conditions de paiement, à gauche ---------------- */

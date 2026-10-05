@@ -12,7 +12,7 @@ var REMISE = {valeur:0, muet:false};
    C'est le devis qui est ponctuel ou récurrent, pas la prestation : le même
    lavage de sols se vend une fois en fin de chantier et quatre fois par mois
    en entretien. */
-var NATURE = null;      // 'ENTRETIEN' | 'CHANTIER' | 'REMISE'
+var NATURE = null;      // 'ENTRETIEN' | 'VITRERIE' | 'CHANTIER' | 'REMISE'
 var ETAT = 'NORMAL';    // état du site constaté : 'NORMAL' | 'TRES_SALE'
 var PASSAGES = 0;       // par mois, seulement pour un entretien
 var ETAPE = 1;
@@ -288,7 +288,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v52';
+var VERSION_APP = 'v53';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -664,11 +664,11 @@ function ouvrirVerdict(id){
 }
 
 /* Au choix du type, les deux cartes suffisent et la barre du bas n'a rien à
-   faire là — sauf sur un entretien, où il reste une fréquence à saisir et donc
-   un « Continuer » à offrir. */
+   faire là — sauf sur un entretien ou une vitrerie, où il reste une fréquence
+   à saisir et donc un « Continuer » à offrir. */
 function barreVisible(){
   if(ETAPE >= 5) return false;
-  if(ETAPE === 1) return estEntretien();
+  if(ETAPE === 1) return estEntretien() || estVitrerie();
   return true;
 }
 
@@ -1098,7 +1098,7 @@ function choisirType(t){
 
 function choisirNature(n){
   NATURE = n;
-  if(n !== 'ENTRETIEN') PASSAGES = 0;
+  if(n !== 'ENTRETIEN' && n !== 'VITRERIE') PASSAGES = 0;
   var retirees = purgerSelonNature();
   majNature();
   majKm();
@@ -1107,7 +1107,7 @@ function choisirNature(n){
   sauverBrouillon();
   // Sur un entretien on reste : le commercial a un champ à remplir sous les
   // yeux. Sur une intervention il n'y a plus rien à dire ici.
-  if(n !== 'ENTRETIEN') etape(2);
+  if(n !== 'ENTRETIEN' && n !== 'VITRERIE') etape(2);
 }
 
 function setPassages(v, surValidation){
@@ -1130,20 +1130,40 @@ function majNature(){
   // L'entretien des locaux ne se propose qu'au professionnel.
   $('chENT').classList.toggle('hide', !pro);
   $('chENT').classList.toggle('on', NATURE === 'ENTRETIEN');
+  $('chVIT').classList.toggle('on', NATURE === 'VITRERIE');
   $('chCHA').classList.toggle('on', NATURE === 'CHANTIER');
   $('chREM').classList.toggle('on', NATURE === 'REMISE');
-  $('blocFreq').classList.toggle('hide', !estEntretien());
+  /* Un entretien est toujours au contrat ; une vitrerie se vend au contrat ou
+     en une fois, et c'est le champ laissé vide qui dit « une fois ». */
+  $('blocFreq').classList.toggle('hide', NATURE !== 'ENTRETIEN' && NATURE !== 'VITRERIE');
+  var lf = $('lFreq'), mf = $('mFreq');
+  if(lf) lf.textContent = estVitrerie() ? 'Passages par mois (vide : une seule fois)'
+                                        : 'Passages par mois';
+  if(mf) mf.textContent = estVitrerie()
+    ? 'Laisse vide pour un nettoyage en une seule fois.'
+    : 'Tu peux laisser vide : la question revient avant d\'enregistrer le devis.';
   var a = $('fPassages'); if(a) a.value = PASSAGES || '';
   var b = $('fPassages4'); if(b) b.value = PASSAGES || '';
   $('bar').classList.toggle('hide', !barreVisible());
 }
 
 function estEntretien(){ return NATURE === 'ENTRETIEN'; }
+function estVitrerie(){ return NATURE === 'VITRERIE'; }
+/* Les natures qui se vendent sur un secteur : l'équipe part de l'agence, et le
+   trajet se paie. Une vitrerie compte, au contrat comme en une seule fois. */
+function estMajorableKm(){ return estEntretien() || estVitrerie(); }
+/* Le devis se répète-t-il dans le mois ? Un entretien, toujours. Une vitrerie,
+   seulement si elle est vendue au contrat. C'est cette question, et non la
+   nature seule, qui commande la mensualisation du total et la planification. */
+function estRecurrent(){
+  return estEntretien() || (estVitrerie() && PASSAGES > 0);
+}
 
 /* Le nom que le devis et le classeur donnent à la nature. */
 function libelleNature(n){
   n = String(n || NATURE || '').toUpperCase();
   if(n === 'ENTRETIEN') return 'Entretien des locaux';
+  if(n === 'VITRERIE')  return 'Vitrages et menuiseries';
   if(n === 'REMISE')    return 'Remise en état';
   return 'Nettoyage de fin de chantier';
 }
@@ -1725,10 +1745,10 @@ function baremeKm(){
   out.sort(function(a,b){ return a.jusqua - b.jusqua; });
   return out;
 }
-/* Les euros ajoutés à UN passage. Zéro hors entretien, zéro dans la tranche
-   gratuite, zéro si le barème est vide. */
+/* Les euros ajoutés à UN passage. Zéro sur un chantier ou une remise en état,
+   zéro dans la tranche gratuite, zéro si le barème est vide. */
 function supplementKm(){
-  if(!estEntretien()) return 0;
+  if(!estMajorableKm()) return 0;
   var bareme = baremeKm();
   if(!bareme.length) return 0;
   var km = kmDevis(), bas = 0, total = 0;
@@ -1769,7 +1789,7 @@ function prixAvecKm(pu, taux){
 function majKm(){
   var b = $('blocKm');
   if(!b) return;
-  var visible = estEntretien() && baremeKm().length > 0;
+  var visible = estMajorableKm() && baremeKm().length > 0;
   b.classList.toggle('hide', !visible);
   if(!visible){ KM = ''; KM_AUTO = false; if($('cKm')) $('cKm').value = ''; return; }
   var t = kmTable(val('cCp'), val('cVille'));
@@ -1882,8 +1902,8 @@ function totaux(){
      le PDF, le tableau de bord et « À facturer » raisonnent tous en euros par
      mois sans avoir à connaître cette subtilité. */
   t.parPassage = t.ht;
-  t.passages = estEntretien() ? (PASSAGES || 0) : 1;
-  if(estEntretien() && t.passages > 1){
+  t.passages = estRecurrent() ? (PASSAGES || 0) : 1;
+  if(estRecurrent() && t.passages > 1){
     ['ht','brut','remise','tva','ttc'].forEach(function(k){
       t[k] = Math.round(t[k] * t.passages * 100) / 100;
     });
@@ -1891,7 +1911,7 @@ function totaux(){
       t.parTaux[k] = Math.round(t.parTaux[k] * t.passages * 100) / 100;
     });
   }
-  if(estEntretien()){ t.htMensuel = t.ht; t.htPonctuel = 0; }
+  if(estRecurrent()){ t.htMensuel = t.ht; t.htPonctuel = 0; }
   Object.keys(t.parTaux).forEach(function(k){ t.parTaux[k]=Math.round(t.parTaux[k]*100)/100; });
   return t;
 }
@@ -1911,7 +1931,7 @@ function calculer(){
     h+='<div class="tot"><span>dont abonnement mensuel HT</span><b>'+eur(t.htMensuel)+'</b></div>';
   }
   // Sur un entretien, le client doit voir d'où vient son prix mensuel.
-  if(estEntretien() && t.passages > 0){
+  if(estRecurrent() && t.passages > 0){
     h+='<div class="tot"><span>Prix d\'un passage HT</span><b>'+eur(t.parPassage)+'</b></div>';
     h+='<div class="tot"><span>Passages par mois</span><b>'+t.passages+'</b></div>';
   }
@@ -1921,16 +1941,16 @@ function calculer(){
     h+='<div class="tot"><span>Sous-total HT</span><b>'+eur(t.brut)+'</b></div>';
     h+='<div class="tot"><span>Remise '+nb(REMISE.valeur)+' %</span><b>\u2212 '+eur(t.remise)+'</b></div>';
   }
-  h+='<div class="tot"><span>'+(estEntretien()?'Total mensuel HT':'Total HT')+'</span><b>'+eur(t.ht)+'</b></div>';
+  h+='<div class="tot"><span>'+(estRecurrent()?'Total mensuel HT':'Total HT')+'</span><b>'+eur(t.ht)+'</b></div>';
   Object.keys(t.parTaux).sort(function(a,b){return a-b;}).forEach(function(taux){
     h+='<div class="tot"><span>TVA '+taux+' %</span><b>'+eur(t.parTaux[taux])+'</b></div>';
   });
-  h+='<div class="tot big"><span style="color:inherit">'+(estEntretien()?'Total TTC par mois':'Total TTC')+
+  h+='<div class="tot big"><span style="color:inherit">'+(estRecurrent()?'Total TTC par mois':'Total TTC')+
      '</span><span>'+eur(t.ttc)+'</span></div>';
   $('recap').innerHTML = h;
   // Le bloc de fréquence n'a de sens que sur un entretien.
   var cf = $('cFreq');
-  if(cf) cf.classList.toggle('hide', !estEntretien());
+  if(cf) cf.classList.toggle('hide', !estRecurrent());
   peindreRemise();
   majBarre(); sauverBrouillon();
 }
@@ -1940,7 +1960,7 @@ function majBarre(){
   // le chiffre dont le client va parler.
   $('bTot').textContent = eur(pro ? t.ht : t.ttc);
   $('bTotL').textContent = LIGNES.length+' ligne'+(LIGNES.length>1?'s':'') +
-    (pro ? ' · HT' : ' · TTC') + (estEntretien() && PASSAGES ? ' · par mois' : '');
+    (pro ? ' · HT' : ' · TTC') + (estRecurrent() && PASSAGES ? ' · par mois' : '');
 }
 
 /* ====================== SIGNATURE ====================== */
@@ -2420,7 +2440,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       numero: prochainNumero(moi.nom, nomClient(client), !!SIG.image, quandSig || Date.now()),
       /* La distance retenue : c'est elle qui a relevé les prix unitaires, et
          c'est sur elle que le bureau refera le calcul. */
-      km: estEntretien() && String(KM).trim() !== '' ? kmDevis() : '',
+      km: estMajorableKm() && String(KM).trim() !== '' ? kmDevis() : '',
       date: new Date().toISOString(),
       validite: new Date(Date.now()+jours*86400000).toISOString(),
       commercial: moi.nom,
@@ -2431,8 +2451,8 @@ function enregistrerSuite(b, envoi, moi, secours){
       dateSouhaitee: val('fDate'),   // c'est elle qui sert à planifier
       delai: val('fDelai'),          // la phrase pour le client, rien de plus
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
-      nature: NATURE || 'CHANTIER',   // 'ENTRETIEN' | 'CHANTIER' | 'REMISE'
-      passages: estEntretien() ? PASSAGES : 0,
+      nature: NATURE || 'CHANTIER',   // 'ENTRETIEN' | 'VITRERIE' | 'CHANTIER' | 'REMISE'
+      passages: estRecurrent() ? PASSAGES : 0,
       notes: val('fNotes'),
       signataire: val('fSignataire'),
       signature: SIG.image || '',
@@ -2525,10 +2545,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=52';
+    sc.src = 'visionneuse.js?v=53';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=52';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=53';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };

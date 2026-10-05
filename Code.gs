@@ -323,7 +323,7 @@ function majStructure_() {
     }
 
     /* NATURES dit à quelles natures de devis la prestation appartient
-       (ENTRETIEN, CHANTIER, REMISE, séparées par des virgules). Vide, elle se
+       (ENTRETIEN, VITRERIE, CHANTIER, REMISE, séparées par des virgules). Vide, elle se
        vend dans les trois : c'est le cas de presque tout le catalogue, et c'est
        pourquoi la colonne peut rester vide sans rien casser. */
     if (enC.indexOf('NATURES') < 0) {
@@ -486,7 +486,17 @@ var CATALOGUE_DEFAUT_ = [
   ['Sols et surfaces', 'Dépoussiérage et détachage des plinthes, murs, plafonds et rebords de fenêtre', '', 'forfait', 5, 20, 'PONCTUEL', 'OUI', 'REF-0026', 'ENTRETIEN'],
   ['Sols et surfaces', 'Aspiration des sols', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
   ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'forfait', 13, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
-  ['Contrôle', 'Contrôle visuel et hygiénique après chaque intervention', '', 'forfait', 1, 20, 'PONCTUEL', 'OUI', 'REF-0029', 'ENTRETIEN']
+  ['Contrôle', 'Contrôle visuel et hygiénique après chaque intervention', '', 'forfait', 1, 20, 'PONCTUEL', 'OUI', 'REF-0029', 'ENTRETIEN'],
+  /* Vitrages et menuiseries : un devis à part, jamais mêlé à un entretien —
+     les vitres ne passent pas à la même fréquence que les sols. La grille est
+     celle du modèle « duplicable » de Simon ; la dernière ligne reprend le
+     forfait tout compris de ses devis au contrat. */
+  ['Vitrages et menuiseries', 'Mise en place du matériel et sécurisation de la zone d\'intervention', '', 'forfait', 10, 20, 'PONCTUEL', 'OUI', 'REF-0030', 'VITRERIE'],
+  ['Vitrages et menuiseries', 'Vitrages intérieurs', '', 'm²', 4, 20, 'PONCTUEL', 'OUI', 'REF-0031', 'VITRERIE'],
+  ['Vitrages et menuiseries', 'Vitrages extérieurs', '', 'm²', 4, 20, 'PONCTUEL', 'OUI', 'REF-0032', 'VITRERIE'],
+  ['Vitrages et menuiseries', 'Nettoyage des menuiseries, rails et appuis de fenêtre', '', 'm²', 5, 20, 'PONCTUEL', 'OUI', 'REF-0033', 'VITRERIE'],
+  ['Vitrages et menuiseries', 'Dépoussiérage et nettoyage des volets roulants', '', 'm²', 3, 20, 'PONCTUEL', 'OUI', 'REF-0034', 'VITRERIE'],
+  ['Vitrages et menuiseries', 'Nettoyage des vitrages, huisseries, rails et verrières', '', 'forfait', 55, 20, 'PONCTUEL', 'OUI', 'REF-0035', 'VITRERIE']
 ];
 
 /** Remplace le contenu du CATALOGUE par la grille de prix de référence. */
@@ -974,7 +984,7 @@ function enregistrer_(d, com) {
   var c = devis.client || {}, t = devis.totaux || {};
   var communes = lireCommunes_();
   var controleTarif = controlerTarifs_(devis, reg, communes);
-  var kmDevis = natureDevis_(devis.nature) === 'ENTRETIEN' ? kmDevis_(devis, communes) : '';
+  var kmDevis = majorableKm_(devis.nature) ? kmDevis_(devis, communes) : '';
   /* Une commune encore inconnue entre dans la table avec le chiffre du
      commercial : le prochain devis n'aura plus à le ressaisir. */
   if (kmDevis !== '' && kmTable_(c.cp, c.ville, communes) < 0) {
@@ -2052,7 +2062,7 @@ function planifierDevis_(numero) {
   if (iNum < 0 || iDate < 0 || iQui < 0) { bilan.motif = 'colonnes manquantes'; return bilan; }
 
   var charge = chargeActuelle_();
-  var recurrent = String(devis.NATURE || '').toUpperCase().trim() === 'ENTRETIEN';
+  var recurrent = recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS);
   var prefere = '';
   var curseur = new Date(depuis.getTime());
   var num = String(numero).trim();
@@ -2291,14 +2301,54 @@ function signalerConflits_(reg) {
   return c.length;
 }
 
-/* ENTRETIEN (contrat régulier, mensualisé), CHANTIER (fin de chantier) ou
-   REMISE (remise en état). Les deux dernières sont des interventions uniques :
-   elles ne diffèrent que par ce qu'on y fait, et par le nom sur le devis. */
+/* ENTRETIEN (contrat régulier, mensualisé), VITRERIE (vitrages et menuiseries,
+   au contrat ou en une fois), CHANTIER (fin de chantier) ou REMISE (remise en
+   état). Les deux dernières sont des interventions uniques : elles ne diffèrent
+   que par ce qu'on y fait, et par le nom sur le devis. */
 function natureDevis_(v) {
   var n = String(v || '').toUpperCase().trim();
   if (n === 'ENTRETIEN') return 'ENTRETIEN';
+  if (n === 'VITRERIE' || n === 'VITRAGE' || n === 'VITRAGES') return 'VITRERIE';
   if (n === 'REMISE' || n === 'REMISE EN ETAT' || n === 'REMISE_EN_ETAT') return 'REMISE';
   return 'CHANTIER';
+}
+
+/** Le nom que le devis et les messages donnent à une nature. */
+function natureLisible_(v) {
+  var n = natureDevis_(v);
+  if (n === 'ENTRETIEN') return 'Entretien des locaux';
+  if (n === 'VITRERIE') return 'Vitrages et menuiseries';
+  if (n === 'REMISE') return 'Remise en état';
+  return 'Nettoyage de fin de chantier';
+}
+
+/**
+ * Le devis se répète-t-il dans le mois ? Un entretien, toujours. Une vitrerie,
+ * seulement si le commercial l'a vendue au contrat : les vitrages se vendent
+ * aussi bien en une fois, et c'est le nombre de passages qui le dit.
+ *
+ * C'est cette question, et non la nature seule, qui commande la mensualisation
+ * du total, le nombre de chantiers créés et la planification.
+ */
+/**
+ * Cette nature se vend-elle sur un secteur, loin de l'agence ? L'entretien des
+ * locaux et la vitrerie, oui : l'équipe part de Vannes et y revient, et le
+ * trajet se paie. Un chantier et une remise en état sont des interventions
+ * chiffrées au cas par cas, le déplacement y est déjà dans le prix.
+ *
+ * La vitrerie compte qu'elle soit vendue au contrat ou en une seule fois : le
+ * camion roule autant pour un passage que pour douze.
+ */
+function majorableKm_(nature) {
+  var n = natureDevis_(nature);
+  return n === 'ENTRETIEN' || n === 'VITRERIE';
+}
+
+function recurrentDevis_(nature, passages) {
+  var n = natureDevis_(nature);
+  if (n === 'ENTRETIEN') return true;
+  if (n !== 'VITRERIE') return false;
+  return (Number(passages) || 0) > 0;
 }
 
 /**
@@ -2343,7 +2393,7 @@ function genererChantiers_(numero) {
      des lignes, pour qu'un contrat signé hier produise les mêmes chantiers
      qu'aujourd'hui. */
   var nature = String(devis.NATURE || '').toUpperCase().trim();
-  var recurrent = nature === 'ENTRETIEN';   // une remise en état n'en est pas un
+  var recurrent = recurrentDevis_(nature, devis.PASSAGES_MOIS);
   if (!nature) {
     recurrent = lignes.some(function (l) {
       return String(l.TYPE || '').toUpperCase() === 'MENSUEL';
@@ -2715,7 +2765,7 @@ function jourValide_(v) {
 function naturesCatalogue_(v) {
   var vus = {}, sortie = [];
   String(v || '').toUpperCase().split(/[^A-Z]+/).forEach(function (m) {
-    if (m !== 'ENTRETIEN' && m !== 'CHANTIER' && m !== 'REMISE') return;
+    if (m !== 'ENTRETIEN' && m !== 'VITRERIE' && m !== 'CHANTIER' && m !== 'REMISE') return;
     if (vus[m]) return;
     vus[m] = true; sortie.push(m);
   });
@@ -2974,7 +3024,7 @@ function baremeKm_(reg) {
 
 /** Les euros ajoutés à UN passage par l'éloignement du client. */
 function supplementKm_(devis, reg, communes) {
-  if (natureDevis_(devis && devis.nature) !== 'ENTRETIEN') return 0;
+  if (!majorableKm_(devis && devis.nature)) return 0;
   var bareme = baremeKm_(reg);
   if (!bareme.length) return 0;
   var km = kmDevis_(devis, communes);
@@ -3172,6 +3222,14 @@ function controlerTarifs_(devis, reg, communes) {
         ecarts.push(rang + ' : prix ' + recu + ' au lieu de ' + attendu +
                     (tauxKm > 0 ? ' (éloignement compris)' : ''));
       }
+      /* Chaque prestation dit dans quelles natures elle se vend. Les vitrages
+         ne se mêlent pas à un entretien : ils ne passent pas à la même
+         fréquence, et un devis ne porte qu'un nombre de passages. */
+      if (p.natures && p.natures.length &&
+          p.natures.indexOf(natureDevis_(devis.nature)) < 0) {
+        ecarts.push(rang + ' : ne se vend pas sur un devis « ' +
+                    natureLisible_(devis.nature) + ' » (' + p.natures.join(', ') + ')');
+      }
     }
 
     var rem = Number(l.rem) || 0;
@@ -3182,7 +3240,7 @@ function controlerTarifs_(devis, reg, communes) {
 
   /* La distance saisie par le commercial contre celle que le classeur connaît :
      c'est elle qui fixe le supplément, elle ne doit pas être inventée. */
-  if (natureDevis_(devis.nature) === 'ENTRETIEN' &&
+  if (majorableKm_(devis.nature) &&
       String(devis.km === undefined || devis.km === null ? '' : devis.km).trim() !== '') {
     var c = devis.client || {};
     var vue = kmTable_(c.cp, c.ville, communes);
