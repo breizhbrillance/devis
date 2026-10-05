@@ -118,11 +118,21 @@ T('la mise à jour de structure l\'ajoute à un classeur qui ne l\'a pas, et n\'
   lire('REGLAGES').some(l => l[0] === 'majoration_tres_sale' && String(l[1]) === '30'), lire('REGLAGES').map(l=>l[0]));
 
 const G = g.CATALOGUE_DEFAUT_;
-T('la grille par défaut compte 29 prestations', G.length === 29, G.length);
+T('la grille par défaut compte 35 prestations', G.length === 35, G.length);
 T('de dix colonnes chacune', G.every(l => l.length === 10), G.filter(l => l.length !== 10));
 const refs = G.map(l => l[8]);
-T('aux références uniques, de REF-0001 à REF-0029',
-  new Set(refs).size === 29 && refs.slice().sort().join() === Array.from({length:29},(_, i)=>'REF-00'+('0'+(i+1)).slice(-2)).join(), refs);
+T('aux références uniques, de REF-0001 à REF-0035',
+  new Set(refs).size === 35 && refs.slice().sort().join() === Array.from({length:35},(_, i)=>'REF-00'+('0'+(i+1)).slice(-2)).join(), refs);
+/* Les six dernières sont celles de la vitrerie (v53), reprises du modèle
+   duplicable « Devis nettoyage vitrages et menuiseries ». */
+const vit = G.filter(l => l[9] === 'VITRERIE');
+T('six prestations de vitrerie, et elles seules portent cette nature',
+  vit.length === 6 && vit.every(l => l[8] >= 'REF-0030'), vit.map(l => l[8]));
+T('toutes rangées sous « Vitrages et menuiseries »',
+  vit.every(l => l[0] === 'Vitrages et menuiseries'), vit.map(l => l[0]));
+T('la mise en place est un forfait à 10 €, le tout compris à 55 €',
+  G.find(l => l[8] === 'REF-0030')[4] === 10 && G.find(l => l[8] === 'REF-0035')[4] === 55,
+  vit.map(l => l[4]));
 T('aucune prestation ne se vend plus dans les trois natures', G.every(l => String(l[9]).trim() !== ''), G.filter(l=>!l[9]));
 const ent = G.filter(l => l[9] === 'ENTRETIEN');
 T('quatorze tâches d\'entretien, toutes à cocher', ent.length === 14 && ent.every(l => l[3] === 'forfait'), ent.length);
