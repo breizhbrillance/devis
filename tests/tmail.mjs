@@ -1,7 +1,7 @@
 /* La bannière en bas de chaque courriel (classeur, Version 23).
 
    Demande de Simon : « sur n'importe quel mail qui parte, il y ait ma bannière
-   en bas ». Le mot qui compte est « n'importe quel » : il y a sept courriels
+   en bas ». Le mot qui compte est « n'importe quel » : il y a neuf courriels
    différents dans le script, et il suffirait d'en oublier un. Ils passent donc
    tous par une seule fonction, et un contrôle vérifie dans le code lui-même
    qu'il n'existe aucun autre chemin d'envoi. */
@@ -124,7 +124,10 @@ const corpsFonction = src.slice(src.indexOf('function envoyerMail_('), src.index
 T('et cet endroit est la fonction qui pose la bannière',
   /MailApp\.sendEmail\(/.test(corpsFonction) && /banniereHtml_\(reg\)/.test(corpsFonction));
 T('aucun autre service d\'envoi n\'est utilisé', !/GmailApp\./.test(src));
-T('sept courriels différents passent par elle', (src.match(/envoyerMail_\(\{/g) || []).length === 7,
+/* Neuf depuis la v55 : un devis révisé repart au client s'il avait reçu le
+   premier, et à défaut une note au bureau. Le compte est là pour qu'on ne
+   puisse pas en ajouter un dixième sans y penser. */
+T('neuf courriels différents passent par elle', (src.match(/envoyerMail_\(\{/g) || []).length === 9,
   (src.match(/envoyerMail_\(\{/g) || []).length);
 
 /* ---------- 7. quand il n'y a pas de bannière ---------- */

@@ -40,7 +40,12 @@ class Sheet {
   setColumnWidth(){ return this; } setFrozenRows(){ return this; }
   insertColumnsAfter(a,n){ this.d.forEach(l=>{ for(let k=0;k<n;k++) l.splice(a,0,''); }); return this; }
   getDataRange(){ return new Range(this,1,1,Math.max(this.getLastRow(),1),Math.max(this.getLastColumn(),1)); }
-  deleteRows(){ return this; } deleteRow(){ return this; } getParent(){ return ss; }
+  /* Retirer des lignes pour de vrai : sans cela, le banc ne verrait pas la
+     différence entre « remplacer les lignes d'un devis » et « les ajouter une
+     deuxième fois », qui est exactement ce qu'un devis révisé risque. */
+  deleteRows(d, n){ this.d.splice(d-1, Number(n)||1); return this; }
+  deleteRow(d){ return this.deleteRows(d, 1); }
+  getParent(){ return ss; }
   setTabColor(){ return this; } hideColumns(){ return this; } autoResizeColumn(){ return this; }
 }
 const ss = {
