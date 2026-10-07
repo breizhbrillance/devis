@@ -811,6 +811,34 @@
   </div>
 </dialog>
 
+<!-- REMISE SUR UN DEVIS DÉJÀ ÉTABLI
+     Le commercial a remis son devis, le client négocie. Plutôt que de tout
+     ressaisir, il pose la remise ici : le devis garde son numéro, le PDF est
+     refait, et le bureau reçoit le nouveau prix. Un devis signé n'y a pas
+     droit — le client a accepté un montant. -->
+<dialog id="dlgRem">
+  <div class="dlg-h">
+    <b style="flex:1;font-size:15px;align-self:center">Remise sur ce devis</b>
+    <button class="btn sec sm" onclick="fermerRemiseDevis()">Fermer</button>
+  </div>
+  <div class="dlg-b">
+    <div id="remDqui" style="font-size:15px;font-weight:600"></div>
+    <div class="mini" id="remDnum" style="margin:2px 0 14px"></div>
+    <label style="margin-top:0">Remise accordée %</label>
+    <input type="text" id="remDpct" autocomplete="off" autocapitalize="off"
+           autocorrect="off" spellcheck="false" value="0"
+           oninput="majApercuRemise(this)">
+    <div id="remDplaf" class="plafond hide">Remise maximale accordée</div>
+    <div class="tot"><span>Avant</span><b id="remDavant">—</b></div>
+    <div class="tot"><span>Remise</span><b id="remDgain">—</b></div>
+    <div class="tot big"><span style="color:inherit">Nouveau total TTC</span><span id="remDapres">—</span></div>
+    <div class="mini" style="margin:10px 0 14px">Le devis garde son numéro. Son PDF est
+      refait et repart au bureau. Si le client avait reçu le premier par courriel, il
+      reçoit celui-ci.</div>
+    <button class="btn" id="remDok" onclick="appliquerRemiseDevis(this)">Appliquer la remise</button>
+  </div>
+</dialog>
+
 <!-- CALCULETTE DE SURFACE -->
 <dialog id="dlgSurf">
   <div class="dlg-h">
@@ -827,11 +855,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=54"></script>
-<script src="jspdf.umd.min.js?v=54"></script>
-<script src="police.js?v=54"></script>
-<script src="logo.js?v=54"></script>
-<script src="pdf.js?v=54"></script>
-<script src="app.js?v=54"></script>
+<script src="config.js?v=55"></script>
+<script src="jspdf.umd.min.js?v=55"></script>
+<script src="police.js?v=55"></script>
+<script src="logo.js?v=55"></script>
+<script src="pdf.js?v=55"></script>
+<script src="app.js?v=55"></script>
 </body>
 </html>

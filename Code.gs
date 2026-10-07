@@ -855,6 +855,134 @@ function renommerDevis_(ancien, nouveau, origine, qui, appareil) {
  * la version signée, qui sert à la fois de devis et de preuve : la photo du
  * papier n'a plus lieu d'être réclamée.
  */
+/**
+ * Un devis déjà reçu revient avec une remise posée après coup.
+ *
+ * Le commercial l'a accordée depuis « Mes devis », sur un devis qu'il avait
+ * déjà remis au client. Le numéro ne change pas — c'est le même devis, moins
+ * cher — mais tout ce qui porte un montant doit suivre : la ligne de DEVIS,
+ * ses LIGNES, et le PDF du Drive, que le client va recevoir à nouveau.
+ *
+ * Le contrôle des tarifs est refait entièrement, et c'est lui qui tient le
+ * plafond de remise : un téléphone bricolé qui enverrait 60 % se ferait
+ * signaler comme n'importe quel prix inventé.
+ */
+function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
+  var numero = String(ligne[col.NUMERO]);
+  var ss = SpreadsheetApp.getActive();
+  var communes = lireCommunes_();
+  var controle = controlerTarifs_(devis, reg, communes);
+  var t = devis.totaux || {};
+
+  var pct = Number(devis.remise) || 0;
+
+  var ancien = String(col.LIEN_PDF != null ? (ligne[col.LIEN_PDF] || '') : '');
+  var lien = ancien;
+  if (d.pdf) {
+    var blob = Utilities.newBlob(Utilities.base64Decode(d.pdf), 'application/pdf',
+      d.nomFichier || ('Devis ' + numeroFichier_(numero) + '.pdf'));
+    lien = dossierDevis_(reg, new Date(devis.date), devis.commercial)
+             .createFile(blob).getUrl();
+    // Comme à la signature : le nouveau fichier est en place avant que
+    // l'ancien parte à la corbeille.
+    var m = ancien.match(/\/d\/([A-Za-z0-9_-]+)/);
+    if (m) {
+      try { DriveApp.getFileById(m[1]).setTrashed(true); }
+      catch (e) { tracerServeur_('SYSTEME', 'PDF REMPLACE NON RETIRE',
+                                 String(e && e.message || e), numero, ''); }
+    }
+  }
+
+  majDevis_(numero, {
+    LIEN_PDF: lien,
+    REMISE_PCT: Number(devis.remise) || 0,
+    TOTAL_HT_PONCTUEL: t.htPonctuel || 0,
+    TOTAL_HT_MENSUEL: t.htMensuel || 0,
+    TOTAL_HT: t.ht || 0,
+    TOTAL_TVA: t.tva || 0,
+    TOTAL_TTC: t.ttc || 0,
+    CONTROLE_TARIF: controle
+  });
+
+  /* Les lignes aussi : leur remise et leur montant ont changé. On réécrit
+     celles de ce devis plutôt que d'en ajouter, sinon le devis en aurait deux
+     jeux et « À facturer » compterait tout en double. */
+  try { remplacerLignes_(numero, devis); }
+  catch (eL) {
+    tracerServeur_('SYSTEME', 'LIGNES NON REECRITES',
+                   String(eL && eL.message || eL), numero, '');
+  }
+
+  tracerServeur_(devis.commercial || com.nom, 'DEVIS REVISE',
+                 'remise ' + pct + ' % — ' + (t.ttc || 0) + ' € TTC',
+                 numero, d.appareil || '');
+  if (controle) {
+    tracerServeur_(devis.commercial || com.nom, 'ECART TARIF', controle,
+                   numero, d.appareil || '');
+  }
+
+  /* Le client reçoit le devis révisé s'il avait reçu le premier : sans cela,
+     il garderait en main un papier au mauvais prix. */
+  try {
+    var c = devis.client || {};
+    var copie = [];
+    if (com && com.email) copie.push(com.email);
+    if (reg.email_copie) copie.push(String(reg.email_copie));
+    var pj = d.pdf ? [Utilities.newBlob(Utilities.base64Decode(d.pdf), 'application/pdf',
+      d.nomFichier || ('Devis ' + numeroFichier_(numero) + '.pdf'))] : [];
+    if (d.envoyerClient && c.email) {
+      envoyerMail_({
+        to: c.email, cc: copie.join(','),
+        subject: 'Devis ' + numero + ' révisé — ' + (reg.societe_nom || ''),
+        name: String(reg.societe_nom || 'Devis'),
+        replyTo: (com && com.email) || String(reg.societe_email || ''),
+        htmlBody: corpsMail_(devis, reg), attachments: pj
+      }, reg);
+    } else if (copie.length) {
+      envoyerMail_({
+        to: copie.join(','),
+        subject: 'Devis ' + numero + ' révisé — ' + (c.societe || c.contact || ''),
+        name: String(reg.societe_nom || 'Devis'),
+        htmlBody: 'Remise de ' + pct + ' % posée par ' + (devis.commercial || '') +
+                  '.<br>Nouveau montant : ' + eur_(t.ttc) + ' TTC.' +
+                  (lien ? '<br><a href="' + lien + '">Ouvrir le PDF</a>' : ''),
+        attachments: pj
+      }, reg);
+    }
+  } catch (eMail) { /* un mail raté ne doit pas faire échouer la révision */ }
+
+  return { ok: true, revise: true, numero: numero, pdfUrl: lien, controle: controle };
+}
+
+/** Les lignes d'un devis, remplacées par celles qui arrivent. */
+function remplacerLignes_(numero, devis) {
+  var shL = SpreadsheetApp.getActive().getSheetByName(SH.LIGNES);
+  if (!shL || shL.getLastRow() < 2) return;
+  var enL = shL.getRange(1, 1, 1, shL.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cNum = enL.indexOf('NUMERO');
+  if (cNum < 0) return;
+  var cible = String(numero).trim();
+  var vals = shL.getRange(2, 1, shL.getLastRow() - 1, enL.length).getValues();
+  // De bas en haut : retirer une ligne ne décale pas celles qu'il reste à voir.
+  for (var i = vals.length - 1; i >= 0; i--) {
+    if (String(vals[i][cNum]).trim() === cible) shL.deleteRow(i + 2);
+  }
+  var rows = (devis.lignes || []).map(function (l, idx) {
+    var vl = {
+      NUMERO: cible, ORDRE: idx + 1, CATEGORIE: l.categorie || '',
+      REFERENCE: l.reference || '', DESIGNATION: l.designation || '', DETAIL: l.detail || '',
+      QTE: Number(l.qte) || 0, UNITE: l.unite || '', PU_HT: Number(l.pu) || 0,
+      REMISE_PCT: Number(l.rem) || 0, TYPE: l.type || 'PONCTUEL', TVA: Number(l.tva) || 0,
+      TOTAL_HT: montantLigne_(l)
+    };
+    return enL.map(function (h) { return vl.hasOwnProperty(h) ? vl[h] : ''; });
+  });
+  if (rows.length) {
+    shL.getRange(shL.getLastRow() + 1, 1, rows.length, enL.length).setValues(rows);
+  }
+}
+
 function signerDevisRecu_(ligne, col, d, devis, reg, com) {
   var numero = String(ligne[col.NUMERO]);
   var avant = numero;
@@ -950,6 +1078,14 @@ function enregistrer_(d, com) {
                         String(lignes[i][col.SIGNE] || '').toUpperCase() === 'OUI';
         if (devis.signature && !dejaSigne) {
           return signerDevisRecu_(lignes[i], col, d, devis, reg, com);
+        }
+        /* Le même devis revient avec une remise posée après coup. Ce n'est pas
+           un doublon non plus : c'est le devis révisé, et le bureau doit voir
+           le nouveau prix, sans quoi le tableau de bord et « À facturer »
+           garderaient l'ancien. Un devis déjà signé ne se révise pas : le
+           client a accepté un montant, on ne le change pas dans son dos. */
+        if (d.revision && !dejaSigne && !devis.signature) {
+          return reviserDevisRecu_(lignes[i], col, d, devis, reg, com);
         }
         return { ok: true, doublon: true, numero: String(lignes[i][col.NUMERO]),
                  pdfUrl: String(lignes[i][col.LIEN_PDF] || '') };

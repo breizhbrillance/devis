@@ -288,7 +288,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v54';
+var VERSION_APP = 'v55';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -407,7 +407,7 @@ function repondreParDefaut(){
    n'y répond — ni les champs, ni les boutons. Appelé au démarrage et à chaque
    retour à la connexion, pour qu'un écran ne puisse jamais rester gelé. */
 function fermerDialogues(){
-  ['dlg', 'dlgConf', 'dlgSurf'].forEach(function(id){
+  ['dlg', 'dlgConf', 'dlgSurf', 'dlgRem'].forEach(function(id){
     var d = $(id);
     if(!d) return;
     try{
@@ -1964,9 +1964,16 @@ function montantL(l){
                     (1 - (Number(l.rem) || 0) / 100) * 100) / 100;
 }
 
+/* Les totaux du devis en cours. Toute l'arithmétique vit dans totauxDe() :
+   une remise posée après coup, sur un devis déjà enregistré, repart des lignes
+   de ce devis-là et retombe donc forcément sur le même euro. */
 function totaux(){
+  return totauxDe(lignesDevis(), estRecurrent(), PASSAGES);
+}
+
+function totauxDe(lignes, recurrent, passages){
   var t = {htPonctuel:0,htMensuel:0,ht:0,brut:0,remise:0,tva:0,ttc:0,parTaux:{}};
-  lignesDevis().forEach(function(l){
+  (lignes || []).forEach(function(l){
     var b = montantL(l), taux = Number(l.tva)||0;
     t.brut += brutL(l);
     if(String(l.type).toUpperCase()==='MENSUEL') t.htMensuel+=b; else t.htPonctuel+=b;
@@ -1987,8 +1994,8 @@ function totaux(){
      le PDF, le tableau de bord et « À facturer » raisonnent tous en euros par
      mois sans avoir à connaître cette subtilité. */
   t.parPassage = t.ht;
-  t.passages = estRecurrent() ? (PASSAGES || 0) : 1;
-  if(estRecurrent() && t.passages > 1){
+  t.passages = recurrent ? (Number(passages) || 0) : 1;
+  if(recurrent && t.passages > 1){
     ['ht','brut','remise','tva','ttc'].forEach(function(k){
       t[k] = Math.round(t[k] * t.passages * 100) / 100;
     });
@@ -1996,7 +2003,7 @@ function totaux(){
       t.parTaux[k] = Math.round(t.parTaux[k] * t.passages * 100) / 100;
     });
   }
-  if(estRecurrent()){ t.htMensuel = t.ht; t.htPonctuel = 0; }
+  if(recurrent){ t.htMensuel = t.ht; t.htPonctuel = 0; }
   Object.keys(t.parTaux).forEach(function(k){ t.parTaux[k]=Math.round(t.parTaux[k]*100)/100; });
   return t;
 }
@@ -2172,6 +2179,120 @@ function appliquerSignature(id, image, nom){
       synchroniser(false);
     });
   });
+}
+
+/* ---------- REMISE SUR UN DEVIS DÉJÀ ÉTABLI ----------
+
+   Le commercial a remis son devis, le client négocie une semaine plus tard.
+   Plutôt que de tout ressaisir — et de risquer un chiffre qui diffère —, il
+   pose la remise depuis « Mes devis » : le devis garde son numéro, ses lignes
+   et ses prix, seule la remise change. Le PDF est refait et le bureau reçoit
+   le nouveau montant.
+
+   Un devis signé n'y a pas droit : le client a accepté un montant, on ne le
+   change pas dans son dos. S'il faut vraiment reprendre un devis signé, on en
+   fait un neuf — c'est à quoi sert « Dupliquer ». */
+var REM_DEVIS = null;
+
+function ouvrirRemiseDevis(id, btn){
+  if(btn) occuper(btn, '…');
+  DB.get(id).then(function(e){
+    if(btn) libere(btn);
+    if(!e || !e.devis) return;
+    if(estSigne(e))
+      return erreur('Ce devis est signé : sa remise ne se change plus. Duplique-le pour en refaire un.');
+    erreur('');
+    REM_DEVIS = e;
+    var c = e.devis.client || {};
+    $('remDqui').textContent = c.societe || c.contact || '—';
+    $('remDnum').textContent = e.numero + ' · ' + eur(e.devis.totaux.ttc) + ' TTC aujourd\'hui';
+    $('remDpct').value = String(Number(e.devis.remise) || 0);
+    majApercuRemise();
+    var d = $('dlgRem');
+    if(d.showModal) d.showModal();
+    else { d.setAttribute('open',''); d.style.position='fixed'; d.style.bottom='0'; d.style.zIndex='50'; }
+  }, function(){ if(btn) libere(btn); });
+}
+
+function fermerRemiseDevis(){
+  var d = $('dlgRem');
+  if(d.close) d.close(); else d.removeAttribute('open');
+  REM_DEVIS = null;
+}
+
+/* Ce que donnerait la remise saisie, sans rien enregistrer encore. */
+function apercuRemise(e, pct){
+  var d = e.devis || {};
+  var lignes = (d.lignes || []).map(function(l){
+    var n = {}; for(var k in l) if(l.hasOwnProperty(k)) n[k] = l[k];
+    n.rem = pct;
+    return n;
+  });
+  /* Ce qui a été envoyé au bureau dit déjà tout : un devis récurrent porte un
+     nombre de passages, un devis ponctuel porte zéro. Inutile de redéduire la
+     récurrence de la nature — on la lirait peut-être autrement qu'au moment où
+     le devis a été établi. */
+  var passages = Number(d.passages) || 0;
+  return { lignes: lignes, totaux: totauxDe(lignes, passages > 0, passages) };
+}
+
+function majApercuRemise(el){
+  var e = REM_DEVIS;
+  if(!e) return;
+  var r = lireRemise($('remDpct').value), m = remiseMax();
+  var pct = r.valeur > m ? m : r.valeur;
+  if(el && pct !== r.valeur) el.value = pct + (r.muet ? ' %' : '');
+  var p = apercuRemise(e, pct);
+  $('remDavant').textContent = eur(e.devis.totaux.ttc);
+  $('remDgain').textContent = '- ' + eur(Math.round((e.devis.totaux.ttc - p.totaux.ttc) * 100) / 100);
+  $('remDapres').textContent = eur(p.totaux.ttc);
+  var pl = $('remDplaf');
+  if(pl) pl.classList.toggle('hide', !(pct > 0 && !r.muet));
+}
+
+function appliquerRemiseDevis(btn){
+  var e = REM_DEVIS;
+  if(!e) return;
+  var r = lireRemise($('remDpct').value), m = remiseMax();
+  var pct = r.valeur > m ? m : r.valeur;
+  var avant = Number(e.devis.remise) || 0;
+  if(pct === avant){
+    fermerRemiseDevis();
+    return erreur('La remise est déjà à ' + nb(pct) + ' % : rien n\'a changé.');
+  }
+  if(btn) occuper(btn, 'Refabrication du PDF…');
+  var id = e.id;
+  fermerRemiseDevis();
+  DB.get(id).then(function(x){
+    if(!x) { if(btn) libere(btn); return; }
+    if(estSigne(x)){      // signé entre-temps, sur un autre appareil
+      if(btn) libere(btn);
+      return erreur('Ce devis vient d\'être signé : sa remise ne se change plus.');
+    }
+    var p = apercuRemise(x, pct);
+    x.devis.lignes = p.lignes;
+    x.devis.totaux = p.totaux;
+    x.devis.remise = pct;
+    try{
+      x.pdf = PDF.base64(x.devis, CFG.reglages);
+      x.nomFichier = PDF.nomFichier(x.devis);
+    }catch(err){
+      if(btn) libere(btn);
+      tracer('ERREUR PDF', String(err && err.message || err), x.numero);
+      return erreur('Le devis n\'a pas pu être refabriqué. La remise n\'a pas été posée.');
+    }
+    x.revision = true;          // le bureau doit mettre à jour, pas ignorer un doublon
+    x.statut = 'attente';
+    delete x.derniereErreur;
+    return DB.put(x).then(function(){
+      if(btn) libere(btn);
+      tracer('REMISE POSEE', nb(avant) + ' % → ' + nb(pct) + ' % · ' +
+             eur(p.totaux.ttc) + ' TTC', x.numero);
+      erreur('');
+      if(ETAPE === 6) rendreHistorique();
+      synchroniser(true);
+    });
+  }, function(){ if(btn) libere(btn); });
 }
 
 /* L'état de la signature, sur l'écran de fin comme dans « Mes devis ». */
@@ -2635,10 +2756,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=54';
+    sc.src = 'visionneuse.js?v=55';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=54';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=55';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -2901,7 +3022,8 @@ function envoyerDevis(enr){
     headers:{'Content-Type':'text/plain;charset=utf-8'},  // évite la requête preflight
     body: JSON.stringify({
       action:'sync', id:enr.id, nom:enr.nom, code:enr.code, appareil:enr.appareil,
-      envoyerClient:enr.envoyerClient, devis:enr.devis, pdf:enr.pdf, nomFichier:enr.nomFichier
+      envoyerClient:enr.envoyerClient, devis:enr.devis, pdf:enr.pdf, nomFichier:enr.nomFichier,
+      revision: !!enr.revision
     })
   })
   .then(function(r){ return r.json(); })
@@ -2912,6 +3034,7 @@ function envoyerDevis(enr){
       throw new Error(d.erreur||'refusé');
     }
     enr.statut='envoye'; enr.pdfUrl=d.pdfUrl||''; enr.envoye=Date.now();
+    delete enr.revision;        // la révision est passée : un renvoi ordinaire ensuite
     /* Le bureau a donné un autre numéro : soit le nôtre était déjà pris, soit
        le devis vient d'être signé et change de numéro. Dans les deux cas c'est
        le sien qui fait foi — le PDF déjà remis au client, lui, garde l'ancien. */
@@ -3019,7 +3142,8 @@ function rendreHistorique(){
         '<button class="btn sec sm" onclick="ouvrirPhotos(\''+e.id+'\', \''+
           (e.verdict==='SIGNE' && !sig ? 'SIGNE' : 'SITE')+'\')">Photos'+(ph?' ('+ph+')':'')+'</button>'+
         (estSigne(e) ? '' :
-          '<button class="btn sec sm" onclick="ouvrirSignatureDevis(\''+e.id+'\', this)">Signer</button>')+
+          '<button class="btn sec sm" onclick="ouvrirSignatureDevis(\''+e.id+'\', this)">Signer</button>'+
+          '<button class="btn sec sm" onclick="ouvrirRemiseDevis(\''+e.id+'\', this)">Remise</button>')+
         '<button class="btn sec sm" onclick="dupliquer(\''+e.id+'\', this)">Dupliquer</button>'+
         (e.statut==='envoye' ? '' :
           '<button class="btn sec sm" onclick="renvoyer(\''+e.id+'\', this)">Renvoyer</button>')+
