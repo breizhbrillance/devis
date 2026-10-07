@@ -71,8 +71,8 @@ T('le forfait n\'a pas de champ de quantité',
 await cocher(p, 2);
 T('coché, le forfait entre au devis avec une quantité de 1',
   await p.evaluate(()=>{ const l=LIGNES.find(x=>x.reference==='REF-0003'); return l && l.qte===1; }));
-T('le bouton le dit', (await p.innerText('#pr2 .coche')).trim() === 'Inclus',
-  await p.innerText('#pr2 .coche'));
+T('le pas le dit', (await p.innerText('#pr2 .pas')).replace(/\s|−|\+/g, '') === '1',
+  await p.innerText('#pr2 .pas'));
 await cocher(p, 2);
 T('décoché, il ressort du devis',
   await p.evaluate(()=>!LIGNES.some(x=>x.reference==='REF-0003')));

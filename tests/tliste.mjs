@@ -206,7 +206,7 @@ T('les quantités reprises s\'affichent dans la liste',
   await p.evaluate(()=>document.querySelector('#pr0 input.q').value) === '12',
   await p.evaluate(()=>document.querySelector('#pr0 input.q').value));
 T('le forfait repris est coché',
-  (await p.innerText('#pr2 .coche')).trim() === 'Inclus', await p.innerText('#pr2 .coche'));
+  (await p.innerText('#pr2 .pas')).replace(/\s|−|\+/g, '') === '1', await p.innerText('#pr2 .pas'));
 T('la prestation disparue du catalogue n\'est pas effacée en silence',
   await p.isVisible('#grpHors'));
 T('elle est nommée', /Prestation retirée/.test(await p.innerText('#grpHors')),

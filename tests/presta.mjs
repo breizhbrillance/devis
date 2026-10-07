@@ -24,10 +24,47 @@ export async function poserQte(p, rang, qte) {
   await p.waitForTimeout(350);
 }
 
+/* Mettre un forfait au devis, ou l'en retirer (v54).
+
+   Depuis que les forfaits se comptent, la ligne n'offre « Ajouter » que tant
+   qu'elle est à zéro ; dès qu'elle y est, c'est un pas « − n + ». Cette
+   fonction fait donc l'un ou l'autre selon l'état où elle trouve la ligne,
+   pour que les suites écrites avant la v54 continuent de dire ce qu'elles
+   disaient. */
 export async function cocher(p, rang) {
   await ouvrirBloc(p, rang);
-  await p.click('#pr' + rang + ' .coche');
+  const sel = '#pr' + rang;
+  const neuf = await p.evaluate((s) => !!document.querySelector(s + ' .coche'), sel);
+  if (neuf) {
+    await p.click(sel + ' .coche');
+  } else {
+    for (let k = 0; k < 120; k++) {
+      const encore = await p.evaluate((s) => {
+        const b = document.querySelector(s + ' .pm');
+        if (!b) return false;
+        b.click();
+        return true;
+      }, sel);
+      if (!encore) break;
+      await p.waitForTimeout(60);
+    }
+  }
   await p.waitForTimeout(350);
+}
+
+/* Poser une quantité sur un forfait, en tapotant le pas comme le ferait un
+   doigt. Repart de zéro pour que le compte soit sûr. */
+export async function poserForfait(p, rang, n) {
+  await cocher(p, rang);                       // au devis, à 1 — ou retiré
+  const sel = '#pr' + rang;
+  if (!(await p.evaluate((s) => !!document.querySelector(s + ' .pas'), sel))) {
+    await cocher(p, rang);                     // il était déjà là : on le remet
+  }
+  for (let k = 1; k < n; k++) {
+    await p.click(sel + ' .pm:last-child');
+    await p.waitForTimeout(90);
+  }
+  await p.waitForTimeout(250);
 }
 
 /* L'équivalent de l'ancien « ajouter une prestation » : une ligne, quantité 1. */
