@@ -227,11 +227,19 @@
   .pres .d b{display:block;font-size:14px;font-weight:600;line-height:1.3}
   .pres .d span{display:block;color:var(--mut);font-size:12px;margin-top:3px}
   .pres input.q{flex:0 0 78px;width:78px;padding:10px 8px;font-size:16px;text-align:right;margin:0}
-  .pres .tt{flex:0 0 72px;text-align:right;font-weight:700;font-size:14px;color:var(--txt)}
+  .pres .tt{flex:0 0 68px;text-align:right;font-weight:700;font-size:14px;color:var(--txt)}
   /* Une coche de forfait se vise au pouce : 44 px de haut, pas une case de 13. */
   .coche{flex:0 0 78px;height:44px;border:1.5px solid var(--line);background:#fff;
          border-radius:11px;font-size:13.5px;font-weight:600;color:var(--mut);padding:0}
   .coche.on{border-color:var(--acc);background:var(--acc);color:#fff}
+  /* Un forfait au devis se compte : quatre cuisines, quatre fois le prix. Le
+     pas occupe la place de la coche, à la même hauteur de pouce. */
+  .pas{flex:0 0 84px;display:flex;align-items:center;height:44px;overflow:hidden;
+       border:1.5px solid var(--acc);border-radius:11px;background:var(--acc-f)}
+  .pm{flex:0 0 28px;height:44px;border:0;background:none;color:var(--acc);
+      font-size:20px;font-weight:700;line-height:1;padding:0;border-radius:0}
+  .pm:active{background:var(--acc);color:#fff}
+  .nb{flex:1;text-align:center;font-size:15px;font-weight:700;color:var(--acc)}
   /* La calculette vit dans la ligne, pas dans une colonne : la largeur d'un
      téléphone est déjà prise par la désignation et par le chiffre. */
   .lienM2{background:none;border:0;padding:0;color:var(--acc);font-size:12px;
@@ -434,7 +442,8 @@
            il ne cherche pas. Une prestation manquante s'ajoute au bureau et
            arrive sur tous les appareils à la synchronisation suivante. -->
       <div class="mini" style="margin-top:12px">Ouvre une catégorie, indique la surface ou le nombre
-        de pièces, coche les forfaits. Ce qui reste à zéro n'apparaît pas sur le devis.</div>
+        de pièces, ajoute les forfaits. Un forfait ajouté se compte : « + » pour quatre cuisines.
+        Ce qui reste à zéro n'apparaît pas sur le devis.</div>
     </div>
     <div id="lignes"></div>
   </section>
@@ -475,6 +484,35 @@
         <div><label>Total HT remisé</label><div class="fige" id="remHT">—</div></div>
       </div>
       <div id="plafG" class="plafond hide">Remise maximale accordée</div>
+    </div>
+    <!-- Deux renseignements que seul le commercial connaît et qu'aucun devis ne
+         laisse deviner : d'où vient ce client, et où il signe.
+
+         Le premier ne sert qu'au suivi : savoir ce que rapporte la prospection
+         de terrain. Le second commande le formulaire de rétractation — c'est le
+         LIEU de signature, et non l'origine de l'appel, qui fait le contrat
+         hors établissement (art. L221-1 du Code de la consommation : « y compris
+         à la suite d'une sollicitation du consommateur »). La question ne se
+         pose donc que pour un particulier, seul titulaire de ce droit. -->
+    <div class="card" id="cOrigine">
+      <h2>Ce client</h2>
+      <label style="margin-top:0">D'où vient-il ?</label>
+      <div class="row">
+        <button class="bsel" id="orPROS" aria-pressed="true"
+                onclick="setOrigine('PROSPECTION')">Prospection</button>
+        <button class="bsel" id="orENTR" aria-pressed="false"
+                onclick="setOrigine('ENTRANT')">Appel entrant</button>
+      </div>
+      <div id="blocLieu" class="hide">
+        <label>Où signe-t-il ?</label>
+        <div class="row">
+          <button class="bsel" id="liCLI" aria-pressed="true"
+                  onclick="setLieu('CLIENT')">Chez lui<br>ou sur le site</button>
+          <button class="bsel" id="liAGE" aria-pressed="false"
+                  onclick="setLieu('AGENCE')">À l'agence</button>
+        </div>
+        <div class="mini" id="noteLieu"></div>
+      </div>
     </div>
     <div class="card">
       <h2>Récapitulatif</h2>
@@ -789,11 +827,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=53"></script>
-<script src="jspdf.umd.min.js?v=53"></script>
-<script src="police.js?v=53"></script>
-<script src="logo.js?v=53"></script>
-<script src="pdf.js?v=53"></script>
-<script src="app.js?v=53"></script>
+<script src="config.js?v=54"></script>
+<script src="jspdf.umd.min.js?v=54"></script>
+<script src="police.js?v=54"></script>
+<script src="logo.js?v=54"></script>
+<script src="pdf.js?v=54"></script>
+<script src="app.js?v=54"></script>
 </body>
 </html>

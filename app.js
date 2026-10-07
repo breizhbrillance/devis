@@ -288,7 +288,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v53';
+var VERSION_APP = 'v54';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -689,7 +689,7 @@ function etape(n){
   if(n<=2) majBarre();          // le total du bas suit le devis en cours, pas le précédent
   if(n===3) rendreLignes();
   if(n===4){
-    ecranEtat(); ecranRemise(); calculer(); majApercuSignature();
+    ecranEtat(); ecranRemise(); majOrigine(); calculer(); majApercuSignature();
     // le calendrier ne propose pas de date déjà passée
     var cd = $('fDate'); if(cd) cd.min = isoJour();
   }
@@ -1059,7 +1059,8 @@ function accepterInformation(btn){
     if(btn) libere(btn);
     if(estAdmin()){ ecranAdmin(); return chargerTableau(); }
     if(estAgent()){ ecranPlanning(); return synchroniser(false); }
-    TYPE = null; PLUS2ANS = null; TAUX = null; majType();
+    TYPE = null; PLUS2ANS = null; TAUX = null;
+  ORIGINE = 'PROSPECTION'; LIEU = 'CLIENT'; majOrigine(); majType();
     etape(1);
     synchroniser(false);
   }, function(){
@@ -1077,7 +1078,8 @@ function apresConnexion(){
   if(v === versionInformation()){
     if(estAdmin()) return ecranAdmin();
     if(estAgent()) return ecranPlanning();
-    TYPE = null; PLUS2ANS = null; TAUX = null; majType();
+    TYPE = null; PLUS2ANS = null; TAUX = null;
+  ORIGINE = 'PROSPECTION'; LIEU = 'CLIENT'; majOrigine(); majType();
     return etape(1);
   }
   ecranAccord();
@@ -1145,6 +1147,53 @@ function majNature(){
   var a = $('fPassages'); if(a) a.value = PASSAGES || '';
   var b = $('fPassages4'); if(b) b.value = PASSAGES || '';
   $('bar').classList.toggle('hide', !barreVisible());
+}
+
+/* D'où vient le client, et où il signe.
+
+   L'origine ne sert qu'au suivi : elle part au classeur et n'entre dans aucun
+   calcul. Le lieu de signature, lui, commande le formulaire de rétractation du
+   devis imprimé — c'est le lieu, et non l'origine de l'appel, qui fait le
+   contrat hors établissement. « Chez lui » par défaut : c'est le cas courant,
+   et c'est le côté qui protège. */
+var ORIGINE = 'PROSPECTION';
+var LIEU = 'CLIENT';
+
+function setOrigine(v){
+  ORIGINE = (v === 'ENTRANT') ? 'ENTRANT' : 'PROSPECTION';
+  majOrigine(); sauverBrouillon();
+}
+function setLieu(v){
+  LIEU = (v === 'AGENCE') ? 'AGENCE' : 'CLIENT';
+  majOrigine(); sauverBrouillon();
+}
+/* Le formulaire de rétractation n'accompagne que le devis d'un particulier qui
+   signe hors de l'agence. Une seule fonction le dit, pour que l'écran et le
+   PDF ne puissent pas diverger. */
+function avecRetractation(){
+  return TYPE === 'PART' && LIEU !== 'AGENCE';
+}
+function majOrigine(){
+  var b = function(id, on){
+    var e = $(id); if(!e) return;
+    e.classList.toggle('on', on);
+    e.setAttribute('aria-pressed', on ? 'true' : 'false');
+  };
+  b('orPROS', ORIGINE === 'PROSPECTION');
+  b('orENTR', ORIGINE === 'ENTRANT');
+  // Un professionnel n'a pas de droit de rétractation : la question ne se pose pas.
+  var bl = $('blocLieu');
+  if(bl) bl.classList.toggle('hide', TYPE !== 'PART');
+  b('liCLI', LIEU !== 'AGENCE');
+  b('liAGE', LIEU === 'AGENCE');
+  var n = $('noteLieu');
+  if(n){
+    n.textContent = avecRetractation()
+      ? 'Le devis portera le formulaire de rétractation : le client a 14 jours pour se raviser.'
+      : (TYPE === 'PART'
+         ? 'Pas de formulaire de rétractation. À ne choisir que si le client signe vraiment à l\'agence.'
+         : '');
+  }
 }
 
 function estEntretien(){ return NATURE === 'ENTRETIEN'; }
@@ -1411,9 +1460,21 @@ function lignePresta(p, i){
   if(estSurface(p)){
     sous += ' · <button class="lienM2" onclick="ouvrirSurface(' + i + ')">calculer</button>';
   }
+  /* Un forfait n'est pas toujours unique : quatre cuisines, c'est quatre fois
+     le prix. Tant qu'il n'est pas au devis, une seule cible — « Ajouter », et
+     le tapotement vaut 1, comme avant. Dès qu'il y est, la cible devient un pas
+     « − n + », pour que l'entretien reste aussi rapide qu'avant et qu'une
+     remise en état puisse compter ses pièces. */
   var saisie = estForfait(p)
-    ? '<button class="coche' + (actif ? ' on' : '') + '" onclick="basculerForfait(' + i + ')">' +
-        (actif ? 'Inclus' : 'Ajouter') + '</button>'
+    ? (actif
+        ? '<div class="pas">' +
+            '<button class="pm" onclick="pasForfait(' + i + ',-1)" ' +
+              'aria-label="Une de moins">\u2212</button>' +
+            '<span class="nb">' + nb(q) + '</span>' +
+            '<button class="pm" onclick="pasForfait(' + i + ',1)" ' +
+              'aria-label="Une de plus">+</button>' +
+          '</div>'
+        : '<button class="coche" onclick="basculerForfait(' + i + ')">Ajouter</button>')
     : '<input class="q" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0" ' +
         'value="' + (actif ? q : '') + '" oninput="setQte(' + i + ',this.value,this)">';
   return '<div class="pres' + (actif ? ' on' : '') + '" id="pr' + i + '">' +
@@ -1468,14 +1529,38 @@ function setQte(i, v, el){
   majBarre(); sauverBrouillon();
 }
 
+/* La ligne change de commande en passant de zéro à un — la coche cède la place
+   au pas. On la redessine donc entière, ce qu'on s'interdit pour une surface :
+   un forfait n'ouvre aucun clavier, il n'y a rien à faire refermer. */
+function redessinerPresta(i){
+  var p = presta(i), r = $('pr' + i);
+  if(!p || !r) return;
+  r.outerHTML = lignePresta(p, i);
+}
+
 function basculerForfait(i){
   var p = presta(i);
   if(!p) return;
   var cle = clePresta(p);
   poser(cle, qteDe(cle) > 0 ? 0 : 1);
-  var on = qteDe(cle) > 0, r = $('pr' + i);
-  var b = r ? r.querySelector('.coche') : null;
-  if(b){ b.classList.toggle('on', on); b.textContent = on ? 'Inclus' : 'Ajouter'; }
+  redessinerPresta(i);
+  rafraichirLigne(i);
+  majBarre(); sauverBrouillon();
+}
+
+/* Une de plus, une de moins. À zéro le forfait quitte le devis et « Ajouter »
+   revient : on retire en un tapotement, comme on ajoutait. */
+function pasForfait(i, d){
+  var p = presta(i);
+  if(!p) return;
+  var cle = clePresta(p);
+  /* Le plancher est tenu par poser(), qui ramène tout négatif à zéro et retire
+     la ligne : inutile de le refaire ici. Le plafond, lui, n'appartient qu'au
+     pas — un doigt qui reste appuyé ne doit pas vendre mille cuisines. */
+  var n = Math.round(qteDe(cle)) + d;
+  if(n > 99) n = 99;
+  poser(cle, n);
+  redessinerPresta(i);
   rafraichirLigne(i);
   majBarre(); sauverBrouillon();
 }
@@ -2273,7 +2358,7 @@ function sauverBrouillon(){
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
                     nature:NATURE, passages:PASSAGES, etat:ETAT,
-                    km:KM, kmAuto:KM_AUTO});
+                    km:KM, kmAuto:KM_AUTO, origine:ORIGINE, lieu:LIEU});
 }
 function restaurer(b){
   LIGNES = sansMajoration(b.lignes);
@@ -2312,6 +2397,9 @@ function restaurer(b){
   PLUS2ANS = (b.plus2ans === true || b.plus2ans === false) ? b.plus2ans : null;
   TAUX = b.taux || null;
   majTva();
+  ORIGINE = (b.origine === 'ENTRANT') ? 'ENTRANT' : 'PROSPECTION';
+  LIEU = (b.lieu === 'AGENCE') ? 'AGENCE' : 'CLIENT';
+  majOrigine();
   $('fNotes').value = b.notes||'';
 }
 
@@ -2452,6 +2540,8 @@ function enregistrerSuite(b, envoi, moi, secours){
       delai: val('fDelai'),          // la phrase pour le client, rien de plus
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
       nature: NATURE || 'CHANTIER',   // 'ENTRETIEN' | 'VITRERIE' | 'CHANTIER' | 'REMISE'
+      origine: ORIGINE,                       // 'PROSPECTION' | 'ENTRANT', pour le suivi
+      lieuSignature: TYPE === 'PART' ? LIEU : '',   // commande le formulaire de rétractation
       passages: estRecurrent() ? PASSAGES : 0,
       notes: val('fNotes'),
       signataire: val('fSignataire'),
@@ -2545,10 +2635,10 @@ function chargerLecteur(){
   LECTEUR = new Promise(function(res, rej){
     if(window.pdfjsLib) return res(window.pdfjsLib);
     var sc = document.createElement('script');
-    sc.src = 'visionneuse.js?v=53';
+    sc.src = 'visionneuse.js?v=54';
     sc.onload = function(){
       if(!window.pdfjsLib) return rej(new Error('moteur absent'));
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=53';
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'visionneuse.worker.js?v=54';
       res(window.pdfjsLib);
     };
     sc.onerror = function(){ LECTEUR = null; rej(new Error('moteur illisible')); };
@@ -3783,6 +3873,7 @@ function nouveauDevis(){
   lsj('brouillon', null);
   DERNIER = null;
   TYPE = null; PLUS2ANS = null; TAUX = null;
+  ORIGINE = 'PROSPECTION'; LIEU = 'CLIENT'; majOrigine();
   TERMINE_RETOUR = 0; V_TYPE = ''; V_MOTIF = '';
   $('steps').classList.remove('hide');
   etape(1);

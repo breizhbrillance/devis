@@ -214,7 +214,16 @@ var ENTETES_DEVIS_ = [
   'NUMERO_ORIGINE',
   /* Distance routière entre l'agence et le client, en kilomètres. Elle ne sert
      que sur un contrat d'entretien, où chaque passage est un trajet. */
-  'KM_AGENCE'
+  'KM_AGENCE',
+  /* PROSPECTION ou ENTRANT : d'où vient ce client. Ne commande rien ; sert à
+     savoir ce que la prospection de terrain rapporte vraiment. */
+  'ORIGINE',
+  /* CLIENT ou AGENCE : où le devis a été signé. C'est lui, et non l'origine de
+     l'appel, qui fait le contrat hors établissement et commande le formulaire
+     de rétractation du devis imprimé (art. L221-1 du Code de la consommation,
+     « y compris à la suite d'une sollicitation du consommateur »). Vide sur un
+     devis professionnel, qui n'ouvre pas ce droit. */
+  'LIEU_SIGNATURE'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -399,7 +408,7 @@ var REGLAGES_DEFAUT_ = [
   ['societe_tva', 'FR69991595711', 'N° TVA intracommunautaire — à faire confirmer par le comptable'],
   ['societe_rcs', 'RCS Vannes 000 000 000', ''],
   ['tva_defaut', '20', 'Taux de TVA par défaut en %'],
-  ['remise_max', '10', 'Remise maximale que le commercial peut accorder, en % — 0 pour l\'interdire'],
+  ['remise_max', '20', 'Remise maximale que le commercial peut accorder, en % — 0 pour l\'interdire'],
   ['passages_mois_defaut', '4', 'Contrat mensuel : nombre de passages créés par mois si le devis ne le précise pas'],
   ['pointage_retention_mois', '36', 'Durée de conservation des pointages arrivée/départ, en mois'],
   ['texte_information_agent', 'L\'application enregistre, à chaque utilisation : les connexions, l\'heure d\'arrivée et l\'heure de départ de chaque chantier, les prestations cochées, les photos prises et les signalements.\n\nCes informations servent au suivi des interventions, à la preuve du travail effectué auprès des clients, et au décompte du temps de travail. Elles sont conservées {mois} mois, puis effacées.\n\nConformément au règlement général sur la protection des données, tu peux demander à consulter les informations qui te concernent et faire rectifier une erreur, en écrivant à breizhbrillance@gmail.com.', 'Texte affiché à chaque connexion d\'un agent — {mois} est remplacé par pointage_retention_mois'],
@@ -1024,6 +1033,8 @@ function enregistrer_(d, com) {
     NATURE: natureDevis_(devis.nature),
     ETAT_SITE: etatSite_(devis.etatSite),
     KM_AGENCE: kmDevis,
+    ORIGINE: origineDevis_(devis.origine),
+    LIEU_SIGNATURE: String(c.type || '').toUpperCase() === 'PART' ? lieuDevis_(devis.lieuSignature) : '',
     PASSAGES_MOIS: Number(devis.passages) || ''
   };
   if (controleTarif) {
@@ -2342,6 +2353,19 @@ function natureLisible_(v) {
 function majorableKm_(nature) {
   var n = natureDevis_(nature);
   return n === 'ENTRETIEN' || n === 'VITRERIE';
+}
+
+/* D'où vient le client. Tout ce qui n'est pas « appel entrant » est de la
+   prospection : un champ vide vient d'un téléphone d'avant la question, et
+   c'est bien ce que ses commerciaux faisaient alors. */
+function origineDevis_(v) {
+  return String(v || '').toUpperCase().trim() === 'ENTRANT' ? 'ENTRANT' : 'PROSPECTION';
+}
+
+/* Où le devis a été signé. Vide ou inconnu : chez le client — c'est le cas
+   courant, et c'est le côté qui garde le droit de rétractation au client. */
+function lieuDevis_(v) {
+  return String(v || '').toUpperCase().trim() === 'AGENCE' ? 'AGENCE' : 'CLIENT';
 }
 
 function recurrentDevis_(nature, passages) {

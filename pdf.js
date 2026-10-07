@@ -479,10 +479,17 @@ var PDF = (function () {
     infos.forEach(function (l) { doc.text(l, M + 4, yi); yi += 3.4; });
 
     /* ---------------- formulaire de rétractation ----------------
-       Un contrat signé au domicile d'un particulier est conclu hors
-       établissement : le formulaire détachable doit accompagner le document.
+       Un contrat signé ailleurs que dans l'établissement, en présence des deux
+       parties, est conclu hors établissement : le formulaire détachable doit
+       alors accompagner le document, et le droit de rétractation court 14 jours.
+       C'est le LIEU de la signature qui le décide — pas qui a appelé le premier
+       (art. L221-1 : « y compris à la suite d'une sollicitation du
+       consommateur »). Un devis signé à l'agence n'en porte donc pas, un devis
+       signé chez le client en porte un. Et seul un particulier y a droit.
        Se désactive par le réglage bordereau_retractation = NON. */
-    if (particulier && String(txt(reg.bordereau_retractation) || 'OUI').toUpperCase() !== 'NON') {
+    var horsEtab = String(devis.lieuSignature || 'CLIENT').toUpperCase() !== 'AGENCE';
+    if (particulier && horsEtab &&
+        String(txt(reg.bordereau_retractation) || 'OUI').toUpperCase() !== 'NON') {
       doc.addPage();
       var yr = 22;
       police('bold', 12, MARQUE);
@@ -539,7 +546,9 @@ var PDF = (function () {
       txt(reg.clause_reserve),
       txt(reg.mentions_penalites),
       particulier ? txt(reg.mentions_credit_impot) : '',
-      particulier ? txt(reg.mentions_particulier) : '',
+      /* La mention dit « contrat conclu hors établissement » : elle n'a pas
+         lieu d'être sur un devis signé à l'agence. */
+      (particulier && horsEtab) ? txt(reg.mentions_particulier) : '',
       txt(reg.mentions_bas)
     ].filter(function (x) { return x.trim(); });
 
