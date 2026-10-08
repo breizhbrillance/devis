@@ -139,15 +139,21 @@ const tous = await p.evaluate(() =>
   [...document.querySelectorAll('#prFiche a.prAppel')].map(a => a.getAttribute('href')));
 T('un seul numéro, un seul bouton', tous.length === 1, tous);
 
-/* ---------- 3. l'ordre de la file ---------- */
+/* ---------- 3. l'ordre de la file ----------
+   Depuis la v58, **l'ouverture commande**. Dans ce jeu d'essai ATELIER COULEURS
+   est fermé toute la semaine, tous les autres sont ouverts en permanence : il
+   passe donc derrière, bien qu'il n'ait jamais été appelé et qu'il soit le plus
+   prioritaire (9 contre 4). À l'intérieur d'une même tranche d'ouverture,
+   l'ordre d'avant tient : rappel dû, jamais appelés par priorité décroissante,
+   puis les sans-réponse du plus ancien. */
 let f = await fileNoms();
-T('le rappel arrivé à échéance passe en premier', f[0] === 'DECO BRETONNE', f);
-T('puis les jamais appelés', f.slice(1,3).sort().join('|') === 'ATELIER COULEURS|PEINTURE DU GOLFE', f);
-/* La base calcule une priorité de 1 à 10 : à file égale, on commence par les
-   plus gros. ATELIER COULEURS est à 9, PEINTURE DU GOLFE à 4. */
-T('et les jamais appelés sont rangés par priorité décroissante',
-  f[1] === 'ATELIER COULEURS' && f[2] === 'PEINTURE DU GOLFE', f);
-T('et le sans-réponse de 5 h ferme la marche', f[3] === 'SANS REPONSE SARL', f);
+T('le rappel arrivé à échéance passe en premier, puisqu\'il est ouvert',
+  f[0] === 'DECO BRETONNE', f);
+T('puis le jamais appelé ouvert', f[1] === 'PEINTURE DU GOLFE', f);
+T('puis le sans-réponse de 5 h, ouvert lui aussi', f[2] === 'SANS REPONSE SARL', f);
+T('et le fermé ferme la marche, malgré une priorité plus haute',
+  f[3] === 'ATELIER COULEURS', f);
+T('la file garde ses quatre prospects', f.length === 4, f);
 T('un rappel pas encore dû reste dehors', f.indexOf('PLUS TARD SAS') < 0, f);
 T('un sans-réponse d\'il y a 1 h aussi', f.indexOf('TROP TOT SARL') < 0, f);
 T('un « pas intéressé » ne revient jamais', f.indexOf('PAS INTERESSE SA') < 0, f);
@@ -425,11 +431,107 @@ T('le choix de secteur survit à un rechargement',
   await p.evaluate(() => ls('pr.secteur')));
 await p.evaluate(() => prSetSecteur('')); await p.waitForTimeout(400);
 
-/* ---------- 18. rien ne casse ---------- */
+
+/* ---------- 19. les trois tranches d'ouverture ----------
+   La règle que Simon a posée : « si le commercial phone à 16 h, les fiches
+   montrées doivent être les établissements ouverts, puis ceux dont on ignore
+   les horaires, puis ceux qui sont fermés ». On fabrique ici les trois cas avec
+   des horaires bâtis autour de l'heure réelle du banc, pour que l'essai dise la
+   même chose à 9 h du matin qu'à 23 h. */
+await reinit();
+const AUJ = ['dim','lun','mar','mer','jeu','ven','sam'][new Date().getDay()];
+const horaires = (deb, fin) => {
+  const h = {};
+  ['lun','mar','mer','jeu','ven','sam','dim'].forEach(j => { h[j] = 'Fermé'; });
+  h[AUJ] = deb + '-' + fin;
+  return h;
+};
+const hhmm = (d) => String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+const OUVERT = (() => {
+  const a = new Date(Date.now() - 3600000), b = new Date(Date.now() + 3600000);
+  return horaires(hhmm(a), hhmm(b));          // ouvert maintenant
+})();
+const FERME = (() => {
+  const a = new Date(Date.now() - 3*3600000), b = new Date(Date.now() - 2*3600000);
+  return horaires(hhmm(a), hhmm(b));          // fermé depuis deux heures
+})();
+
+/* Playwright ne passe qu'un seul argument à la fonction évaluée : les deux
+   grilles d'horaires voyagent donc dans un tableau. */
+await p.evaluate(([o, f]) => {
+  PR.liste = [
+    { id:'t-ferme', ville:'TEST', nom:'FERME SARL', prio:10, secteur:'Essai',
+      tels:[{t:'+33600000001', l:'06 00 00 00 01'}], h:f,
+      statut:'', note:'', rappel:'', dernier:'', appels:0, par:'', maj:'' },
+    { id:'t-inconnu', ville:'TEST', nom:'INCONNU SARL', prio:1, secteur:'Essai',
+      tels:[{t:'+33600000002', l:'06 00 00 00 02'}], h:{},
+      statut:'', note:'', rappel:'', dernier:'', appels:0, par:'', maj:'' },
+    { id:'t-ouvert', ville:'TEST', nom:'OUVERT SARL', prio:1, secteur:'Essai',
+      tels:[{t:'+33600000003', l:'06 00 00 00 03'}], h:o,
+      statut:'', note:'', rappel:'', dernier:'', appels:0, par:'', maj:'' },
+    /* Posé APRÈS le précédent et plus prioritaire : c'est la priorité, et non
+       l'ordre du fichier, qui doit le faire passer devant. */
+    { id:'t-ouvert-gros', ville:'TEST', nom:'OUVERT GROS SARL', prio:8, secteur:'Essai',
+      tels:[{t:'+33600000004', l:'06 00 00 00 04'}], h:o,
+      statut:'', note:'', rappel:'', dernier:'', appels:0, par:'', maj:'' }
+  ];
+  PR.file = []; PR.passes = {}; PR.courant = null; PR.ville = ''; PR.secteur = '';
+  PR.ouverts = false; PR.auto = false;
+  prRendre(true);
+}, [OUVERT, FERME]);
+await p.waitForTimeout(500);
+f = await fileNoms();
+T('les deux ouverts passent devant, malgré de plus petites priorités',
+  f[0] === 'OUVERT GROS SARL' && f[1] === 'OUVERT SARL', f);
+T('et entre eux, c\'est la priorité qui tranche, pas l\'ordre du fichier',
+  f.indexOf('OUVERT GROS SARL') < f.indexOf('OUVERT SARL'), f);
+T('puis celui dont on ignore les horaires', f[2] === 'INCONNU SARL', f);
+T('et le fermé en dernier, malgré la priorité 10', f[3] === 'FERME SARL', f);
+
+T('la fiche de l\'ouvert le dit', /Ouvert/.test(await texte('#prFiche')), await texte('#prFiche'));
+T('et les compteurs annoncent combien sont ouverts',
+  /2<\/b> ouverts/.test(await p.evaluate(() => document.querySelector('#prStats').innerHTML)),
+  await texte('#prStats'));
+
+/* Le filtre « ouverts maintenant » retire les fermés et garde les inconnus :
+   un établissement dont on ignore les horaires a une chance de décrocher. */
+await p.evaluate(() => prSetOuverts(true)); await p.waitForTimeout(400);
+f = await fileNoms();
+T('« ouverts maintenant » écarte le fermé', f.indexOf('FERME SARL') < 0, f);
+T('mais garde celui dont on ignore les horaires', f.indexOf('INCONNU SARL') >= 0, f);
+await p.evaluate(() => prSetOuverts(false)); await p.waitForTimeout(400);
+
+/* Un rappel arrivé à échéance chez un fermé descend derrière les ouverts : le
+   rendez-vous téléphonique ne se tiendra pas rideau baissé. */
+await p.evaluate(() => {
+  const q = PR.liste.find(x => x.id === 't-ferme');
+  q.statut = 'rappel'; q.rappel = new Date(Date.now() - 7200000).toISOString();
+  q.dernier = new Date(Date.now() - 86400000).toISOString(); q.appels = 1;
+  PR.courant = null; prRendre(true);
+});
+await p.waitForTimeout(400);
+f = await fileNoms();
+T('un rappel dû chez un fermé ne remonte pas en tête', f[0] === 'OUVERT GROS SARL', f);
+T('il reste dans la file, en dernier', f[f.length-1] === 'FERME SARL', f);
+
+/* Quand aucun prospect n'a d'horaires — le cas de la base globale aujourd'hui —
+   l'ordre d'avant est intact : priorité décroissante. */
+await p.evaluate(() => {
+  PR.liste.forEach(function(q){ q.h = {}; q.statut = ''; q.rappel = ''; q.dernier = ''; q.appels = 0; });
+  PR.courant = null; prRendre(true);
+});
+await p.waitForTimeout(400);
+f = await fileNoms();
+T('sans aucun horaire, la priorité reprend la main', f[0] === 'FERME SARL', f);
+T('et elle range tout le reste', f[1] === 'OUVERT GROS SARL', f);
+T('et les compteurs taisent le nombre d\'ouverts',
+  !/ouvert/.test(await texte('#prStats')), await texte('#prStats'));
+
+/* ---------- 20. rien ne casse ---------- */
 T('aucune erreur de page', err.length === 0, err.slice(0,3));
 T('aucun clic ni aucune saisie manqués', rate.length === 0, rate);
 
-console.log('\n=== LE PHONING, CÔTÉ APPLICATION (v57) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
+console.log('\n=== LE PHONING, CÔTÉ APPLICATION (v58) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
 ko.forEach(x => console.log('  ✗ ' + x));
 await b.close();
