@@ -292,7 +292,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v57';
+var VERSION_APP = 'v58';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4112,7 +4112,7 @@ function prParId(id){
 function prTels(p){ return (p && p.tels) || []; }
 
 /* ---------------------- horaires ---------------------- */
-function prHm(n){ return (n/60|0) + ' h' + (n%60 ? String(n%60).padStart(2,'0') : ''); }
+function prHm(n){ return (n/60|0) + ' h' + (n%60 ? ' ' + String(n%60).padStart(2,'0') : ''); }
 function prOuvert(p, quand){
   var s = (p.h || {})[PR_JOURS[quand.getDay()]];
   if(!s) return {k:'?', t:'Horaires inconnus'};
@@ -4132,33 +4132,54 @@ function prOuvert(p, quand){
    Dans l'ordre : les rappels arrivés à échéance, puis ceux qu'on n'a jamais
    appelés, puis les sans-réponse dont le délai de relance est passé. Les
    prospects sans numéro n'y entrent jamais : il n'y a rien à composer. */
+/* Ouvert d'abord, horaires inconnus ensuite, fermés en dernier. Un commercial
+   qui téléphone à 16 h ne doit pas tomber sur des rideaux baissés ; mais un
+   établissement dont on ignore les horaires vaut mieux qu'un dont on sait
+   qu'il est fermé, puisqu'il a une chance de décrocher. */
+function prRangOuverture(p, quand){
+  var k = prOuvert(p, quand).k;
+  return k === 'ok' ? 0 : k === '?' ? 1 : 2;
+}
+
+/* La file. L'ouverture commande, et à l'intérieur de chaque tranche viennent
+   d'abord les rappels arrivés à échéance, puis les jamais appelés par priorité
+   décroissante, puis les sans-réponse dont le délai est passé, du plus ancien
+   au plus récent.
+
+   L'ouverture passe **avant le rappel dû** : un rendez-vous téléphonique chez
+   un établissement fermé ne se tient pas, autant le reprendre à la réouverture.
+   Il ne sort pas de la file pour autant, il descend. */
 function prFile(){
   var maintenant = Date.now(), quand = new Date();
-  var dus = [], neufs = [], retenter = [], plusTard = 0;
+  var retenus = [], plusTard = 0;
   PR.liste.forEach(function(p){
     if(!prTels(p).length) return;
     if(PR.ville && p.ville !== PR.ville) return;
     if(PR.secteur && p.secteur !== PR.secteur) return;
     if(PR.passes[p.id]) return;
-    var e = prEtat(p);
+    var e = prEtat(p), rang, cle;
     if(e.statut === 'rappel'){
-      if(e.rappel && new Date(e.rappel).getTime() <= maintenant) dus.push(p);
+      if(!e.rappel || new Date(e.rappel).getTime() > maintenant) return;
+      rang = 0; cle = new Date(e.rappel).getTime();
+    } else if(PR_FINIS.indexOf(e.statut) >= 0){
       return;
+    } else if(!e.statut){
+      rang = 1; cle = -(p.prio || 0);
+    } else {
+      // nrp ou msg : on retente passé le délai
+      var t = e.dernier ? new Date(e.dernier).getTime() : 0;
+      if(maintenant - t < PR.relance*3600000){ plusTard++; return; }
+      rang = 2; cle = t;
     }
-    if(PR_FINIS.indexOf(e.statut) >= 0) return;
-    if(PR.ouverts && prOuvert(p, quand).k === 'no') return;
-    if(!e.statut){ neufs.push(p); return; }
-    // nrp ou msg : on retente passé le délai
-    var t = e.dernier ? new Date(e.dernier).getTime() : 0;
-    if(maintenant - t >= PR.relance*3600000) retenter.push(p); else plusTard++;
+    // « Ouverts maintenant » : écarte les fermés, garde ceux qu'on ne connaît pas
+    var ouv = prRangOuverture(p, quand);
+    if(PR.ouverts && ouv === 2) return;
+    retenus.push({p: p, ouv: ouv, rang: rang, cle: cle});
   });
-  dus.sort(function(a,b){ return new Date(prEtat(a).rappel) - new Date(prEtat(b).rappel); });
-  /* Les jamais appelés par priorité décroissante : la base la calcule (poids du
-     secteur, effectif, voisins à la même adresse), autant commencer par les
-     plus gros. À égalité, l'ordre du fichier, qui est déjà groupé par commune. */
-  neufs.sort(function(a,b){ return (b.prio||0) - (a.prio||0); });
-  retenter.sort(function(a,b){ return new Date(prEtat(a).dernier) - new Date(prEtat(b).dernier); });
-  return {liste: dus.concat(neufs, retenter), plusTard: plusTard};
+  retenus.sort(function(a, b){
+    return (a.ouv - b.ouv) || (a.rang - b.rang) || (a.cle - b.cle);
+  });
+  return {liste: retenus.map(function(x){ return x.p; }), plusTard: plusTard};
 }
 function prCourant(){
   if(PR.courant) return prParId(PR.courant);
@@ -4220,8 +4241,18 @@ function prRendreStats(f){
     if(e.statut === 'rdv') rdv++;
     if(e.statut === 'rappel') rap++;
   });
+  /* Combien, dans la file, sont ouverts à cette heure-ci. Affiché seulement si
+     on connaît au moins un horaire : sans horaires, « 0 ouvert » ferait croire
+     à une liste vide alors qu'on ne sait simplement pas. */
+  var quand = new Date(), connus = 0, ouverts = 0;
+  f.liste.forEach(function(p){
+    var r = prRangOuverture(p, quand);
+    if(r !== 1) connus++;
+    if(r === 0) ouverts++;
+  });
   $('prStats').innerHTML =
     '<span><b>' + appels + '</b> appel' + (appels>1?'s':'') + ' aujourd\'hui</span>' +
+    (connus ? '<span><b>' + ouverts + '</b> ouvert' + (ouverts>1?'s':'') + ' maintenant</span>' : '') +
     '<span><b>' + chauds + '</b> intéressé' + (chauds>1?'s':'') + '</span>' +
     '<span><b>' + rdv + '</b> RDV</span>' +
     '<span><b>' + rap + '</b> à rappeler</span>';
@@ -4276,14 +4307,23 @@ function prRendreFiche(f){
   var e = prEtat(p), tels = prTels(p), quand = new Date(), ouv = prOuvert(p, quand);
   var rang = f.liste.indexOf(p);
   var h = '<div class="card">';
+  /* Deux étiquettes au plus : l'ouverture et, s'il y en a un, le résultat du
+     dernier appel. L'ouverture reste visible même quand un statut occupe la
+     place : c'est elle qui dit si cet appel-ci a une chance d'aboutir. */
+  var etiq = '';
+  if(e.statut){
+    etiq += '<span class="prEtiq ' + (ouv.k === 'ok' ? 'ok' : ouv.k === 'no' ? 'no' : '') + '">' +
+            (ouv.k === 'ok' ? 'Ouvert' : ouv.k === 'no' ? 'Fermé' : 'Horaires inconnus') + '</span>';
+    etiq += '<span class="prEtiq ' + PR_RES[e.statut].c + '">' + PR_RES[e.statut].l +
+            (e.attente ? ' · à envoyer' : '') + '</span>';
+  } else {
+    etiq = '<span class="prEtiq ' + (ouv.k === 'ok' ? 'ok' : ouv.k === 'no' ? 'no' : '') + '">' +
+           ech(ouv.t) + '</span>';
+  }
   h += '<div class="prEnt"><span>' + ech(p.ville) +
        (p.prio ? ' · priorité ' + p.prio : '') +
        (rang >= 0 ? ' · ' + (rang+1) + ' / ' + f.liste.length : '') + '</span>' +
-       (e.statut
-          ? '<span class="prEtiq ' + PR_RES[e.statut].c + '">' + PR_RES[e.statut].l +
-            (e.attente ? ' · à envoyer' : '') + '</span>'
-          : '<span class="prEtiq ' + (ouv.k === 'ok' ? 'ok' : ouv.k === 'no' ? 'no' : '') + '">' +
-            ech(ouv.t) + '</span>') + '</div>';
+       '<span class="prEtiqs">' + etiq + '</span></div>';
   h += '<div class="prNom">' + ech(p.nom) + '</div>';
   var sous = [];
   if(p.activite || p.secteur) sous.push(ech(p.activite || p.secteur));
