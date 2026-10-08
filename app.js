@@ -292,7 +292,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v56';
+var VERSION_APP = 'v57';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4042,7 +4042,7 @@ var PR = {
   passes: {},         // « Passer » ne vaut que pour la session en cours
   brouillons: {},
   onglet: 'appels',
-  ville: '', ouverts: false, statut: '',
+  ville: '', secteur: '', ouverts: false, statut: '',
   rappelOuvert: false, rappelLe: null,
   annuler: null,
   auto: true,
@@ -4076,6 +4076,7 @@ function prCharger(){
   PR.maj = ls('pr.maj') || '';
   PR.relance = Number(ls('pr.relance')) || 3;
   PR.ville = ls('pr.ville') || '';
+  PR.secteur = ls('pr.secteur') || '';
   PR.auto = ls('pr.auto') !== '0';
   PR.charge = !!PR.liste.length;
 }
@@ -4137,6 +4138,7 @@ function prFile(){
   PR.liste.forEach(function(p){
     if(!prTels(p).length) return;
     if(PR.ville && p.ville !== PR.ville) return;
+    if(PR.secteur && p.secteur !== PR.secteur) return;
     if(PR.passes[p.id]) return;
     var e = prEtat(p);
     if(e.statut === 'rappel'){
@@ -4151,6 +4153,10 @@ function prFile(){
     if(maintenant - t >= PR.relance*3600000) retenter.push(p); else plusTard++;
   });
   dus.sort(function(a,b){ return new Date(prEtat(a).rappel) - new Date(prEtat(b).rappel); });
+  /* Les jamais appelés par priorité décroissante : la base la calcule (poids du
+     secteur, effectif, voisins à la même adresse), autant commencer par les
+     plus gros. À égalité, l'ordre du fichier, qui est déjà groupé par commune. */
+  neufs.sort(function(a,b){ return (b.prio||0) - (a.prio||0); });
   retenter.sort(function(a,b){ return new Date(prEtat(a).dernier) - new Date(prEtat(b).dernier); });
   return {liste: dus.concat(neufs, retenter), plusTard: plusTard};
 }
@@ -4191,6 +4197,7 @@ function prOnglet(n){
   if(n === 'reglages') prRendreSource();
 }
 function prSetVille(v){ PR.ville = v; ls('pr.ville', v); PR.courant = null; prRendre(true); }
+function prSetSecteur(v){ PR.secteur = v; ls('pr.secteur', v); PR.courant = null; prRendre(true); }
 function prSetOuverts(v){ PR.ouverts = v; PR.courant = null; prRendre(true); }
 function prSetAuto(v){ PR.auto = v; ls('pr.auto', v ? '1' : '0'); }
 
@@ -4221,13 +4228,26 @@ function prRendreStats(f){
   $('prNb').textContent = PR.liste.length ? '· ' + f.liste.length : '';
 }
 
+/* Les deux menus se calculent l'un en fonction de l'autre : choisir une commune
+   ne doit pas laisser dans les secteurs des choix qui n'y donneraient rien. */
 function prRendreVilles(){
-  var sel = $('prVille'), vues = {};
-  PR.liste.forEach(function(p){ vues[p.ville] = (vues[p.ville]||0) + 1; });
-  if(PR.ville && !vues[PR.ville]) PR.ville = '';
-  var opts = ['<option value="">Toutes les communes (' + PR.liste.length + ')</option>'];
+  remplirMenu('prVille', 'ville', PR.ville, 'Toutes les communes', PR.secteur, 'secteur');
+  remplirMenu('prSecteur', 'secteur', PR.secteur, 'Tous les secteurs', PR.ville, 'ville');
+}
+function remplirMenu(id, champ, choisi, tout, autreValeur, autreChamp){
+  var sel = $(id);
+  if(!sel) return;
+  var vues = {}, total = 0;
+  PR.liste.forEach(function(p){
+    if(autreValeur && p[autreChamp] !== autreValeur) return;
+    var v = p[champ] || '';
+    if(!v) return;
+    vues[v] = (vues[v]||0) + 1;
+    total++;
+  });
+  var opts = ['<option value="">' + tout + ' (' + total + ')</option>'];
   Object.keys(vues).sort().forEach(function(v){
-    opts.push('<option value="' + ech(v) + '"' + (v === PR.ville ? ' selected' : '') + '>' +
+    opts.push('<option value="' + ech(v) + '"' + (v === choisi ? ' selected' : '') + '>' +
               ech(v) + ' (' + vues[v] + ')</option>');
   });
   sel.innerHTML = opts.join('');
@@ -4257,6 +4277,7 @@ function prRendreFiche(f){
   var rang = f.liste.indexOf(p);
   var h = '<div class="card">';
   h += '<div class="prEnt"><span>' + ech(p.ville) +
+       (p.prio ? ' · priorité ' + p.prio : '') +
        (rang >= 0 ? ' · ' + (rang+1) + ' / ' + f.liste.length : '') + '</span>' +
        (e.statut
           ? '<span class="prEtiq ' + PR_RES[e.statut].c + '">' + PR_RES[e.statut].l +
@@ -4264,7 +4285,10 @@ function prRendreFiche(f){
           : '<span class="prEtiq ' + (ouv.k === 'ok' ? 'ok' : ouv.k === 'no' ? 'no' : '') + '">' +
             ech(ouv.t) + '</span>') + '</div>';
   h += '<div class="prNom">' + ech(p.nom) + '</div>';
-  if(p.dirigeant) h += '<div class="prDir">' + ech(p.dirigeant) + '</div>';
+  var sous = [];
+  if(p.activite || p.secteur) sous.push(ech(p.activite || p.secteur));
+  if(p.dirigeant) sous.push(ech(p.dirigeant));
+  if(sous.length) h += '<div class="prDir">' + sous.join(' · ') + '</div>';
 
   tels.forEach(function(x, i){
     h += '<a class="prAppel' + (i ? ' sec' : '') + '"' + (i ? '' : ' id="prBoutonAppel"') +
@@ -4287,13 +4311,18 @@ function prRendreFiche(f){
     if(/estim/i.test(p.src || '')) h += '<div class="mini">Horaires estimés, à confirmer.</div>';
   }
 
-  var site = (p.info || '').match(/https?:\/\/[^\s·]+/);
+  var site = p.site ? [p.site] : (p.info || '').match(/https?:\/\/[^\s·]+/);
   h += '<dl class="prMeta">';
-  if(p.adresse) h += '<dt>Adresse</dt><dd>' + ech(p.adresse) + '</dd>';
+  if(p.adresse) h += '<dt>Adresse</dt><dd>' + ech(p.adresse) +
+                     (p.zone && p.zone !== p.ville ? ' <span class="mini">(' + ech(p.zone) + ')</span>' : '') + '</dd>';
   if(p.mail) h += '<dt>Mail</dt><dd>' + ech(p.mail) + '</dd>';
   if(p.effectif && p.effectif !== 'NC') h += '<dt>Effectif</dt><dd>' + ech(p.effectif) + '</dd>';
-  if(site) h += '<dt>Site</dt><dd><a href="' + ech(site[0]) + '" target="_blank" rel="noopener">' +
-                ech(site[0].replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</a></dd>';
+  if(site){
+    var u = String(site[0]);
+    var href = /^https?:/.test(u) ? u : 'https://' + u;
+    h += '<dt>Site</dt><dd><a href="' + ech(href) + '" target="_blank" rel="noopener">' +
+         ech(u.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</a></dd>';
+  }
   var info = (p.info || '').replace(/\s*·?\s*Site\s*:\s*https?:\/\/[^\s·]+/, '');
   if(info) h += '<dt>Infos</dt><dd>' + ech(info) + '</dd>';
   h += '</dl>';
@@ -4464,7 +4493,8 @@ function prRendreListe(){
   var out = PR.liste.filter(function(p){
     var e = prEtat(p), code = e.statut || 'none';
     if(PR.statut && code !== PR.statut) return false;
-    return !q || normNom(p.nom + ' ' + (p.dirigeant||'') + ' ' + p.ville).indexOf(q) >= 0;
+    return !q || normNom(p.nom + ' ' + (p.dirigeant||'') + ' ' + p.ville + ' ' +
+                        (p.secteur||'') + ' ' + (p.activite||'')).indexOf(q) >= 0;
   });
   if(!out.length){ $('prListe').innerHTML = '<div class="empty">Aucun prospect ne correspond.</div>'; return; }
   $('prListe').innerHTML = out.slice(0,300).map(function(p){
