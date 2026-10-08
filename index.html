@@ -273,6 +273,63 @@
   .piece input{padding:9px;font-size:15px}
   .piece .eq{flex:0 0 68px;font-size:13px;text-align:right;padding-bottom:11px;color:var(--mut)}
   .piece .x{flex:0 0 auto;padding-bottom:9px}
+
+  /* ---- PHONING ---- préfixe « pr » pour ne rien croiser avec les photos (« ph ») */
+  .prOng{display:flex;gap:4px;background:#e8ecf1;padding:4px;border-radius:999px;margin-bottom:14px}
+  .prOng button{flex:1;border:0;background:transparent;padding:9px 6px;border-radius:999px;
+                font-weight:600;color:var(--mut);font-size:14px;min-width:0}
+  .prOng button.on{background:#fff;color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .prStat{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--mut);margin-bottom:12px}
+  .prStat b{color:var(--txt);font-variant-numeric:tabular-nums}
+  .prFiltres{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  .prFiltres select{flex:1;min-width:140px;margin:0}
+  .prFiltres label{display:flex;align-items:center;gap:6px;font-size:13.5px;margin:0;color:var(--txt)}
+  .prFiltres input[type=checkbox]{width:20px;height:20px;margin:0;accent-color:var(--acc)}
+  .prEnt{display:flex;justify-content:space-between;align-items:center;gap:8px;
+         font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);font-weight:600}
+  .prNom{font-size:21px;font-weight:700;line-height:1.2;margin:6px 0 0;overflow-wrap:anywhere}
+  .prDir{color:var(--mut);font-size:14.5px;margin-top:2px}
+  .prEtiq{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;
+          white-space:nowrap;letter-spacing:0;text-transform:none;background:#eef1f5;color:var(--mut)}
+  .prEtiq.ok{background:#dcfce7;color:#15803d}
+  .prEtiq.att{background:#fef3c7;color:#92400e}
+  .prEtiq.no{background:#fee2e2;color:#991b1b}
+  /* Le bouton d'appel est un vrai lien tel: : c'est lui qui ouvre le téléphone,
+     et il doit rester la plus grosse cible de l'écran. */
+  .prAppel{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;
+           background:var(--acc);color:#fff;text-decoration:none;border-radius:12px;
+           padding:16px 12px;font-size:23px;font-weight:700;font-variant-numeric:tabular-nums;
+           margin-top:12px}
+  .prAppel:active{background:var(--acc-d);transform:scale(.99)}
+  .prAppel.sec{background:var(--acc-f);color:var(--acc-t);font-size:18px;padding:11px 12px;margin-top:8px}
+  .prAppel svg{flex:none}
+  .prSem{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:14px}
+  .prJour{background:#f1f4f8;border-radius:8px;padding:5px 2px;text-align:center;
+          font-size:10.5px;line-height:1.3;color:var(--mut);min-width:0;overflow:hidden}
+  .prJour b{display:block;font-size:11px;color:var(--txt);letter-spacing:.04em}
+  .prJour.auj{background:var(--acc-f);box-shadow:inset 0 0 0 1.5px var(--acc-b);color:var(--acc-t)}
+  .prJour.off{opacity:.5}
+  .prMeta{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:14px;margin:14px 0 0}
+  .prMeta dt{color:var(--mut)}
+  .prMeta dd{margin:0;min-width:0;overflow-wrap:anywhere}
+  .prHist{font-size:13px;color:var(--mut);margin:12px 0 0;padding:0;list-style:none}
+  .prRes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .prRes button{border:1.5px solid var(--line);background:#fff;border-radius:12px;
+                padding:14px 8px;font-weight:600;font-size:15px;min-width:0;width:auto}
+  .prRes button.ok{border-color:#15803d;color:#15803d}
+  .prRes button.att{border-color:#b45309;color:#b45309}
+  .prRes button.no{border-color:#b91c1c;color:#b91c1c}
+  .prRes button.on{background:#fef3c7}
+  .prRappel{grid-column:1/-1;background:#fef3c7;border-radius:12px;padding:12px}
+  .prQuand{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .prQuand button{border:1px solid var(--line);background:#fff;border-radius:999px;
+                  padding:8px 12px;font-size:13.5px;font-weight:600;width:auto}
+  .prQuand button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+  .prLigne{display:flex;justify-content:space-between;align-items:center;gap:10px;
+           padding:12px 0;border-bottom:1px solid var(--line);width:100%;
+           background:none;border-left:0;border-right:0;border-top:0;text-align:left}
+  .prLigne b{display:block;font-weight:600;overflow-wrap:anywhere}
+  .prLigne span{font-size:13px;color:var(--mut)}
 </style>
 </head>
 <body>
@@ -637,11 +694,61 @@
       <div id="liste"></div>
     </div>
     <button class="btn" onclick="nouveauDevis()">Nouveau devis</button>
+    <!-- La prospection téléphonique vit à côté des devis, pas dedans : c'est le
+         même commercial, le même téléphone, mais pas le même moment. -->
+    <button class="btn sec hide" id="bPhoning" style="margin-top:10px"
+            onclick="ouvrirPhoning()">Phoning</button>
     <div class="mini" style="text-align:center;margin-top:14px">
       Catalogue mis à jour le <span id="majCat">—</span> ·
       <a href="#" onclick="rafraichirConfig();return false;">actualiser</a><br>
       Connecté : <b id="quiSuisJe">—</b> ·
       <a href="#" onclick="deconnexion();return false;">se déconnecter</a>
+    </div>
+  </section>
+
+  <!-- PHONING — la prospection téléphonique en chaîne.
+       Le numéro est un vrai lien tel: : l'application est servie directement
+       par le navigateur, sans cadre ni bac à sable, c'est ce qui permet à iOS
+       d'ouvrir le téléphone d'un seul appui. -->
+  <section id="ePro" class="hide">
+    <div class="prOng">
+      <button id="prOngA" class="on" onclick="prOnglet('appels')">Appels <span id="prNb"></span></button>
+      <button id="prOngL" onclick="prOnglet('liste')">Liste</button>
+      <button id="prOngR" onclick="prOnglet('reglages')">Réglages</button>
+    </div>
+
+    <div id="prVueAppels">
+      <div class="prStat" id="prStats"></div>
+      <div class="prFiltres">
+        <select id="prVille" onchange="prSetVille(this.value)"><option value="">Toutes les communes</option></select>
+        <label><input type="checkbox" id="prOuverts" onchange="prSetOuverts(this.checked)"> Ouverts maintenant</label>
+      </div>
+      <div id="prFiche"></div>
+    </div>
+
+    <div id="prVueListe" class="hide">
+      <div class="card">
+        <input id="prQ" type="search" placeholder="Chercher une entreprise, un dirigeant, une commune"
+               oninput="prRendreListe()" autocomplete="off">
+        <div class="prQuand" id="prFiltreStatut"></div>
+        <div id="prListe"></div>
+      </div>
+    </div>
+
+    <div id="prVueReglages" class="hide">
+      <div class="card">
+        <h2>Réglages</h2>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+          <input type="checkbox" id="prAuto" style="width:20px;height:20px;margin:0"
+                 onchange="prSetAuto(this.checked)">
+          Appeler le suivant dès que je note un résultat
+        </label>
+        <div class="mini">iOS n'ouvre le téléphone que si l'appui vient de toi. L'enchaînement
+          part du même appui, mais s'il ne se déclenche pas, le gros bouton du suivant est
+          déjà sous ton pouce.</div>
+        <button class="btn sec" style="margin-top:14px" onclick="prRecharger(this)">Recharger la liste</button>
+        <div class="mini" id="prSource">—</div>
+      </div>
     </div>
   </section>
 
@@ -855,11 +962,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=55"></script>
-<script src="jspdf.umd.min.js?v=55"></script>
-<script src="police.js?v=55"></script>
-<script src="logo.js?v=55"></script>
-<script src="pdf.js?v=55"></script>
-<script src="app.js?v=55"></script>
+<script src="config.js?v=56"></script>
+<script src="jspdf.umd.min.js?v=56"></script>
+<script src="police.js?v=56"></script>
+<script src="logo.js?v=56"></script>
+<script src="pdf.js?v=56"></script>
+<script src="app.js?v=56"></script>
 </body>
 </html>

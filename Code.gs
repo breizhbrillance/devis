@@ -22,8 +22,37 @@ var SH = {
   CHANTIERS: 'CHANTIERS',
   ADMINS: 'ADMINS',
   ABSENCES: 'ABSENCES',
-  COMMUNES: 'COMMUNES'
+  COMMUNES: 'COMMUNES',
+  /* La prospection téléphonique. PROSPECTS porte une ligne par entreprise à
+     appeler : les coordonnées recopiées du fichier de prospection, et le suivi
+     que les commerciaux y ajoutent au fil des appels. APPELS garde chaque
+     tentative, pour qu'un statut ne soit jamais le seul témoin de ce qui s'est
+     passé — un « pas intéressé » posé par erreur se relit dans le journal. */
+  PROSPECTS: 'PROSPECTS',
+  APPELS: 'APPELS'
 };
+
+/* Les prospects sont communs à toute l'équipe (choix de Simon, 8 octobre 2026) :
+   un prospect appelé par l'un sort de la file de l'autre. La colonne COMMERCIAL
+   dit qui a appelé en dernier, elle n'attribue rien.
+   ID est la clé : « commune-societe » mis à plat. Il ne change pas quand on
+   réimporte le fichier de prospection, c'est ce qui permet de recopier les
+   coordonnées sans perdre le suivi. */
+var ENTETES_PROSPECTS_ = [
+  'ID', 'COMMUNE', 'SOCIETE', 'DIRIGEANT', 'TEL', 'MAIL', 'ADRESSE', 'EFFECTIF',
+  'SOURCE_HORAIRES', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM', 'COMMENTAIRE',
+  'STATUT', 'NOTE', 'RAPPEL_LE', 'DERNIER_APPEL', 'NB_APPELS', 'COMMERCIAL', 'MAJ_LE'
+];
+
+/* Une ligne par tentative, jamais réécrite. */
+var ENTETES_APPELS_ = [
+  'HORODATAGE', 'COMMERCIAL', 'ID_PROSPECT', 'SOCIETE', 'COMMUNE',
+  'RESULTAT', 'NOTE', 'RAPPEL_LE', 'APPAREIL'
+];
+
+/* Les sept résultats possibles d'un appel, et rien d'autre : le téléphone ne
+   peut pas inventer un statut, et un code inconnu est refusé côté serveur. */
+var RESULTATS_APPEL_ = ['nrp', 'msg', 'rappel', 'interesse', 'rdv', 'refus', 'faux'];
 
 /* Les agents qui exécutent le travail. Feuille séparée des COMMERCIAUX : ce ne
    sont pas les mêmes gens, pas les mêmes droits, et surtout pas les mêmes
@@ -88,6 +117,9 @@ function onOpen() {
     .addItem('10. Rafraîchir « À facturer » et le tableau de bord', 'rafraichirSuivi')
     .addItem('11. Activer le rappel quotidien aux commerciaux', 'activerAutomate')
     .addItem('12. Arrêter le rappel quotidien', 'arreterAutomate')
+    .addSeparator()
+    .addItem('13. Importer les prospects à appeler', 'importerProspects')
+    .addItem('14. Reporter les statuts dans le fichier de prospection', 'reporterStatuts')
     .addToUi();
 }
 
@@ -286,8 +318,11 @@ function majStructure_() {
   creerOnglet_(ss, SH.CHANTIERS, ENTETES_CHANTIERS_);
   creerOnglet_(ss, SH.ABSENCES, ENTETES_ABSENCES_);
   creerOnglet_(ss, SH.COMMUNES, ENTETES_COMMUNES_);
+  creerOnglet_(ss, SH.PROSPECTS, ENTETES_PROSPECTS_);
+  creerOnglet_(ss, SH.APPELS, ENTETES_APPELS_);
   [[SH.PRESTATAIRES, ENTETES_PRESTATAIRES_], [SH.CHANTIERS, ENTETES_CHANTIERS_],
    [SH.ADMINS, ENTETES_ADMINS_], [SH.COMMUNES, ENTETES_COMMUNES_],
+   [SH.PROSPECTS, ENTETES_PROSPECTS_], [SH.APPELS, ENTETES_APPELS_],
    [SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES']]]
     .forEach(function (o) {
       var sh2 = ss.getSheetByName(o[0]);
@@ -459,6 +494,10 @@ var REGLAGES_DEFAUT_ = [
   ['mediateur', '', 'Médiateur de la consommation : nom, adresse et site — obligatoire face à un particulier'],
   ['mention_manuscrite', 'Bon pour accord', 'Mention que le client recopie avant de signer'],
   ['bordereau_retractation', 'OUI', 'Formulaire de rétractation en dernière page des devis aux particuliers'],
+  ['prospection_active', 'OUI', 'Affiche le module Phoning dans l\'application des commerciaux'],
+  ['prospection_fichier_id', '1vBZStgr08vlI-64j5l_QaN7tK8cIiIk0Xyu7doDm8Gw', 'Identifiant du Google Sheet de prospection — un onglet par commune, en-tête en 3e ligne'],
+  ['prospection_entete_ligne', '3', 'Ligne d\'en-tête dans les onglets du fichier de prospection'],
+  ['prospection_relance_heures', '3', 'Heures à attendre avant de retenter un prospect qui n\'a pas répondu'],
   ['sel_codes', '', 'Généré automatiquement — ne pas modifier']
 ];
 
@@ -595,7 +634,11 @@ function config_(com) {
     communes: lireCommunes_(),
     compteurs: compteurs_(),    // dernier rang par série : évite qu'un
     reglages: reg,              // téléphone réinstallé reparte au rang 01
-    catalogue: lireCatalogue_()
+    catalogue: lireCatalogue_(),
+    /* Le module de prospection téléphonique s'affiche ou non. La liste des
+       prospects, elle, ne voyage pas ici : elle est trop grosse pour être
+       rechargée à chaque connexion, et se demande par l'action « prospects ». */
+    prospection: String(reg.prospection_active || 'OUI').toUpperCase() !== 'NON'
   };
 }
 
@@ -605,7 +648,8 @@ function doPost(e) {
   try {
     var d = JSON.parse(e.postData.contents);
     var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
-                   'planning', 'chantier', 'tableau', 'planifier'];
+                   'planning', 'chantier', 'tableau', 'planifier',
+                   'prospects', 'appel'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -627,10 +671,12 @@ function doPost(e) {
     var agent = com.role === 'PRESTATAIRE';
     var admin = com.role === 'ADMIN';
     var permis = admin
-      ? ['connexion', 'config', 'journal', 'tableau', 'planifier', 'statut']
+      ? ['connexion', 'config', 'journal', 'tableau', 'planifier', 'statut',
+         'prospects', 'appel']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
-        : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut'];
+        : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
+           'prospects', 'appel'];
     if (permis.indexOf(d.action) < 0) {
       tracerServeur_(com.nom, 'ACTION REFUSEE', d.action, '', d.appareil || '');
       return reponse_({ ok: false, erreur: 'action non autorisée pour ce compte' });
@@ -660,6 +706,14 @@ function doPost(e) {
     if (d.action === 'planifier') return reponse_(planifierChantier_(d, com));
     if (d.action === 'photo') return reponse_(enregistrerPhoto_(d));
     if (d.action === 'statut') return reponse_(enregistrerStatut_(d, com));
+    if (d.action === 'prospects') return reponse_(listeProspects_(d));
+    /* Les résultats d'appel arrivent par lots : le commercial passe des heures
+       sans réseau, et renvoie tout d'un coup. Le verrou protège le compteur de
+       tentatives, qui se lit avant de se réécrire. */
+    if (d.action === 'appel') {
+      lock.waitLock(30000);
+      return reponse_(enregistrerAppels_(d, com));
+    }
 
     lock.waitLock(30000);
     var res = enregistrer_(d, com);
@@ -3947,3 +4001,437 @@ function arreterAutomate_(silencieux) {
   return n;
 }
 function arreterAutomate() { arreterAutomate_(false); }
+
+/* ====================== PROSPECTION TÉLÉPHONIQUE ======================
+   Le commercial appelle en chaîne depuis son téléphone : l'application lui
+   montre une fiche, il tape le numéro, il note le résultat, elle passe à la
+   suivante. Tout ce qui suit sert cette boucle.
+
+   Trois endroits, trois rôles :
+   - le FICHIER DE PROSPECTION (un Sheet à part, un onglet par commune) est la
+     source des coordonnées. Personne ne l'écrit depuis l'application ;
+   - l'onglet PROSPECTS de ce classeur est la liste à plat que le téléphone
+     reçoit, et c'est lui qui porte le suivi ;
+   - l'onglet APPELS garde chaque tentative, sans jamais être réécrit.
+
+   Les prospects sont communs à toute l'équipe : un prospect appelé par l'un
+   sort de la file de l'autre. */
+
+/** La clé d'un prospect : stable d'un import à l'autre, sinon le suivi se
+    détacherait de sa ligne dès que le fichier de prospection bouge. */
+function cleProspect_(commune, societe) {
+  var s = String(commune || '') + ' ' + String(societe || '');
+  s = normNom_(s).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return s.slice(0, 120);
+}
+
+/**
+ * Les numéros d'une cellule TEL, qui peut en porter plusieurs séparés par « / ».
+ * Rend pour chacun la forme composable (+33…) et la forme lisible, celle que le
+ * commercial lit à voix haute. Un numéro trop court est écarté : mieux vaut pas
+ * de bouton qu'un bouton qui appelle dans le vide.
+ */
+function telsProspect_(brut) {
+  return String(brut == null ? '' : brut)
+    .split(/[\/;,]|\sou\s/i)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s; })
+    .map(function (s) {
+      var d = s.replace(/[^\d+]/g, '');
+      if (d.indexOf('00') === 0) d = '+' + d.slice(2);
+      if (/^0\d{9}$/.test(d)) d = '+33' + d.slice(1);
+      else if (/^\d{9}$/.test(d)) d = '+33' + d;
+      var lisible = s;
+      if (/^\+33\d{9}$/.test(d)) {
+        lisible = ('0' + d.slice(3)).replace(/(\d\d)(?=\d)/g, '$1 ').trim();
+      }
+      return { t: d, l: lisible };
+    })
+    .filter(function (x) { return x.t.replace(/\D/g, '').length >= 9; });
+}
+
+/** L'index des colonnes d'un onglet, par nom d'en-tête. */
+function colonnes_(sh) {
+  var n = sh.getLastColumn();
+  var out = {};
+  if (!n) return out;
+  sh.getRange(1, 1, 1, n).getValues()[0].forEach(function (h, i) {
+    var k = String(h).trim();
+    if (k) out[k] = i;
+  });
+  return out;
+}
+
+/* ---------------------- IMPORT DU FICHIER DE PROSPECTION ----------------------
+   190 onglets à ouvrir : Apps Script coupe à six minutes. L'import avance donc
+   par tranches et retient où il s'est arrêté ; relancer le menu reprend la
+   suite. Rien n'est perdu entre deux passages. */
+
+var CURSEUR_PROSPECTS_ = 'prospection_curseur';
+var BUDGET_IMPORT_MS_ = 4 * 60 * 1000;
+
+function importerProspects() {
+  var ui = SpreadsheetApp.getUi();
+  var r;
+  try {
+    r = importerProspects_();
+  } catch (err) {
+    return ui.alert('Import impossible.\n\n' + String(err && err.message || err) +
+      '\n\nSi le message parle de droits d\'accès, partage le fichier de prospection ' +
+      'avec le compte qui fait tourner ce script, puis relance.');
+  }
+  ui.alert(
+    r.lignes + ' prospect(s) dans l\'onglet PROSPECTS, dont ' + r.sansTel + ' sans numéro.\n' +
+    r.onglets + ' commune(s) lue(s) sur ' + r.total + '.\n\n' +
+    (r.reste
+      ? 'Il reste ' + r.reste + ' commune(s) : relance « 13. Importer les prospects » pour continuer.'
+      : 'Import terminé. Le suivi déjà enregistré a été conservé.'));
+}
+
+function importerProspects_(options) {
+  options = options || {};
+  var reg = lireReglages_();
+  var id = String(options.fichier || reg.prospection_fichier_id || '').trim();
+  if (!id) throw new Error('Renseigne prospection_fichier_id dans l\'onglet REGLAGES.');
+  var ligneEntete = Number(options.entete || reg.prospection_entete_ligne) || 3;
+
+  var src = SpreadsheetApp.openById(id);
+  var onglets = src.getSheets();
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(SH.PROSPECTS) || creerOnglet_(ss, SH.PROSPECTS, ENTETES_PROSPECTS_);
+  var col = colonnes_(sh);
+
+  /* Ce qui est déjà là, indexé par clé : on recopie les coordonnées par-dessus,
+     jamais le suivi. Un statut posé la semaine dernière survit à l'import. */
+  var dejaLa = {};
+  if (sh.getLastRow() > 1) {
+    var vals = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+    vals.forEach(function (r, i) {
+      var k = String(r[col.ID] || '').trim();
+      if (k) dejaLa[k] = { ligne: i + 2, v: r };
+    });
+  }
+
+  var props = PropertiesService.getScriptProperties();
+  var depart = options.depuis != null ? Number(options.depuis)
+                                      : Number(props.getProperty(CURSEUR_PROSPECTS_)) || 0;
+  if (depart >= onglets.length) depart = 0;
+
+  var debut = Date.now(), lus = 0, nouvelles = [], i, j;
+  for (i = depart; i < onglets.length; i++) {
+    if (Date.now() - debut > BUDGET_IMPORT_MS_) break;
+    var o = onglets[i];
+    lus++;
+    var commune = String(o.getName()).trim();
+    if (o.getLastRow() <= ligneEntete || o.getLastColumn() === 0) continue;
+    var grille = o.getRange(ligneEntete, 1, o.getLastRow() - ligneEntete + 1, o.getLastColumn()).getValues();
+    var en = {};
+    grille[0].forEach(function (h, k) {
+      var n = normNom_(h).toUpperCase();
+      if (n.indexOf('NOM DE LA SOC') === 0 || n === 'SOCIETE') en.SOCIETE = k;
+      else if (n.indexOf('NOM DIRIGEANT') === 0 || n.indexOf('DIRIGEANT') === 0) en.DIRIGEANT = k;
+      else if (n === 'TEL' || n.indexOf('TELEPHONE') === 0) en.TEL = k;
+      else if (n === 'MAIL' || n === 'EMAIL' || n === 'E-MAIL') en.MAIL = k;
+      else if (n.indexOf('ADRESSE') === 0) en.ADRESSE = k;
+      else if (n === 'EFFECTIF') en.EFFECTIF = k;
+      else if (n.indexOf('COMMENTAIRE') === 0) en.COMMENTAIRE = k;
+      else if (n.indexOf('SOURCE HORAIRE') === 0) en.SOURCE_HORAIRES = k;
+      else if (['LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'].indexOf(n) >= 0) en[n] = k;
+    });
+    if (en.SOCIETE == null) continue;
+
+    for (j = 1; j < grille.length; j++) {
+      var r = grille[j];
+      var lire = function (k) { return en[k] == null ? '' : String(r[en[k]] == null ? '' : r[en[k]]).trim(); };
+      var societe = lire('SOCIETE');
+      if (!societe) continue;
+      var cle = cleProspect_(commune, societe);
+      if (!cle) continue;
+
+      /* Le même nom deux fois dans la même commune porterait la même clé :
+         la seconde ligne complète la première au lieu d'en ouvrir une
+         deuxième, sans quoi le commercial appellerait deux fois. */
+      var cible = dejaLa[cle];
+      var ligne = cible ? cible.v.slice(0) : new Array(sh.getLastColumn()).fill('');
+      ligne[col.ID] = cle;
+      ligne[col.COMMUNE] = commune;
+      ligne[col.SOCIETE] = societe;
+      ['DIRIGEANT', 'TEL', 'MAIL', 'ADRESSE', 'EFFECTIF', 'COMMENTAIRE', 'SOURCE_HORAIRES',
+       'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'].forEach(function (k) {
+        if (col[k] != null) ligne[col[k]] = lire(k);
+      });
+      if (col.MAJ_LE != null) ligne[col.MAJ_LE] = new Date().toISOString();
+
+      if (cible && cible.ligne) {
+        sh.getRange(cible.ligne, 1, 1, ligne.length).setValues([ligne]);
+        cible.v = ligne;
+      } else if (cible) {
+        // déjà ajoutée pendant cet import, pas encore écrite : on remplace sur place
+        nouvelles[cible.rang] = ligne;
+        cible.v = ligne;
+      } else {
+        dejaLa[cle] = { ligne: 0, rang: nouvelles.length, v: ligne };
+        nouvelles.push(ligne);
+      }
+    }
+  }
+  if (nouvelles.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, nouvelles.length, nouvelles[0].length).setValues(nouvelles);
+  }
+
+  var fini = i >= onglets.length;
+  props.setProperty(CURSEUR_PROSPECTS_, fini ? '0' : String(i));
+
+  var lignes = Math.max(0, sh.getLastRow() - 1), sansTel = 0;
+  if (lignes) {
+    sh.getRange(2, col.TEL + 1, lignes, 1).getValues().forEach(function (x) {
+      if (!telsProspect_(x[0]).length) sansTel++;
+    });
+  }
+  tracerServeur_('SERVEUR', 'PROSPECTS IMPORTES',
+    lus + ' commune(s), ' + lignes + ' prospect(s)', '', '');
+  return { onglets: lus, total: onglets.length, reste: fini ? 0 : onglets.length - i,
+           lignes: lignes, sansTel: sansTel, nouveaux: nouvelles.length };
+}
+
+/* --------------- REPORT DES STATUTS DANS LE FICHIER DE PROSPECTION ---------------
+   À la demande, et non à chaque appel (choix de Simon, 8 octobre 2026) : ouvrir
+   un des 190 onglets à chaque résultat serait lent, et écraserait ce qu'il
+   saisit lui-même dans le fichier. Une seule colonne est touchée, STATUT. */
+
+function reporterStatuts() {
+  var ui = SpreadsheetApp.getUi();
+  var r;
+  try {
+    r = reporterStatuts_();
+  } catch (err) {
+    return ui.alert('Report impossible.\n\n' + String(err && err.message || err));
+  }
+  ui.alert(r.ecrits + ' statut(s) reporté(s) dans le fichier de prospection.' +
+    (r.sansColonne ? '\n\n' + r.sansColonne + ' commune(s) sans colonne STATUT : rien n\'y a été écrit.' : '') +
+    (r.introuvables ? '\n' + r.introuvables + ' prospect(s) n\'ont pas été retrouvés — le fichier a dû changer de nom quelque part.' : ''));
+}
+
+function reporterStatuts_(options) {
+  options = options || {};
+  var reg = lireReglages_();
+  var id = String(options.fichier || reg.prospection_fichier_id || '').trim();
+  if (!id) throw new Error('Renseigne prospection_fichier_id dans l\'onglet REGLAGES.');
+  var ligneEntete = Number(options.entete || reg.prospection_entete_ligne) || 3;
+
+  var suivi = {};
+  lireProspects_().forEach(function (p) { if (p.statut) suivi[p.id] = p; });
+
+  var src = SpreadsheetApp.openById(id);
+  var ecrits = 0, sansColonne = 0, vus = {};
+  src.getSheets().forEach(function (o) {
+    var commune = String(o.getName()).trim();
+    if (o.getLastRow() <= ligneEntete || o.getLastColumn() === 0) return;
+    var en = o.getRange(ligneEntete, 1, 1, o.getLastColumn()).getValues()[0];
+    var cSoc = -1, cSt = -1;
+    en.forEach(function (h, k) {
+      var n = normNom_(h).toUpperCase();
+      if ((n.indexOf('NOM DE LA SOC') === 0 || n === 'SOCIETE') && cSoc < 0) cSoc = k;
+      if (n === 'STATUT' && cSt < 0) cSt = k;
+    });
+    if (cSoc < 0) return;
+    if (cSt < 0) { sansColonne++; return; }
+
+    var n = o.getLastRow() - ligneEntete;
+    if (n <= 0) return;
+    var soc = o.getRange(ligneEntete + 1, cSoc + 1, n, 1).getValues();
+    var st = o.getRange(ligneEntete + 1, cSt + 1, n, 1).getValues();
+    var touche = false;
+    for (var j = 0; j < n; j++) {
+      var cle = cleProspect_(commune, String(soc[j][0]).trim());
+      if (!cle || !suivi[cle]) continue;
+      vus[cle] = 1;
+      var texte = libelleResultat_(suivi[cle].statut);
+      if (String(st[j][0]).trim() !== texte) { st[j][0] = texte; touche = true; ecrits++; }
+    }
+    if (touche) o.getRange(ligneEntete + 1, cSt + 1, n, 1).setValues(st);
+  });
+
+  var introuvables = 0;
+  Object.keys(suivi).forEach(function (k) { if (!vus[k]) introuvables++; });
+  tracerServeur_('SERVEUR', 'STATUTS REPORTES', ecrits + ' statut(s)', '', '');
+  return { ecrits: ecrits, sansColonne: sansColonne, introuvables: introuvables };
+}
+
+/** Le mot que lit un humain dans le fichier de prospection, pas le code. */
+function libelleResultat_(code) {
+  return ({ nrp: 'Pas de réponse', msg: 'Messagerie', rappel: 'À rappeler',
+            interesse: 'Intéressé', rdv: 'RDV pris', refus: 'Pas intéressé',
+            faux: 'Mauvais numéro' })[String(code || '')] || '';
+}
+
+/* ---------------------- CE QUE REÇOIT LE TÉLÉPHONE ---------------------- */
+
+function lireProspects_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.PROSPECTS);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var col = colonnes_(sh);
+  var lire = function (r, k) { return col[k] == null ? '' : String(r[col[k]] == null ? '' : r[col[k]]).trim(); };
+  return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
+    .filter(function (r) { return String(r[col.ID] || '').trim(); })
+    .map(function (r) {
+      var h = {};
+      ['LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'].forEach(function (j) {
+        var v = lire(r, j);
+        if (v) h[j.toLowerCase()] = v;
+      });
+      return {
+        id: lire(r, 'ID'),
+        ville: lire(r, 'COMMUNE'),
+        nom: lire(r, 'SOCIETE'),
+        dirigeant: lire(r, 'DIRIGEANT'),
+        /* Les numéros arrivent déjà composables : le téléphone ne refait pas
+           la conversion dans son coin, il n'y a qu'une règle, et elle est ici. */
+        tels: telsProspect_(lire(r, 'TEL')),
+        mail: lire(r, 'MAIL'),
+        adresse: lire(r, 'ADRESSE'),
+        effectif: lire(r, 'EFFECTIF'),
+        info: lire(r, 'COMMENTAIRE'),
+        src: lire(r, 'SOURCE_HORAIRES'),
+        h: h,
+        statut: lire(r, 'STATUT'),
+        note: lire(r, 'NOTE'),
+        rappel: isoDe_(r[col.RAPPEL_LE]),
+        dernier: isoDe_(r[col.DERNIER_APPEL]),
+        appels: Number(lire(r, 'NB_APPELS')) || 0,
+        par: lire(r, 'COMMERCIAL'),
+        maj: isoDe_(r[col.MAJ_LE])
+      };
+    });
+}
+
+/** La même date, arrondie à la seconde : ce qui survit à un aller-retour
+    dans le classeur. */
+function aLaSeconde_(v) {
+  var s = isoDe_(v);
+  return s ? s.slice(0, 19) : '';
+}
+
+/** Une date du classeur, qu'elle soit une vraie date ou du texte, en ISO. */
+function isoDe_(v) {
+  if (v instanceof Date) return v.toISOString();
+  var s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  var d = new Date(s);
+  return isNaN(d.getTime()) ? '' : d.toISOString();
+}
+
+/**
+ * La liste envoyée au téléphone. « depuis » ne renvoie que ce qui a bougé :
+ * la première connexion charge tout, les suivantes quelques lignes.
+ */
+function listeProspects_(d) {
+  var reg = lireReglages_();
+  if (String(reg.prospection_active || 'OUI').toUpperCase() === 'NON') {
+    return { ok: true, prospects: [], complet: true, actif: false };
+  }
+  var tous = lireProspects_();
+  var depuis = String((d && d.depuis) || '').trim();
+  if (!depuis) {
+    return { ok: true, prospects: tous, complet: true, actif: true,
+             relanceHeures: Number(reg.prospection_relance_heures) || 3,
+             maj: new Date().toISOString() };
+  }
+  var t = new Date(depuis).getTime();
+  var partiels = isNaN(t) ? tous : tous.filter(function (p) {
+    return p.maj && new Date(p.maj).getTime() > t;
+  });
+  return { ok: true, prospects: partiels, complet: isNaN(t), actif: true,
+           relanceHeures: Number(reg.prospection_relance_heures) || 3,
+           maj: new Date().toISOString() };
+}
+
+/* ---------------------- UN RÉSULTAT D'APPEL ---------------------- */
+
+/**
+ * Reçoit un lot de résultats et les range. Chaque résultat ajoute une ligne à
+ * APPELS — jamais réécrite — et met à jour la ligne du prospect.
+ *
+ * Le téléphone peut renvoyer deux fois le même lot (réseau coupé au mauvais
+ * moment) : la clé « ref » du résultat, qui vient de l'appareil, est relue dans
+ * APPELS pour ne pas compter la même tentative deux fois.
+ */
+function enregistrerAppels_(d, com) {
+  var ss = SpreadsheetApp.getActive();
+  var shP = ss.getSheetByName(SH.PROSPECTS);
+  if (!shP) return { ok: false, erreur: 'Aucun onglet PROSPECTS : lance « 13. Importer les prospects ».' };
+  var shA = ss.getSheetByName(SH.APPELS) || creerOnglet_(ss, SH.APPELS, ENTETES_APPELS_);
+
+  var lot = (d && d.appels) || [];
+  if (!lot.length) return { ok: true, recus: 0, refuses: [] };
+  lot = lot.slice(0, 200);
+
+  var col = colonnes_(shP);
+  var n = Math.max(0, shP.getLastRow() - 1);
+  var grille = n ? shP.getRange(2, 1, n, shP.getLastColumn()).getValues() : [];
+  var parId = {};
+  grille.forEach(function (r, i) {
+    var k = String(r[col.ID] || '').trim();
+    if (k) parId[k] = i;
+  });
+
+  /* Les références déjà reçues, pour ne pas compter deux fois un lot renvoyé. */
+  var dejaVues = {};
+  var colA = colonnes_(shA);
+  if (shA.getLastRow() > 1 && colA.ID_PROSPECT != null && colA.HORODATAGE != null) {
+    var depuis = Math.max(2, shA.getLastRow() - 400);
+    shA.getRange(depuis, 1, shA.getLastRow() - depuis + 1, shA.getLastColumn())
+      .getValues().forEach(function (r) {
+        dejaVues[String(r[colA.ID_PROSPECT] || '') + '|' + aLaSeconde_(r[colA.HORODATAGE])] = 1;
+      });
+  }
+
+  var lignesA = [], refuses = [], touchees = {}, recus = 0;
+  lot.forEach(function (a) {
+    var id = String((a && a.id) || '').trim();
+    var res = String((a && a.resultat) || '').trim();
+    if (!id || RESULTATS_APPEL_.indexOf(res) < 0) { refuses.push(id || '?'); return; }
+    var i = parId[id];
+    if (i == null) { refuses.push(id); return; }
+
+    /* Le classeur garde les dates en jours fractionnaires : une milliseconde
+       ne survit pas à l'aller-retour. La seconde suffit à reconnaître un lot
+       renvoyé deux fois, et deux appels n'arrivent jamais dans la même. */
+    var quand = isoDe_(a.t) || new Date().toISOString();
+    var ref = id + '|' + aLaSeconde_(quand);
+    if (dejaVues[ref]) { recus++; return; }
+    dejaVues[ref] = 1;
+
+    var r = grille[i];
+    var rappel = res === 'rappel' ? (isoDe_(a.rappel) || '') : '';
+    if (col.STATUT != null) r[col.STATUT] = res;
+    if (col.NOTE != null) r[col.NOTE] = String(a.note || '').slice(0, 1000);
+    if (col.RAPPEL_LE != null) r[col.RAPPEL_LE] = rappel ? new Date(rappel) : '';
+    if (col.DERNIER_APPEL != null) r[col.DERNIER_APPEL] = new Date(quand);
+    if (col.NB_APPELS != null) r[col.NB_APPELS] = (Number(r[col.NB_APPELS]) || 0) + 1;
+    if (col.COMMERCIAL != null) r[col.COMMERCIAL] = com.nom;
+    if (col.MAJ_LE != null) r[col.MAJ_LE] = new Date().toISOString();
+    touchees[i] = 1;
+    recus++;
+
+    lignesA.push([new Date(quand), com.nom, id,
+                  String(r[col.SOCIETE] || ''), String(r[col.COMMUNE] || ''),
+                  res, String(a.note || '').slice(0, 1000),
+                  rappel ? new Date(rappel) : '', String(d.appareil || '')]);
+  });
+
+  /* Les lignes modifiées sont réécrites une par une : elles sont dispersées
+     dans 957 lignes, et réécrire tout l'onglet ferait perdre ce qu'un autre
+     commercial vient d'y poser. */
+  Object.keys(touchees).forEach(function (i) {
+    var k = Number(i);
+    shP.getRange(k + 2, 1, 1, grille[k].length).setValues([grille[k]]);
+  });
+  if (lignesA.length) {
+    shA.getRange(shA.getLastRow() + 1, 1, lignesA.length, lignesA[0].length).setValues(lignesA);
+  }
+  if (recus) {
+    tracerServeur_(com.nom, 'APPELS ENREGISTRES', recus + ' résultat(s)', '', d.appareil || '');
+  }
+  return { ok: true, recus: recus, refuses: refuses, maj: new Date().toISOString() };
+}

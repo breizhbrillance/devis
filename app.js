@@ -254,6 +254,10 @@ window.addEventListener('load', function(){
 
 function demarrer(){
   fermerDialogues();   // une page restaurée par le navigateur peut rouvrir sur un dialogue
+  /* La prospection se relit tout de suite, même si son écran n'est pas ouvert :
+     c'est ce qui permet à la synchronisation de renvoyer les résultats d'appel
+     restés en attente d'un jour sur l'autre. */
+  prCharger();
   $('hSub').textContent = (CFG && CFG.reglages && CFG.reglages.societe_nom) || 'Devis sur place';
   $('premiere').classList.toggle('hide', !!CFG);
 
@@ -288,7 +292,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v55';
+var VERSION_APP = 'v56';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -442,7 +446,7 @@ function repondreConf(oui){
 }
 
 /* ====================== NAVIGATION ====================== */
-var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','eAg1','eAg2','eAd1','eAd2'];
+var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','ePro','eAg1','eAg2','eAd1','eAd2'];
 function montrer(id){
   ECRANS.forEach(function(k){ $(k).classList.toggle('hide', k!==id); });
   // La couleur suit le métier, pas l'écran : on la pose ici, seul endroit par
@@ -464,6 +468,9 @@ function barreComplete(){
 
 /* Un seul bouton Retour, qui sait d'où l'on vient. */
 function revenir(){
+  /* Le phoning n'est pas une étape du devis : on en sort vers « Mes devis »,
+     jamais vers l'écran précédent de la chaîne. */
+  if(ETAPE === 8) return ouvrirHistorique();
   if(ETAPE === 5) return ouvrirHistorique();
   if(ETAPE === 7){
     return (PHOTO_RETOUR === 5) ? montrerTermine() : ouvrirHistorique();
@@ -2915,6 +2922,9 @@ function synchroniser(manuel, btn){
     });
   }
   if(SYNC){ if(btn) libere(btn); return; }
+  /* Les résultats d'appel voyagent avec le reste : le commercial ne doit pas
+     avoir à se souvenir qu'il y a deux choses à envoyer. */
+  prPousser();
   if(btn) occuper(btn, 'Envoi…');
   if(!navigator.onLine){
     if(btn) libere(btn);
@@ -3114,6 +3124,10 @@ function ouvrirHistorique(){
   var moi = session();
   $('quiSuisJe').textContent = (moi && moi.nom) || '—';
   var m=$('majCat'); if(m && CFG && CFG.maj) m.textContent = new Date(CFG.maj).toLocaleDateString('fr-FR');
+  /* Le phoning n'apparaît que si le bureau l'a ouvert (réglage
+     prospection_active). Une configuration d'avant la v56 ne le connaît pas :
+     le bouton reste caché jusqu'au prochain rafraîchissement. */
+  $('bPhoning').classList.toggle('hide', !(CFG && CFG.prospection));
   rendreHistorique(); window.scrollTo(0,0);
 }
 function rendreHistorique(){
@@ -4001,4 +4015,555 @@ function nouveauDevis(){
   TERMINE_RETOUR = 0; V_TYPE = ''; V_MOTIF = '';
   $('steps').classList.remove('hide');
   etape(1);
+}
+
+/* ====================== PHONING ======================
+   La prospection téléphonique en chaîne : une fiche, un appui pour appeler, un
+   appui pour noter, et la fiche suivante.
+
+   Ce qui tient tout : le numéro affiché est un vrai <a href="tel:+33…">.
+   L'application est servie directement par le navigateur, sans cadre ni bac à
+   sable, ce qui permet à iOS d'ouvrir le téléphone. Un composeur rendu dans un
+   cadre — un aperçu, une page intégrée — ne le peut pas, et c'est ce qui a
+   motivé de mettre ce module ici plutôt qu'à côté.
+
+   Le suivi est commun à toute l'équipe (choix de Simon, 8 octobre 2026) : ce
+   que le bureau renvoie fait foi, et les résultats pas encore partis sont
+   posés par-dessus. Un prospect appelé par un autre sort donc de la file dès
+   la synchronisation suivante. */
+
+var PR = {
+  liste: [],          // les prospects tels que le bureau les connaît
+  file: [],           // les résultats pas encore partis
+  hist: {},           // les tentatives faites sur CET appareil, pour la fiche
+  maj: '',            // horodatage du dernier chargement, pour ne demander que les changements
+  relance: 3,         // heures avant de retenter un prospect qui n'a pas répondu
+  courant: null,      // fiche ouverte depuis la liste, hors file
+  passes: {},         // « Passer » ne vaut que pour la session en cours
+  brouillons: {},
+  onglet: 'appels',
+  ville: '', ouverts: false, statut: '',
+  rappelOuvert: false, rappelLe: null,
+  annuler: null,
+  auto: true,
+  charge: false,
+  appelLe: 0          // quand on a quitté l'application pour appeler
+};
+
+var PR_RES = {
+  nrp:      {l:'Pas de réponse', c:''},
+  msg:      {l:'Messagerie',     c:''},
+  rappel:   {l:'À rappeler',     c:'att'},
+  interesse:{l:'Intéressé',      c:'ok'},
+  rdv:      {l:'RDV pris',       c:'ok'},
+  refus:    {l:'Pas intéressé',  c:'no'},
+  faux:     {l:'Mauvais numéro', c:'no'}
+};
+/* Les quatre résultats qui ferment le dossier : le prospect ne revient pas
+   dans la file, même après le délai de relance. */
+var PR_FINIS = ['interesse', 'rdv', 'refus', 'faux'];
+var PR_JOURS = ['dim','lun','mar','mer','jeu','ven','sam'];
+var PR_SEM = ['lun','mar','mer','jeu','ven','sam','dim'];
+var PR_TEL_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+  '<path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25c1.1.37 2.3.57 3.6.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z"/></svg>';
+
+/* ---------------------- mémoire locale ---------------------- */
+
+function prCharger(){
+  PR.liste = lsj('pr.liste') || [];
+  PR.file = lsj('pr.file') || [];
+  PR.hist = lsj('pr.hist') || {};
+  PR.maj = ls('pr.maj') || '';
+  PR.relance = Number(ls('pr.relance')) || 3;
+  PR.ville = ls('pr.ville') || '';
+  PR.auto = ls('pr.auto') !== '0';
+  PR.charge = !!PR.liste.length;
+}
+function prRanger(){
+  lsj('pr.liste', PR.liste);
+  lsj('pr.file', PR.file);
+  lsj('pr.hist', PR.hist);
+  ls('pr.maj', PR.maj);
+}
+
+/* ---------------------- état d'un prospect ----------------------
+   Le bureau donne le dernier état connu ; la file locale le corrige. Un seul
+   endroit décide, pour que la file d'appels, la liste et les compteurs ne
+   puissent pas se contredire. */
+function prEtat(p){
+  var e = {statut:p.statut||'', note:p.note||'', rappel:p.rappel||'',
+           dernier:p.dernier||'', appels:p.appels||0, par:p.par||'', attente:false};
+  PR.file.forEach(function(a){
+    if(a.id !== p.id) return;
+    e.statut = a.resultat;
+    e.note = a.note || '';
+    e.rappel = a.resultat === 'rappel' ? (a.rappel || '') : '';
+    e.dernier = a.t;
+    e.appels = e.appels + 1;
+    e.attente = true;
+  });
+  return e;
+}
+function prParId(id){
+  for(var i=0;i<PR.liste.length;i++) if(PR.liste[i].id === id) return PR.liste[i];
+  return null;
+}
+function prTels(p){ return (p && p.tels) || []; }
+
+/* ---------------------- horaires ---------------------- */
+function prHm(n){ return (n/60|0) + ' h' + (n%60 ? String(n%60).padStart(2,'0') : ''); }
+function prOuvert(p, quand){
+  var s = (p.h || {})[PR_JOURS[quand.getDay()]];
+  if(!s) return {k:'?', t:'Horaires inconnus'};
+  if(/ferm/i.test(s)) return {k:'no', t:'Fermé aujourd\'hui'};
+  var re = /(\d{1,2})[:h](\d{2})\s*[-–]\s*(\d{1,2})[:h](\d{2})/g, m, plages = [];
+  while((m = re.exec(s))) plages.push([+m[1]*60 + +m[2], +m[3]*60 + +m[4]]);
+  if(!plages.length) return {k:'?', t:'Horaires inconnus'};
+  var h = quand.getHours()*60 + quand.getMinutes(), i;
+  for(i=0;i<plages.length;i++)
+    if(h >= plages[i][0] && h < plages[i][1]) return {k:'ok', t:'Ouvert, ferme à ' + prHm(plages[i][1])};
+  for(i=0;i<plages.length;i++)
+    if(plages[i][0] > h) return {k:'no', t:'Fermé, rouvre à ' + prHm(plages[i][0])};
+  return {k:'no', t:'Fermé pour aujourd\'hui'};
+}
+
+/* ---------------------- la file d'appels ----------------------
+   Dans l'ordre : les rappels arrivés à échéance, puis ceux qu'on n'a jamais
+   appelés, puis les sans-réponse dont le délai de relance est passé. Les
+   prospects sans numéro n'y entrent jamais : il n'y a rien à composer. */
+function prFile(){
+  var maintenant = Date.now(), quand = new Date();
+  var dus = [], neufs = [], retenter = [], plusTard = 0;
+  PR.liste.forEach(function(p){
+    if(!prTels(p).length) return;
+    if(PR.ville && p.ville !== PR.ville) return;
+    if(PR.passes[p.id]) return;
+    var e = prEtat(p);
+    if(e.statut === 'rappel'){
+      if(e.rappel && new Date(e.rappel).getTime() <= maintenant) dus.push(p);
+      return;
+    }
+    if(PR_FINIS.indexOf(e.statut) >= 0) return;
+    if(PR.ouverts && prOuvert(p, quand).k === 'no') return;
+    if(!e.statut){ neufs.push(p); return; }
+    // nrp ou msg : on retente passé le délai
+    var t = e.dernier ? new Date(e.dernier).getTime() : 0;
+    if(maintenant - t >= PR.relance*3600000) retenter.push(p); else plusTard++;
+  });
+  dus.sort(function(a,b){ return new Date(prEtat(a).rappel) - new Date(prEtat(b).rappel); });
+  retenter.sort(function(a,b){ return new Date(prEtat(a).dernier) - new Date(prEtat(b).dernier); });
+  return {liste: dus.concat(neufs, retenter), plusTard: plusTard};
+}
+function prCourant(){
+  if(PR.courant) return prParId(PR.courant);
+  return prFile().liste[0] || null;
+}
+
+/* ---------------------- écran ---------------------- */
+
+function ouvrirPhoning(){
+  ETAPE = 8;
+  prCharger();
+  montrer('ePro');
+  $('steps').classList.add('hide');
+  barreRetour();
+  $('bHist').classList.remove('hide');
+  $('hTitre').textContent = 'Phoning';
+  $('prAuto').checked = PR.auto;
+  $('prOuverts').checked = PR.ouverts;
+  prOnglet(PR.onglet);
+  prRendre(true);
+  window.scrollTo(0,0);
+  // La liste se rafraîchit en arrivant, jamais de façon bloquante : hors
+  // connexion, celle du dernier chargement reste parfaitement utilisable.
+  prRecharger(null);
+}
+
+function prOnglet(n){
+  PR.onglet = n;
+  $('prVueAppels').classList.toggle('hide', n !== 'appels');
+  $('prVueListe').classList.toggle('hide', n !== 'liste');
+  $('prVueReglages').classList.toggle('hide', n !== 'reglages');
+  $('prOngA').classList.toggle('on', n === 'appels');
+  $('prOngL').classList.toggle('on', n === 'liste');
+  $('prOngR').classList.toggle('on', n === 'reglages');
+  if(n === 'liste') prRendreListe();
+  if(n === 'reglages') prRendreSource();
+}
+function prSetVille(v){ PR.ville = v; ls('pr.ville', v); PR.courant = null; prRendre(true); }
+function prSetOuverts(v){ PR.ouverts = v; PR.courant = null; prRendre(true); }
+function prSetAuto(v){ PR.auto = v; ls('pr.auto', v ? '1' : '0'); }
+
+function prRendre(force){
+  if(ETAPE !== 8) return;
+  var f = prFile();
+  prRendreStats(f);
+  prRendreVilles();
+  prRendreFiche(f);
+  if(PR.onglet === 'liste') prRendreListe();
+  if(force) prRanger();
+}
+
+function prRendreStats(f){
+  var auj = new Date().toDateString(), appels = 0, chauds = 0, rdv = 0, rap = 0;
+  PR.liste.forEach(function(p){
+    var e = prEtat(p);
+    if(e.dernier && new Date(e.dernier).toDateString() === auj) appels++;
+    if(e.statut === 'interesse') chauds++;
+    if(e.statut === 'rdv') rdv++;
+    if(e.statut === 'rappel') rap++;
+  });
+  $('prStats').innerHTML =
+    '<span><b>' + appels + '</b> appel' + (appels>1?'s':'') + ' aujourd\'hui</span>' +
+    '<span><b>' + chauds + '</b> intéressé' + (chauds>1?'s':'') + '</span>' +
+    '<span><b>' + rdv + '</b> RDV</span>' +
+    '<span><b>' + rap + '</b> à rappeler</span>';
+  $('prNb').textContent = PR.liste.length ? '· ' + f.liste.length : '';
+}
+
+function prRendreVilles(){
+  var sel = $('prVille'), vues = {};
+  PR.liste.forEach(function(p){ vues[p.ville] = (vues[p.ville]||0) + 1; });
+  if(PR.ville && !vues[PR.ville]) PR.ville = '';
+  var opts = ['<option value="">Toutes les communes (' + PR.liste.length + ')</option>'];
+  Object.keys(vues).sort().forEach(function(v){
+    opts.push('<option value="' + ech(v) + '"' + (v === PR.ville ? ' selected' : '') + '>' +
+              ech(v) + ' (' + vues[v] + ')</option>');
+  });
+  sel.innerHTML = opts.join('');
+}
+
+function prRendreFiche(f){
+  var b = $('prFiche');
+  if(!PR.liste.length){
+    b.innerHTML = '<div class="card"><div class="empty">Aucun prospect chargé.<br>' +
+      'Le bureau doit lancer « Importer les prospects » dans le classeur,<br>' +
+      'puis tu recharges la liste depuis les réglages.</div></div>';
+    return;
+  }
+  var p = PR.courant ? prParId(PR.courant) : null;
+  if(!p){ PR.courant = null; p = f.liste[0]; }
+  if(!p){
+    var np = Object.keys(PR.passes).length;
+    b.innerHTML = '<div class="card"><div class="empty">File terminée.<br>' +
+      'Plus personne à appeler avec ces filtres' +
+      (f.plusTard ? ', et ' + f.plusTard + ' sans réponse à retenter dans quelques heures' : '') + '.</div>' +
+      (np ? '<button class="btn sec" onclick="prReprendrePasses()">Reprendre les ' + np + ' passés</button>' : '') +
+      '</div>';
+    return;
+  }
+
+  var e = prEtat(p), tels = prTels(p), quand = new Date(), ouv = prOuvert(p, quand);
+  var rang = f.liste.indexOf(p);
+  var h = '<div class="card">';
+  h += '<div class="prEnt"><span>' + ech(p.ville) +
+       (rang >= 0 ? ' · ' + (rang+1) + ' / ' + f.liste.length : '') + '</span>' +
+       (e.statut
+          ? '<span class="prEtiq ' + PR_RES[e.statut].c + '">' + PR_RES[e.statut].l +
+            (e.attente ? ' · à envoyer' : '') + '</span>'
+          : '<span class="prEtiq ' + (ouv.k === 'ok' ? 'ok' : ouv.k === 'no' ? 'no' : '') + '">' +
+            ech(ouv.t) + '</span>') + '</div>';
+  h += '<div class="prNom">' + ech(p.nom) + '</div>';
+  if(p.dirigeant) h += '<div class="prDir">' + ech(p.dirigeant) + '</div>';
+
+  tels.forEach(function(x, i){
+    h += '<a class="prAppel' + (i ? ' sec' : '') + '"' + (i ? '' : ' id="prBoutonAppel"') +
+         ' href="tel:' + ech(x.t) + '" onclick="prAppelLance()">' +
+         PR_TEL_SVG + '<span>' + ech(x.l) + '</span></a>';
+  });
+
+  if(p.h && Object.keys(p.h).length){
+    var auj = PR_JOURS[quand.getDay()];
+    h += '<div class="prSem">';
+    PR_SEM.forEach(function(j){
+      var v = p.h[j] || '—', ferme = v === '—' || /ferm/i.test(v);
+      h += '<div class="prJour' + (j === auj ? ' auj' : '') + (ferme ? ' off' : '') + '"><b>' +
+           j.toUpperCase() + '</b>' +
+           ech(ferme ? (v === '—' ? '—' : 'Fermé') : v).replace(/\s*\/\s*/g, '<br>').replace(/-/g, '–<wbr>') +
+           '</div>';
+    });
+    h += '</div>';
+    if(e.statut) h += '<div class="mini">' + ech(ouv.t) + '</div>';
+    if(/estim/i.test(p.src || '')) h += '<div class="mini">Horaires estimés, à confirmer.</div>';
+  }
+
+  var site = (p.info || '').match(/https?:\/\/[^\s·]+/);
+  h += '<dl class="prMeta">';
+  if(p.adresse) h += '<dt>Adresse</dt><dd>' + ech(p.adresse) + '</dd>';
+  if(p.mail) h += '<dt>Mail</dt><dd>' + ech(p.mail) + '</dd>';
+  if(p.effectif && p.effectif !== 'NC') h += '<dt>Effectif</dt><dd>' + ech(p.effectif) + '</dd>';
+  if(site) h += '<dt>Site</dt><dd><a href="' + ech(site[0]) + '" target="_blank" rel="noopener">' +
+                ech(site[0].replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</a></dd>';
+  var info = (p.info || '').replace(/\s*·?\s*Site\s*:\s*https?:\/\/[^\s·]+/, '');
+  if(info) h += '<dt>Infos</dt><dd>' + ech(info) + '</dd>';
+  h += '</dl>';
+
+  var lignes = (PR.hist[p.id] || []).slice(-4).map(function(t){
+    return '<li>' + ech(prQuandTexte(t.t)) + ' — ' + ech((PR_RES[t.r] || {l:t.r}).l) + '</li>';
+  });
+  if(e.appels && !lignes.length){
+    lignes.push('<li>' + e.appels + ' appel' + (e.appels>1?'s':'') +
+                (e.dernier ? ', dernier ' + ech(prQuandTexte(e.dernier)) : '') +
+                (e.par ? ' par ' + ech(e.par) : '') + '</li>');
+  }
+  if(e.statut === 'rappel' && e.rappel) lignes.push('<li>Rappel prévu ' + ech(prQuandTexte(e.rappel)) + '</li>');
+  if(lignes.length) h += '<ul class="prHist">' + lignes.join('') + '</ul>';
+
+  var note = PR.brouillons[p.id] != null ? PR.brouillons[p.id] : (e.note || '');
+  h += '<label style="margin-top:14px">Note</label>' +
+       '<textarea id="prNote" rows="2" placeholder="Ce qui s\'est dit, la personne à redemander…" ' +
+       'oninput="prNoter(this.value)">' + ech(note) + '</textarea>';
+  h += '</div>';
+
+  h += '<div class="prRes">';
+  ['nrp','msg','rappel','interesse','rdv','refus','faux'].forEach(function(k){
+    h += '<button class="' + PR_RES[k].c + (k === 'rappel' && PR.rappelOuvert ? ' on' : '') +
+         '" onclick="prResultat(\'' + k + '\')">' + PR_RES[k].l + '</button>';
+  });
+  h += '<button onclick="prPasser()">Passer</button>';
+  if(PR.rappelOuvert){
+    h += '<div class="prRappel"><b>Rappeler quand ?</b><div class="prQuand">' +
+         prQuandChoix().map(function(c){
+           return '<button class="' + (PR.rappelLe === c.at ? 'on' : '') +
+                  '" onclick="prQuandPoser(\'' + c.at + '\')">' + c.l + '</button>';
+         }).join('') + '</div>' +
+         '<input type="datetime-local" id="prQuandLe" oninput="prQuandSaisi(this.value)" value="' +
+         (PR.rappelLe ? prLocalInput(PR.rappelLe) : '') + '">' +
+         '<button class="btn" style="margin-top:8px"' + (PR.rappelLe ? '' : ' disabled') +
+         ' onclick="prResultatFinal(\'rappel\')">Enregistrer le rappel</button></div>';
+  }
+  h += '</div>';
+
+  var sous = [];
+  if(PR.annuler) sous.push('<a href="#" onclick="prAnnuler();return false;">Annuler le dernier résultat</a>');
+  if(PR.courant) sous.push('<a href="#" onclick="prRevenirFile();return false;">Revenir à la file</a>');
+  if(PR.file.length) sous.push(PR.file.length + ' résultat' + (PR.file.length>1?'s':'') + ' à envoyer');
+  if(sous.length) h += '<div class="mini" style="text-align:center;margin-top:12px">' + sous.join(' · ') + '</div>';
+
+  b.innerHTML = h;
+}
+
+function prQuandTexte(iso){
+  var d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  var h = d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+  return d.toDateString() === new Date().toDateString()
+    ? 'aujourd\'hui ' + h
+    : d.toLocaleDateString('fr-FR', {weekday:'short', day:'numeric', month:'short'}) + ' ' + h;
+}
+function prLocalInput(iso){
+  var d = new Date(iso);
+  return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+}
+function prQuandChoix(){
+  var n = new Date(), out = [];
+  function a(j, h){ var d = new Date(n); d.setDate(d.getDate()+j); d.setHours(h,0,0,0); return d.toISOString(); }
+  out.push({l:'Dans 1 h', at:new Date(Math.ceil((n.getTime()+3600000)/300000)*300000).toISOString()});
+  if(n.getHours() < 13) out.push({l:'Cet après-midi 14 h', at:a(0,14)});
+  // Appeler une entreprise un dimanche ne sert à rien : le samedi renvoie au
+  // lundi, et le vendredi aussi.
+  var j = n.getDay() === 5 ? 3 : n.getDay() === 6 ? 2 : 1;
+  out.push({l:(j === 1 ? 'Demain' : 'Lundi') + ' 9 h', at:a(j,9)});
+  out.push({l:(j === 1 ? 'Demain' : 'Lundi') + ' 14 h', at:a(j,14)});
+  out.push({l:'Dans 1 semaine', at:a(7,9)});
+  return out;
+}
+function prQuandPoser(at){ PR.rappelLe = at; prRendre(); }
+function prQuandSaisi(v){
+  var d = new Date(v);
+  PR.rappelLe = isNaN(d.getTime()) ? null : d.toISOString();
+  var b = $('prQuandLe'); if(b) b.parentNode.querySelector('.btn').disabled = !PR.rappelLe;
+}
+function prNoter(v){ var p = prCourant(); if(p) PR.brouillons[p.id] = v; }
+
+function prResultat(code){
+  if(code === 'rappel'){
+    PR.rappelOuvert = !PR.rappelOuvert;
+    PR.rappelLe = null;
+    return prRendre();
+  }
+  prResultatFinal(code);
+}
+
+/* Le cœur de la boucle. Tout ce qui suit l'appui doit tenir dans la même
+   impulsion : iOS n'ouvre le téléphone que si le geste de l'utilisateur est
+   encore vivant, et il ne l'est que quelques instants. On repeint, puis on
+   appuie sur le lien du suivant — sans attendre ni réseau ni enregistrement. */
+function prResultatFinal(code){
+  var p = prCourant();
+  if(!p) return;
+  if(code === 'rappel' && !PR.rappelLe) return;
+  var note = $('prNote') ? $('prNote').value.trim() : (prEtat(p).note || '');
+  var a = {id:p.id, resultat:code, note:note, t:new Date().toISOString(),
+           rappel: code === 'rappel' ? PR.rappelLe : ''};
+  PR.annuler = {id:p.id, file:PR.file.slice(0), hist:(PR.hist[p.id]||[]).slice(0)};
+  PR.file.push(a);
+  PR.hist[p.id] = (PR.hist[p.id] || []).concat([{t:a.t, r:code}]).slice(-20);
+  delete PR.brouillons[p.id];
+  PR.courant = null;
+  PR.rappelOuvert = false;
+  PR.rappelLe = null;
+  prRendre(true);
+  window.scrollTo(0,0);
+  if(PR.auto){
+    var lien = $('prBoutonAppel');
+    if(lien){ try{ lien.click(); }catch(e){} }
+  }
+  prPousser();
+}
+
+/* iOS quitte l'application pour passer l'appel et y revient en haut de la
+   fiche, alors que les résultats sont en bas : le commercial défilerait à
+   chaque appel. On note l'instant du départ, et au retour on amène les
+   boutons sous son pouce. Deux heures de validité : il arrive qu'un appel
+   dure, jamais qu'il dure une demi-journée. */
+function prAppelLance(){ PR.appelLe = Date.now(); }
+document.addEventListener('visibilitychange', function(){
+  if(document.hidden || ETAPE !== 8 || !PR.appelLe) return;
+  var vieux = Date.now() - PR.appelLe > 2*3600000;
+  PR.appelLe = 0;
+  if(vieux) return;
+  var r = document.querySelector('#prFiche .prRes');
+  if(r) try{ r.scrollIntoView({block:'end', behavior:'smooth'}); }catch(e){ r.scrollIntoView(false); }
+});
+
+function prPasser(){
+  var p = prCourant();
+  if(!p) return;
+  if(PR.courant) PR.courant = null; else PR.passes[p.id] = 1;
+  PR.rappelOuvert = false;
+  prRendre();
+  window.scrollTo(0,0);
+}
+function prReprendrePasses(){ PR.passes = {}; prRendre(); }
+function prRevenirFile(){ PR.courant = null; PR.rappelOuvert = false; prRendre(); }
+function prAnnuler(){
+  if(!PR.annuler) return;
+  PR.file = PR.annuler.file;
+  if(PR.annuler.hist.length) PR.hist[PR.annuler.id] = PR.annuler.hist;
+  else delete PR.hist[PR.annuler.id];
+  PR.courant = PR.annuler.id;
+  PR.annuler = null;
+  prRendre(true);
+}
+
+/* ---------------------- l'onglet Liste ---------------------- */
+function prRendreListe(){
+  var q = normNom($('prQ') ? $('prQ').value : '');
+  var choix = [['', 'Tous'], ['none', 'Jamais appelés']];
+  Object.keys(PR_RES).forEach(function(k){ choix.push([k, PR_RES[k].l]); });
+  $('prFiltreStatut').innerHTML = choix.map(function(c){
+    return '<button class="' + (PR.statut === c[0] ? 'on' : '') +
+           '" onclick="prSetStatut(\'' + c[0] + '\')">' + c[1] + '</button>';
+  }).join('');
+
+  if(!PR.liste.length){
+    $('prListe').innerHTML = '<div class="empty">Aucun prospect chargé.</div>';
+    return;
+  }
+  var out = PR.liste.filter(function(p){
+    var e = prEtat(p), code = e.statut || 'none';
+    if(PR.statut && code !== PR.statut) return false;
+    return !q || normNom(p.nom + ' ' + (p.dirigeant||'') + ' ' + p.ville).indexOf(q) >= 0;
+  });
+  if(!out.length){ $('prListe').innerHTML = '<div class="empty">Aucun prospect ne correspond.</div>'; return; }
+  $('prListe').innerHTML = out.slice(0,300).map(function(p){
+    var e = prEtat(p);
+    return '<button class="prLigne" onclick="prOuvrirFiche(\'' + ech(p.id) + '\')">' +
+      '<span><b>' + ech(p.nom) + '</b><span>' + ech(p.ville) +
+      (prTels(p).length ? '' : ' · sans numéro') +
+      (e.note ? ' · ' + ech(e.note.slice(0,50)) : '') + '</span></span>' +
+      (e.statut ? '<span class="prEtiq ' + PR_RES[e.statut].c + '">' + PR_RES[e.statut].l + '</span>' : '') +
+      '</button>';
+  }).join('') + (out.length > 300
+    ? '<div class="mini">300 premiers sur ' + out.length + '. Affine la recherche.</div>' : '');
+}
+function prSetStatut(s){ PR.statut = s; prRendreListe(); }
+function prOuvrirFiche(id){
+  PR.courant = id;
+  PR.rappelOuvert = false;
+  prOnglet('appels');
+  prRendre();
+  window.scrollTo(0,0);
+}
+
+function prRendreSource(){
+  var sans = PR.liste.filter(function(p){ return !prTels(p).length; }).length;
+  $('prSource').textContent = PR.liste.length
+    ? PR.liste.length + ' prospects, dont ' + sans + ' sans numéro.' +
+      (PR.maj ? ' Liste reçue ' + prQuandTexte(PR.maj) + '.' : '') +
+      (PR.file.length ? ' ' + PR.file.length + ' résultat(s) à envoyer.' : '')
+    : 'Aucune liste chargée.';
+}
+
+/* ---------------------- échanges avec le bureau ---------------------- */
+
+function prRecharger(btn){
+  var moi = session();
+  if(!moi || !navigator.onLine){
+    if(btn){ libere(btn); etatReseau(null, 'Hors connexion : la liste du dernier chargement reste utilisable.', 'off'); }
+    return Promise.resolve();
+  }
+  if(btn) occuper(btn, 'Chargement…');
+  // Les résultats partent d'abord : sans quoi la liste rechargée écraserait
+  // l'état local de prospects qu'on vient d'appeler.
+  return prPousser().then(function(){
+    return poster({action:'prospects', nom:moi.nom, code:moi.code, depuis:PR.maj}, 40000);
+  }).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) throw new Error((r && r.erreur) || 'refus');
+    if(r.relanceHeures) { PR.relance = r.relanceHeures; ls('pr.relance', String(PR.relance)); }
+    prFusionner(r.prospects || [], !!r.complet);
+    PR.maj = r.maj || new Date().toISOString();
+    PR.charge = true;
+    prRanger();
+    prRendre();
+    prRendreSource();
+  }, function(){
+    if(btn){ libere(btn); etatReseau(null, 'La liste n\'a pas pu être chargée. Réessaie.', 'err'); }
+  });
+}
+
+function prFusionner(recus, complet){
+  if(complet){ PR.liste = recus; return; }
+  var par = {};
+  PR.liste.forEach(function(p, i){ par[p.id] = i; });
+  recus.forEach(function(p){
+    if(par[p.id] == null){ par[p.id] = PR.liste.length; PR.liste.push(p); }
+    else PR.liste[par[p.id]] = p;
+  });
+}
+
+/* Les résultats partent par lots. Ce qui est parti quitte la file, et rien
+   d'autre : un résultat noté pendant l'envoi reste en attente du prochain. */
+var PR_ENVOI = false;
+function prPousser(){
+  if(PR_ENVOI || !PR.file.length) return Promise.resolve();
+  var moi = session();
+  if(!moi || !navigator.onLine) return Promise.resolve();
+  var lot = PR.file.slice(0, 100);
+  PR_ENVOI = true;
+  return poster({action:'appel', nom:moi.nom, code:moi.code,
+                 appareil:APPAREIL, appels:lot}, 30000)
+    .then(function(r){
+      PR_ENVOI = false;
+      if(!r || !r.ok) return;
+      var partis = {};
+      lot.forEach(function(a){ partis[a.id + '|' + a.t] = 1; });
+      PR.file = PR.file.filter(function(a){ return !partis[a.id + '|' + a.t]; });
+      // Ce que le bureau a retenu redevient la référence : le prospect porte
+      // désormais son statut, et la correction locale n'a plus lieu d'être.
+      lot.forEach(function(a){
+        var p = prParId(a.id);
+        if(!p) return;
+        p.statut = a.resultat;
+        p.note = a.note;
+        p.rappel = a.resultat === 'rappel' ? a.rappel : '';
+        p.dernier = a.t;
+        p.appels = (p.appels || 0) + 1;
+        p.par = moi.nom;
+      });
+      prRanger();
+      if(ETAPE === 8) prRendre();
+    }, function(){ PR_ENVOI = false; });
 }
