@@ -25,7 +25,8 @@ const ok = [], ko = [];
 const T = (n, c, d) => { (c ? ok : ko).push(n + (c ? '' : '  → ' + JSON.stringify(d))); };
 
 const ID_SRC = 'SHEET-PROSPECTION';
-const EN_P = ['ID','COMMUNE','SOCIETE','DIRIGEANT','TEL','MAIL','ADRESSE','EFFECTIF',
+const EN_P = ['ID','SIREN','COMMUNE','ZONE','SOCIETE','SECTEUR','ACTIVITE','DIRIGEANT',
+  'TEL','MAIL','SITE','ADRESSE','EFFECTIF','PRIORITE',
   'SOURCE_HORAIRES','LUN','MAR','MER','JEU','VEN','SAM','DIM','COMMENTAIRE',
   'STATUT','NOTE','RAPPEL_LE','DERNIER_APPEL','NB_APPELS','COMMERCIAL','MAJ_LE'];
 const EN_A = ['HORODATAGE','COMMERCIAL','ID_PROSPECT','SOCIETE','COMMUNE',
@@ -57,7 +58,9 @@ function socle(reglagesSup) {
     ['societe_nom','BREIZH BRILLANCE',''],
     ['prospection_active','OUI',''],
     ['prospection_fichier_id', ID_SRC, ''],
+    ['prospection_onglet','',''],
     ['prospection_entete_ligne','3',''],
+    ['prospection_avec_tel','NON',''],
     ['prospection_relance_heures','3','']].concat(reglagesSup || []));
 
   creerExt('VANNES', communeSrc([
@@ -76,6 +79,11 @@ function socle(reglagesSup) {
 const COM = { nom: 'SIMON LG', role: 'COMMERCIAL' };
 const rep = (g, o) => JSON.parse(g.doPost({ postData: { contents: JSON.stringify(o) } }));
 const parId = (id) => lire('PROSPECTS').find(r => String(r[cp('ID')]) === id);
+/* Indexation sûre : un essai qui plante ne dit rien, c'est celui qui porte la
+   règle qui doit rougir. */
+const V = (r, n) => (r || [])[cp(n)];
+
+let lg, lr;
 
 /* ---------- 1. les numéros ---------- */
 let g = socle();
@@ -111,18 +119,18 @@ T('et elle ne garde que des caractères sûrs',
 
 /* ---------- 3. l'import ---------- */
 let r = g.importerProspects_();
-T('les deux communes sont lues', r.onglets === 2 && r.total === 2, r);
+T('les quatre lignes des deux communes sont lues', r.lus === 4, r);
 T('quatre prospects sont rangés', r.lignes === 4, r.lignes);
 T('dont un sans numéro', r.sansTel === 1, r.sansTel);
-T('l\'import va jusqu\'au bout', r.reste === 0, r.reste);
+T('et tous sont neufs la première fois', r.nouveaux === 4 && r.gardes === 0, r);
 let p = parId(g.cleProspect_('VANNES', 'PEINTURE DU GOLFE'));
-T('la société est recopiée', p && String(p[cp('SOCIETE')]) === 'PEINTURE DU GOLFE', p && p[cp('SOCIETE')]);
-T('la commune vient du nom de l\'onglet', p && String(p[cp('COMMUNE')]) === 'VANNES', p && p[cp('COMMUNE')]);
-T('le dirigeant aussi', p && String(p[cp('DIRIGEANT')]) === 'Yann Le Roy', p && p[cp('DIRIGEANT')]);
+T('la société est recopiée', p && String(V(p,'SOCIETE')) === 'PEINTURE DU GOLFE', p && V(p,'SOCIETE'));
+T('la commune vient du nom de l\'onglet', p && String(V(p,'COMMUNE')) === 'VANNES', p && V(p,'COMMUNE'));
+T('le dirigeant aussi', p && String(V(p,'DIRIGEANT')) === 'Yann Le Roy', p && V(p,'DIRIGEANT'));
 T('les horaires du lundi sont là',
-  p && /08:00-12:00/.test(String(p[cp('LUN')])), p && p[cp('LUN')]);
-T('le samedi fermé est gardé tel quel', p && String(p[cp('SAM')]) === 'Fermé', p && p[cp('SAM')]);
-T('le commentaire suit', p && /Devanture/.test(String(p[cp('COMMENTAIRE')])), p && p[cp('COMMENTAIRE')]);
+  p && /08:00-12:00/.test(String(V(p,'LUN'))), p && V(p,'LUN'));
+T('le samedi fermé est gardé tel quel', p && String(V(p,'SAM')) === 'Fermé', p && V(p,'SAM'));
+T('le commentaire suit', p && /Devanture/.test(String(V(p,'COMMENTAIRE'))), p && V(p,'COMMENTAIRE'));
 T('un prospect sans numéro entre quand même dans la liste',
   !!parId(g.cleProspect_('VANNES', 'SANS NUMERO SARL')), lire('PROSPECTS').map(x => x[0]));
 T('l\'import est noté au journal',
@@ -144,23 +152,26 @@ creerExt('AURAY', communeSrc([
 r = g.importerProspects_();
 p = parId(g.cleProspect_('AURAY', 'DECO BRETONNE'));
 T('le réimport ne crée pas de doublon', lire('PROSPECTS').length === 5, lire('PROSPECTS').length);
-T('le nouveau numéro remplace l\'ancien', p && String(p[cp('TEL')]) === '02 97 99 88 77', p && p[cp('TEL')]);
-T('le statut posé par le commercial est conservé', p && String(p[cp('STATUT')]) === 'rdv', p && p[cp('STATUT')]);
-T('sa note aussi', p && /RDV mardi/.test(String(p[cp('NOTE')])), p && p[cp('NOTE')]);
-T('et le compte des appels', p && Number(p[cp('NB_APPELS')]) === 3, p && p[cp('NB_APPELS')]);
+T('le nouveau numéro remplace l\'ancien', p && String(V(p,'TEL')) === '02 97 99 88 77', p && V(p,'TEL'));
+T('le statut posé par le commercial est conservé', p && String(V(p,'STATUT')) === 'rdv', p && V(p,'STATUT'));
+T('sa note aussi', p && /RDV mardi/.test(String(V(p,'NOTE'))), p && V(p,'NOTE'));
+T('et le compte des appels', p && Number(V(p,'NB_APPELS')) === 3, p && V(p,'NB_APPELS'));
 
 /* Deux fois le même nom dans la même commune : une seule ligne, sinon le
    commercial appellerait deux fois la même entreprise. */
 g = socle();
 videExt(); idExterne(ID_SRC);
 creerExt('VANNES', communeSrc([
-  ['PEINTURE DU GOLFE','Yann','02 97 11 22 33','','','','','','','','','','','','',''],
+  ['PEINTURE DU GOLFE','Yann','02 97 11 22 33','premier@golfe.fr','','','','','','','','','','','',''],
   ['PEINTURE DU GOLFE','Yann','02 97 11 22 33','y@golfe.fr','1 rue','','','','','','','','','','','']
 ]));
 r = g.importerProspects_();
 T('un nom en double dans la commune ne fait qu\'une ligne', r.lignes === 1, r.lignes);
 p = parId(g.cleProspect_('VANNES', 'PEINTURE DU GOLFE'));
-T('et c\'est la plus complète qui reste', p && String(p[cp('MAIL')]) === 'y@golfe.fr', p && p[cp('MAIL')]);
+T('la seconde ligne comble ce qui manquait à la première',
+  String(V(p,'ADRESSE')) === '1 rue', V(p,'ADRESSE'));
+T('sans écraser ce que la première portait déjà',
+  String(V(p,'MAIL')) === 'premier@golfe.fr', V(p,'MAIL'));
 
 /* Un onglet sans colonne société est ignoré sans faire tomber l'import. */
 g = socle();
@@ -216,11 +227,11 @@ r = g.enregistrerAppels_({ appareil: 'tel-1', appels: [
 ] }, COM);
 T('le résultat est reçu', r.ok && r.recus === 1, r);
 p = parId(ID_GOLFE);
-T('le statut est posé sur le prospect', String(p[cp('STATUT')]) === 'nrp', p[cp('STATUT')]);
-T('la note aussi', String(p[cp('NOTE')]) === 'personne', p[cp('NOTE')]);
-T('le compteur d\'appels passe à 1', Number(p[cp('NB_APPELS')]) === 1, p[cp('NB_APPELS')]);
+T('le statut est posé sur le prospect', String(V(p,'STATUT')) === 'nrp', V(p,'STATUT'));
+T('la note aussi', String(V(p,'NOTE')) === 'personne', V(p,'NOTE'));
+T('le compteur d\'appels passe à 1', Number(V(p,'NB_APPELS')) === 1, V(p,'NB_APPELS'));
 T('et le nom de celui qui a appelé est gardé',
-  String(p[cp('COMMERCIAL')]) === 'SIMON LG', p[cp('COMMERCIAL')]);
+  String(V(p,'COMMERCIAL')) === 'SIMON LG', V(p,'COMMERCIAL'));
 T('une ligne est ajoutée au journal des appels', lire('APPELS').length === 2, lire('APPELS').length);
 T('elle porte le résultat', String(lire('APPELS')[1][ca('RESULTAT')]) === 'nrp', lire('APPELS')[1]);
 T('et la société, pour se relire sans croiser deux onglets',
@@ -230,12 +241,12 @@ T('et la société, pour se relire sans croiser deux onglets',
 const T1 = '2026-10-08T10:00:00.000Z', RAP = '2026-10-09T08:00:00.000Z';
 g.enregistrerAppels_({ appels: [{ id: ID_GOLFE, resultat: 'rappel', note: '', t: T1, rappel: RAP }] }, COM);
 p = parId(ID_GOLFE);
-T('un rappel enregistre sa date', p[cp('RAPPEL_LE')] instanceof Date &&
-  p[cp('RAPPEL_LE')].toISOString() === RAP, String(p[cp('RAPPEL_LE')]));
-T('le compteur monte à 2', Number(p[cp('NB_APPELS')]) === 2, p[cp('NB_APPELS')]);
+T('un rappel enregistre sa date', V(p,'RAPPEL_LE') instanceof Date &&
+  V(p,'RAPPEL_LE').toISOString() === RAP, String(V(p,'RAPPEL_LE')));
+T('le compteur monte à 2', Number(V(p,'NB_APPELS')) === 2, V(p,'NB_APPELS'));
 g.enregistrerAppels_({ appels: [{ id: ID_GOLFE, resultat: 'refus', note: '', t: '2026-10-08T11:00:00.000Z' }] }, COM);
 p = parId(ID_GOLFE);
-T('un refus efface la date de rappel qui traînait', !p[cp('RAPPEL_LE')], String(p[cp('RAPPEL_LE')]));
+T('un refus efface la date de rappel qui traînait', !V(p,'RAPPEL_LE'), String(V(p,'RAPPEL_LE')));
 /* Le téléphone peut très bien envoyer une date de rappel avec un autre
    résultat : il garde la dernière saisie en mémoire. Seul « rappel » doit la
    retenir, sinon le prospect reviendrait dans la file alors qu'il a dit non. */
@@ -243,7 +254,7 @@ g.enregistrerAppels_({ appels: [{ id: ID_GOLFE, resultat: 'refus', note: '',
                                   t: '2026-10-08T12:00:00.000Z', rappel: RAP }] }, COM);
 p = parId(ID_GOLFE);
 T('et une date de rappel envoyée avec un refus est ignorée',
-  !p[cp('RAPPEL_LE')], String(p[cp('RAPPEL_LE')]));
+  !V(p,'RAPPEL_LE'), String(V(p,'RAPPEL_LE')));
 T('le journal des appels garde les quatre tentatives', lire('APPELS').length === 5, lire('APPELS').length);
 
 /* Un lot renvoyé après une coupure ne compte pas deux fois. */
@@ -253,8 +264,8 @@ g.enregistrerAppels_({ appels: [{ id: ID_GOLFE, resultat: 'nrp', note: '', t: T0
 r = g.enregistrerAppels_({ appels: [{ id: ID_GOLFE, resultat: 'nrp', note: '', t: T0 }] }, COM);
 T('le même résultat renvoyé est reconnu', r.recus === 1, r);
 T('et n\'ajoute pas de ligne au journal des appels', lire('APPELS').length === 2, lire('APPELS').length);
-T('ni ne compte un appel de plus', Number(parId(ID_GOLFE)[cp('NB_APPELS')]) === 1,
-  parId(ID_GOLFE)[cp('NB_APPELS')]);
+T('ni ne compte un appel de plus', Number(V(parId(ID_GOLFE),'NB_APPELS')) === 1,
+  V(parId(ID_GOLFE),'NB_APPELS'));
 
 /* Ce que le téléphone envoie n'est pas cru sur parole. */
 g = socle();
@@ -267,8 +278,8 @@ r = g.enregistrerAppels_({ appels: [
 T('un résultat inventé est refusé', r.refuses.indexOf(ID_GOLFE) >= 0, r.refuses);
 T('un prospect inconnu aussi', r.refuses.indexOf('prospect-inexistant') >= 0, r.refuses);
 T('mais le résultat valable du même lot passe', r.recus === 1, r);
-T('et c\'est bien lui qui est posé', String(parId(ID_GOLFE)[cp('STATUT')]) === 'msg',
-  parId(ID_GOLFE)[cp('STATUT')]);
+T('et c\'est bien lui qui est posé', String(V(parId(ID_GOLFE),'STATUT')) === 'msg',
+  V(parId(ID_GOLFE),'STATUT'));
 T('une seule ligne au journal des appels', lire('APPELS').length === 2, lire('APPELS').length);
 
 /* Deux appels dans le même lot, deux prospects : les deux lignes bougent. */
@@ -280,12 +291,12 @@ r = g.enregistrerAppels_({ appels: [
   { id: ID_DECO, resultat: 'rdv', note: '', t: T1 }
 ] }, COM);
 T('un lot de deux passe en une fois', r.recus === 2, r);
-T('le premier prospect est à jour', String(parId(ID_GOLFE)[cp('STATUT')]) === 'interesse',
-  parId(ID_GOLFE)[cp('STATUT')]);
-T('le second aussi', String(parId(ID_DECO)[cp('STATUT')]) === 'rdv', parId(ID_DECO)[cp('STATUT')]);
+T('le premier prospect est à jour', String(V(parId(ID_GOLFE),'STATUT')) === 'interesse',
+  V(parId(ID_GOLFE),'STATUT'));
+T('le second aussi', String(V(parId(ID_DECO),'STATUT')) === 'rdv', V(parId(ID_DECO),'STATUT'));
 T('et les autres prospects n\'ont pas bougé',
-  lire('PROSPECTS').slice(1).filter(x => String(x[cp('STATUT')])).length === 2,
-  lire('PROSPECTS').slice(1).map(x => x[cp('STATUT')]));
+  lire('PROSPECTS').slice(1).filter(x => String(V(x,'STATUT'))).length === 2,
+  lire('PROSPECTS').slice(1).map(x => V(x,'STATUT')));
 
 /* ---------- 7. la cloison des droits ---------- */
 g = socle();
@@ -297,8 +308,8 @@ T('un prestataire ne le peut pas', x.ok === false && /autorisée/.test(String(x.
 x = rep(g, { action: 'appel', nom: 'MAXIME T', code: 'kw7!',
              appels: [{ id: ID_GOLFE, resultat: 'refus', note: '', t: T0 }] });
 T('et il ne peut pas noter d\'appel', x.ok === false, x);
-T('rien n\'a été écrit malgré tout', !String(parId(ID_GOLFE)[cp('STATUT')]),
-  parId(ID_GOLFE)[cp('STATUT')]);
+T('rien n\'a été écrit malgré tout', !String(V(parId(ID_GOLFE),'STATUT')),
+  V(parId(ID_GOLFE),'STATUT'));
 T('le refus est tracé', lire('JOURNAL').some(y => String(y[3]) === 'ACTION REFUSEE'),
   lire('JOURNAL').map(y => y[3]));
 x = rep(g, { action: 'appel', nom: 'SIMON LG', code: 'xx9!',
@@ -338,7 +349,159 @@ r = g.reporterStatuts_();
 T('une commune sans colonne STATUT est signalée', r.sansColonne === 1, r);
 T('et rien n\'y est écrit', lireExt('VANNES')[3].length === 2, lireExt('VANNES')[3]);
 
-console.log('\n=== LA PROSPECTION TÉLÉPHONIQUE, CÔTÉ CLASSEUR (v56) : ' +
+
+/* ---------- 9. LA BASE GLOBALE : un seul onglet, une colonne VILLE ----------
+   « BASE PROSPECTS BB » ne range pas les prospects par onglet : tout est dans
+   un onglet BASE, chaque ligne portant sa commune, son secteur, sa priorité,
+   son SIREN et déjà des colonnes de suivi. C'est la forme que Simon veut
+   appeler ; celle du tableau peinture reste acceptée. */
+function baseGlobale(lignes) {
+  return [['BASE PROSPECTS BB - V3'], [''],
+          ['NOM DE LA SOCIETE','SECTEUR','ACTIVITÉ','VILLE','ZONE','ADRESSE POSTALE',
+           'NOM DIRIGEANT(s)','TEL','MAIL','SITE WEB','EFFECTIF','PRIORITÉ','STATUT',
+           'COMMERCIAL','DERNIER CONTACT','NB APPELS','DATE DE RELANCE',
+           'COMMENTAIRE / HISTORIQUE','NE PLUS CONTACTER','TYPE','SIREN','SOURCE',
+           'NB À LA MÊME ADRESSE']].concat(lignes);
+}
+function socleBase(reglagesSup) {
+  const g = socle(([['prospection_onglet','BASE',''],
+                    ['prospection_avec_tel','OUI','']]).concat(reglagesSup || []));
+  videExt(); idExterne(ID_SRC);
+  creerExt('SOMMAIRE', [['ne pas lire']]);
+  creerExt('BASE', baseGlobale([
+    ['CABINET COLIN','Experts-comptables','Expertise comptable','VANNES','VANNES AGGLO',
+     '36 BD DE LA RESISTANCE','GILLES LE SQUER','02 97 26 73 00','','cabinet-colin.fr','50-99','10',
+     '','','','','','Société · Siège','','Société','876680166','Annuaire','11'],
+    ['DOCTEUR MARTIN','Médecins / maisons de santé','Médecine générale','VANNES','VANNES AGGLO',
+     '2 RUE DU PORT','JEAN MARTIN','02 97 11 22 33 / 06 12 34 56 78','m@test.fr','','3-5','4',
+     '','','','','','','','Société','123456789','Annuaire','1'],
+    ['SALON CIseaux','Coiffure / beauté','Coiffure','AURAY','AURAY QUIBERON',
+     '5 PLACE','MARIE DANIC','02 97 44 55 66','','','1-2','3',
+     '','','','','','','','Société','234567891','Annuaire','1'],
+    ['GARAGE SANS TEL','Automobile','Réparation','AURAY','AURAY QUIBERON',
+     '9 ROUTE','','','','','6-9','5','','','','','','','','Société','345678912','Annuaire','1'],
+    ['CLIENT FACHE','Avocats / notaires / huissiers','Avocat','VANNES','VANNES AGGLO',
+     '1 RUE','','02 97 99 00 11','','','3-5','6','','','','','','','OUI','Société','456789123','Annuaire','1'],
+    ['DEJA VU SARL','Paramédical','Kiné','VANNES','VANNES AGGLO',
+     '7 AVENUE','PAUL GUEN','02 97 77 88 99','p@kine.fr','','1-2','2',
+     'RDV pris','SIMON LG','2026-10-01','2','','note a la main','','Société','567891234','Annuaire','1']
+  ]));
+  return g;
+}
+
+g = socleBase();
+r = g.importerProspects_();
+T('seul l\'onglet BASE est lu', r.lus === 6, r);
+T('les appelables sont retenus', r.lignes === 4, r);
+T('celui qui n\'a pas de numéro est écarté', r.sansTel === 1, r.sansTel);
+T('et celui marqué « ne plus contacter » aussi', r.nePlus === 1, r.nePlus);
+T('aucune trace du « ne plus contacter » dans PROSPECTS',
+  !lire('PROSPECTS').some(x => /FACHE/.test(String(V(x,'SOCIETE')))),
+  lire('PROSPECTS').map(x => V(x,'SOCIETE')));
+
+p = parId('s876680166');
+T('la clé est le SIREN quand il existe', !!p, lire('PROSPECTS').map(x => x[0]));
+T('la commune vient de la colonne VILLE, pas du nom de l\'onglet',
+  p && String(V(p,'COMMUNE')) === 'VANNES', p && V(p,'COMMUNE'));
+T('la zone est gardée', p && String(V(p,'ZONE')) === 'VANNES AGGLO', p && V(p,'ZONE'));
+T('le secteur aussi', p && String(V(p,'SECTEUR')) === 'Experts-comptables', p && V(p,'SECTEUR'));
+T('et l\'activité', p && String(V(p,'ACTIVITE')) === 'Expertise comptable', p && V(p,'ACTIVITE'));
+T('la priorité est un nombre', p && Number(V(p,'PRIORITE')) === 10, p && V(p,'PRIORITE'));
+T('le site est repris', p && String(V(p,'SITE')) === 'cabinet-colin.fr', p && V(p,'SITE'));
+T('le SIREN est gardé en clair', p && String(V(p,'SIREN')) === '876680166', p && V(p,'SIREN'));
+
+/* Un suivi déjà noté à la main dans la base est repris à la découverte. */
+p = parId('s567891234');
+T('un statut écrit en toutes lettres est compris', p && String(V(p,'STATUT')) === 'rdv', p && V(p,'STATUT'));
+T('avec le commercial qui l\'a posé', p && String(V(p,'COMMERCIAL')) === 'SIMON LG', p && V(p,'COMMERCIAL'));
+T('et le nombre d\'appels', p && Number(V(p,'NB_APPELS')) === 2, p && V(p,'NB_APPELS'));
+
+/* Deux numéros séparés par « / » dans la base : deux boutons au téléphone. */
+r = g.listeProspects_({});
+q = r.prospects.find(x => x.nom === 'DOCTEUR MARTIN');
+T('les deux numéros du médecin partent au téléphone', q && q.tels.length === 2, q && q.tels);
+T('la priorité part avec', q && q.prio === 4, q && q.prio);
+T('le secteur aussi', q && q.secteur === 'Médecins / maisons de santé', q && q.secteur);
+
+/* Une fois le phoning commencé, c'est PROSPECTS qui fait foi. */
+g.enregistrerAppels_({ appels: [{ id: 's567891234', resultat: 'refus', note: 'non merci',
+                                  t: '2026-10-08T09:00:00.000Z' }] }, COM);
+r = g.importerProspects_();
+p = parId('s567891234');
+T('un réimport ne remet pas le vieux statut de la base',
+  String(V(p,'STATUT')) === 'refus', V(p,'STATUT'));
+T('et compte la ligne comme déjà connue', r.gardes === 4 && r.nouveaux === 0, r);
+
+/* Un prospect retiré de la base ne disparaît pas : il peut avoir un RDV. */
+videExt(); idExterne(ID_SRC);
+creerExt('BASE', baseGlobale([
+  ['CABINET COLIN','Experts-comptables','Expertise comptable','VANNES','VANNES AGGLO',
+   '36 BD DE LA RESISTANCE','GILLES LE SQUER','02 97 26 73 00','','','50-99','10',
+   '','','','','','','','Société','876680166','Annuaire','11']
+]));
+r = g.importerProspects_();
+T('un prospect retiré de la base reste dans PROSPECTS', r.disparus === 3, r);
+T('avec son historique', String(V(parId('s567891234'),'STATUT')) === 'refus',
+  V(parId('s567891234'),'STATUT'));
+
+/* ---------- 10. le report des cinq colonnes de suivi ---------- */
+g = socleBase();
+g.importerProspects_();
+g.enregistrerAppels_({ appels: [
+  { id: 's876680166', resultat: 'rdv', note: 'mardi 10 h', t: '2026-10-08T09:00:00.000Z' },
+  { id: 's234567891', resultat: 'rappel', note: '', t: '2026-10-08T09:30:00.000Z',
+    rappel: '2026-10-10T08:00:00.000Z' }
+] }, COM);
+r = g.reporterStatuts_();
+/* Trois et non deux : le prospect dont la base portait déjà « RDV pris » est
+   reporté lui aussi, sa date de contact passant du texte à une vraie date. */
+T('les prospects qui portent un suivi sont reportés', r.ecrits === 3, r);
+v = lireExt('BASE');
+lg = v.findIndex(x => String(x[0]) === 'CABINET COLIN');
+T('le statut est écrit en toutes lettres', String(v[lg][12]) === 'RDV pris', v[lg][12]);
+T('le commercial aussi', String(v[lg][13]) === 'SIMON LG', v[lg][13]);
+T('la date du dernier contact est une vraie date', v[lg][14] instanceof Date, String(v[lg][14]));
+T('le nombre d\'appels est reporté', Number(v[lg][15]) === 1, v[lg][15]);
+T('et le commentaire écrit à la main n\'est pas touché',
+  String(v[lg][17]) === 'Société · Siège', v[lg][17]);
+lr = v.findIndex(x => String(x[0]) === 'SALON CIseaux');
+T('la date de relance d\'un rappel est reportée', v[lr][16] instanceof Date, String(v[lr][16]));
+T('alors que le RDV n\'en a pas', !v[lg][16], String(v[lg][16]));
+T('le report nomme les colonnes qu\'il a touchées',
+  r.colonnes.indexOf('STATUT') >= 0 && r.colonnes.indexOf('NB APPELS') >= 0, r.colonnes);
+r = g.reporterStatuts_();
+T('reporter deux fois de suite n\'écrit rien de plus', r.ecrits === 0, r);
+
+/* Le filtre d'onglet protège le reste du fichier. */
+g = socleBase();
+creerExt('AUTRE', baseGlobale([
+  ['CABINET COLIN','x','x','VANNES','x','x','x','02 97 26 73 00','','','','1',
+   '','','','','','','','Société','876680166','Annuaire','1']
+]));
+r = g.importerProspects_();
+T('un second onglet n\'est pas lu quand prospection_onglet le nomme', r.lus === 6, r);
+
+/* Sans filtre d'onglet, les deux formes cohabitent dans le même fichier. */
+g = socle([['prospection_onglet','',''],['prospection_avec_tel','OUI','']]);
+videExt(); idExterne(ID_SRC);
+creerExt('BASE', baseGlobale([
+  ['CABINET COLIN','Experts-comptables','Expertise comptable','VANNES','VANNES AGGLO',
+   '36 BD','GILLES LE SQUER','02 97 26 73 00','','','50-99','10',
+   '','','','','','','','Société','876680166','Annuaire','11']
+]));
+creerExt('PLOERMEL', communeSrc([
+  ['PEINTURE DU LAC','Yves Le Gall','02 97 55 44 33','','1 rue','2','','','','','','','','','','']
+]));
+r = g.importerProspects_();
+T('les deux formes de fichier cohabitent', r.lignes === 2, r);
+T('celui de la base garde sa commune de colonne',
+  !!parId('s876680166') && String(V(parId('s876680166'),'COMMUNE')) === 'VANNES',
+  parId('s876680166') && V(parId('s876680166'),'COMMUNE'));
+T('et celui de l\'onglet par commune prend le nom de l\'onglet',
+  lire('PROSPECTS').some(x => String(V(x,'COMMUNE')) === 'PLOERMEL'),
+  lire('PROSPECTS').map(x => V(x,'COMMUNE')));
+
+console.log('\n=== LA PROSPECTION TÉLÉPHONIQUE, CÔTÉ CLASSEUR (v57) : ' +
             ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
 ko.forEach(x => console.log('  ✗ ' + x));

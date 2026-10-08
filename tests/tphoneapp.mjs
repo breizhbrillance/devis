@@ -32,12 +32,16 @@ const DANS = (h) => new Date(Date.now() + h*3600000).toISOString();
 
 prospects.push(
   /* jamais appelé, ouvert */
-  { id:'vannes-peinture-du-golfe', ville:'VANNES', nom:'PEINTURE DU GOLFE', dirigeant:'Yann Le Roy',
+  { id:'vannes-peinture-du-golfe', ville:'VANNES', zone:'VANNES AGGLO', nom:'PEINTURE DU GOLFE',
+    secteur:'Peinture', activite:'Peinture en bâtiment', prio:4, site:'peinture-golfe.fr',
+    dirigeant:'Yann Le Roy',
     tels:[{t:'+33297112233', l:'02 97 11 22 33'}, {t:'+33612345678', l:'06 12 34 56 78'}],
     mail:'contact@golfe.fr', adresse:'1 rue des Arts', effectif:'5', info:'Devanture refaite',
     src:'releve', h:TOUJOURS, statut:'', note:'', rappel:'', dernier:'', appels:0, par:'', maj:'' },
   /* jamais appelé, fermé en permanence */
-  { id:'vannes-atelier-couleurs', ville:'VANNES', nom:'ATELIER COULEURS', dirigeant:'Marie Danic',
+  { id:'vannes-atelier-couleurs', ville:'VANNES', zone:'VANNES AGGLO', nom:'ATELIER COULEURS',
+    secteur:'Coiffure / beauté', activite:'Coiffure', prio:9, site:'',
+    dirigeant:'Marie Danic',
     tels:[{t:'+33297445566', l:'02 97 44 55 66'}], mail:'', adresse:'2 quai', effectif:'3',
     info:'', src:'', h:JAMAIS, statut:'', note:'', rappel:'', dernier:'', appels:0, par:'', maj:'' },
   /* sans numéro : ne doit jamais entrer dans la file */
@@ -139,6 +143,10 @@ T('un seul numéro, un seul bouton', tous.length === 1, tous);
 let f = await fileNoms();
 T('le rappel arrivé à échéance passe en premier', f[0] === 'DECO BRETONNE', f);
 T('puis les jamais appelés', f.slice(1,3).sort().join('|') === 'ATELIER COULEURS|PEINTURE DU GOLFE', f);
+/* La base calcule une priorité de 1 à 10 : à file égale, on commence par les
+   plus gros. ATELIER COULEURS est à 9, PEINTURE DU GOLFE à 4. */
+T('et les jamais appelés sont rangés par priorité décroissante',
+  f[1] === 'ATELIER COULEURS' && f[2] === 'PEINTURE DU GOLFE', f);
 T('et le sans-réponse de 5 h ferme la marche', f[3] === 'SANS REPONSE SARL', f);
 T('un rappel pas encore dû reste dehors', f.indexOf('PLUS TARD SAS') < 0, f);
 T('un sans-réponse d\'il y a 1 h aussi', f.indexOf('TROP TOT SARL') < 0, f);
@@ -369,11 +377,59 @@ await p.waitForTimeout(600);
 T('mais revenir sans avoir appelé ne déplace rien',
   (await p.evaluate(() => window.scrollY)) === 0, await p.evaluate(() => window.scrollY));
 
-/* ---------- 15. rien ne casse ---------- */
+
+/* ---------- 16. ce que la base globale apporte à la fiche ---------- */
+await reinit();
+await p.evaluate(() => { PR.auto = false; prOuvrirFiche('vannes-peinture-du-golfe'); });
+await p.waitForTimeout(600);
+corps = await texte('#prFiche');
+T('l\'activité est affichée sous le nom', /Peinture en bâtiment/.test(corps), corps.slice(0,200));
+T('la priorité figure dans l\'en-tête de la fiche', /priorité 4/.test(corps), corps.slice(0,120));
+T('la zone accompagne l\'adresse', /VANNES AGGLO/.test(corps), corps);
+T('le site est un lien cliquable',
+  await p.evaluate(() => {
+    const a = [...document.querySelectorAll('#prFiche .prMeta a')]
+      .find(x => /peinture-golfe/.test(x.getAttribute('href') || ''));
+    return !!a && /^https:\/\//.test(a.getAttribute('href'));
+  }), await p.evaluate(() => [...document.querySelectorAll('#prFiche .prMeta a')].map(a => a.getAttribute('href'))));
+await p.evaluate(() => prRevenirFile()); await p.waitForTimeout(300);
+
+/* ---------- 17. le filtre par secteur ---------- */
+T('le menu des secteurs est rempli',
+  (await p.evaluate(() => document.querySelectorAll('#prSecteur option').length)) >= 3,
+  await p.evaluate(() => [...document.querySelectorAll('#prSecteur option')].map(o => o.textContent)));
+await p.evaluate(() => prSetSecteur('Coiffure / beauté')); await p.waitForTimeout(500);
+f = await fileNoms();
+T('choisir un secteur ne garde que lui',
+  f.length === 1 && f[0] === 'ATELIER COULEURS', f);
+/* Les deux menus se répondent : à AURAY, aucun des secteurs de VANNES ne doit
+   rester proposé, sinon le commercial choisit un couple qui ne donne rien. */
+await p.evaluate(() => { prSetSecteur(''); prSetVille('AURAY'); }); await p.waitForTimeout(500);
+T('choisir une commune restreint les secteurs proposés',
+  await p.evaluate(() => [...document.querySelectorAll('#prSecteur option')]
+    .every(o => !/Coiffure/.test(o.textContent))),
+  await p.evaluate(() => [...document.querySelectorAll('#prSecteur option')].map(o => o.textContent)));
+await p.evaluate(() => { prSetVille(''); prSetSecteur('Coiffure / beauté'); }); await p.waitForTimeout(500);
+T('et choisir un secteur restreint les communes',
+  await p.evaluate(() => [...document.querySelectorAll('#prVille option')]
+    .every(o => !/AURAY/.test(o.textContent))),
+  await p.evaluate(() => [...document.querySelectorAll('#prVille option')].map(o => o.textContent)));
+await p.evaluate(() => prSetVille('AURAY')); await p.waitForTimeout(500);
+T('croiser commune et secteur peut ne rien laisser', (await fileNoms()).length === 0, await fileNoms());
+T('et l\'écran le dit au lieu de rester vide',
+  /File terminée/.test(await texte('#prFiche')), await texte('#prFiche'));
+await p.evaluate(() => { prSetSecteur(''); prSetVille(''); }); await p.waitForTimeout(500);
+T('tout relâcher ramène la file', (await fileNoms()).length === 4, await fileNoms());
+T('le choix de secteur survit à un rechargement',
+  await p.evaluate(() => { prSetSecteur('Peinture'); return ls('pr.secteur') === 'Peinture'; }),
+  await p.evaluate(() => ls('pr.secteur')));
+await p.evaluate(() => prSetSecteur('')); await p.waitForTimeout(400);
+
+/* ---------- 18. rien ne casse ---------- */
 T('aucune erreur de page', err.length === 0, err.slice(0,3));
 T('aucun clic ni aucune saisie manqués', rate.length === 0, rate);
 
-console.log('\n=== LE PHONING, CÔTÉ APPLICATION (v56) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
+console.log('\n=== LE PHONING, CÔTÉ APPLICATION (v57) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
 ko.forEach(x => console.log('  ✗ ' + x));
 await b.close();
