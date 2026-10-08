@@ -17,6 +17,13 @@ export const reglagesSup={};
 /* Ce que le bureau ajoute à la config du commercial : ses initiales imposées,
    les compteurs de ses séries. Posé par la suite avant lancer(). */
 export const configSup={};
+/* Les prospects que le faux bureau sert à l'action « prospects », et les
+   résultats d'appel qu'il reçoit. Une suite les pose avant lancer(). */
+export const prospects=[];
+export const appelsRecus=[];
+/* ok | refus : de quoi éprouver ce que fait l'application quand le bureau
+   n'accepte pas ses résultats. */
+export const modeAppel={ v:'ok' };
 const MIME={'.html':'text/html','.js':'application/javascript','.json':'application/json',
             '.webmanifest':'application/manifest+json','.png':'image/png'};
 const CFG={ maj:Date.now(),
@@ -40,6 +47,15 @@ export function lancer(port){
       let d={}; try{d=JSON.parse(b)}catch(e){}
       recu.push(d);
       const rep=(o)=>{r.writeHead(200,{'Content-Type':'application/json'});r.end(JSON.stringify(o));};
+      if(d.action==='prospects'){
+        return rep({ok:true, prospects:prospects.map(x=>({...x})), complet:true,
+                    relanceHeures:3, maj:new Date().toISOString()});
+      }
+      if(d.action==='appel'){
+        if(modeAppel.v==='refus') return rep({ok:false, erreur:'refus'});
+        (d.appels||[]).forEach(a=>appelsRecus.push(a));
+        return rep({ok:true, recus:(d.appels||[]).length, refuses:[]});
+      }
       if(d.action!=='connexion') return rep({ok:true});
       if(mode.co==='panne'){ r.destroy(); return; }
       if(mode.co==='erreur500'){ r.writeHead(500); return r.end('boom'); }

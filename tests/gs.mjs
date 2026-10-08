@@ -57,6 +57,32 @@ const ss = {
 };
 export function creer(nom, lignes){ return feuilles[nom]=new Sheet(nom,lignes.map(l=>l.slice())); }
 export function lire(nom){ return feuilles[nom]?feuilles[nom].d:null; }
+
+/* ---- un SECOND classeur, celui qu'on ouvre par openById ----
+   Le fichier de prospection vit à part : un onglet par commune, et le script
+   ne fait que le lire (et n'écrire que sa colonne STATUT). Sans ce deuxième
+   bureau, l'import ne serait essayable qu'en vrai. */
+const feuillesExt = {};
+const ssExt = {
+  getSheetByName:(n)=>feuillesExt[n]||null,
+  insertSheet:(n)=>feuillesExt[n]=new Sheet(n),
+  getUrl:()=>'https://docs.google.com/externe',
+  getSheets:()=>Object.values(feuillesExt),
+  getSpreadsheetTimeZone:()=>'Europe/Paris'
+};
+export function creerExt(nom, lignes){ return feuillesExt[nom]=new Sheet(nom,lignes.map(l=>l.slice())); }
+export function lireExt(nom){ return feuillesExt[nom]?feuillesExt[nom].d:null; }
+export function videExt(){ for(const k in feuillesExt) delete feuillesExt[k]; }
+/* Les identifiants qu'openById accepte. Un autre identifiant doit échouer,
+   comme en vrai quand le compte du script n'a pas accès au fichier. */
+let idsExt = [];
+export function idExterne(...ids){ idsExt = ids; }
+
+/* Les propriétés du script : l'import s'en sert pour retenir où il s'est
+   arrêté quand les 190 onglets ne tiennent pas dans une exécution. */
+const props = {};
+export function proprietes(){ return props; }
+export function videProprietes(){ for(const k in props) delete props[k]; }
 export function courriers(){ return mails; }
 /* Un faux Google Maps. Sans réglage, il ne répond pas — comme un quota épuisé —
    et le script doit alors retomber sur son forfait. itineraires(f) lui donne
@@ -95,7 +121,9 @@ function DateDuBureau(){
 export function charger(chemin){
   const src = fs.readFileSync(chemin,'utf8');
   const ctx = {
-    SpreadsheetApp:{ getActive:()=>ss, getUi:()=>({alert:(m)=>{ctx.__alert=m;},prompt:()=>({getSelectedButton:()=>'x'}),createMenu:()=>({addItem(){return this;},addSeparator(){return this;},addToUi(){}})}),
+    SpreadsheetApp:{ getActive:()=>ss,
+      openById:(id)=>{ if(idsExt.indexOf(String(id))<0) throw new Error('Vous n\'avez pas l\'autorisation requise pour accéder à ce document : '+id); return ssExt; },
+      getUi:()=>({alert:(m)=>{ctx.__alert=m;},prompt:()=>({getSelectedButton:()=>'x'}),createMenu:()=>({addItem(){return this;},addSeparator(){return this;},addToUi(){}})}),
       newDataValidation:()=>({requireCheckbox(){return this;},requireValueInList(){return this;},setAllowInvalid(){return this;},build(){return {};}}),
       Charts:{}, newConditionalFormatRule:()=>({whenTextEqualTo(){return this;},setBackground(){return this;},setRanges(){return this;},build(){return {};}}) },
     Utilities:{ formatDate:(d,tz,f)=>{ const p=n=>('0'+n).slice(-2); const x=new Date(d);
@@ -107,6 +135,10 @@ export function charger(chemin){
     ScriptApp:{ getProjectTriggers:()=>[], newTrigger:()=>({timeBased:()=>({atHour(){return this;},everyDays(){return this;},inTimezone(){return this;},create(){}})}), deleteTrigger(){}, getService:()=>({getUrl:()=>'https://exec'}) },
     Session:{ getEffectiveUser:()=>({getEmail:()=>'gerant@test.fr'}), getScriptTimeZone:()=>'Europe/Paris' },
     CacheService:{ getScriptCache:()=>({get:()=>null,put(){}}) },
+    PropertiesService:{ getScriptProperties:()=>({
+      getProperty:(k)=>(props[k]===undefined?null:props[k]),
+      setProperty:(k,v)=>{ props[k]=String(v); },
+      deleteProperty:(k)=>{ delete props[k]; } }) },
     LockService:{ getScriptLock:()=>({waitLock(){},releaseLock(){}}) },
     DriveApp:{ getRootFolder:()=>dossier(), getFoldersByName:()=>({hasNext:()=>false}), createFolder:()=>dossier(),
       getFileById:(id)=>{ if(!fichiers[id]) throw new Error('fichier introuvable : '+id); return fic(id); } },
