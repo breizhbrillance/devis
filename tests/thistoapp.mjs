@@ -86,7 +86,7 @@ await p.fill('#fCommercial', 'Simon LG'); await p.fill('#fCode', 'ab1!');
 await clic('#bCo'); await p.waitForTimeout(900);
 if (await p.isVisible('#eAccord')) { await clic('#bAccord'); await p.waitForTimeout(300); }
 await p.evaluate(() => ouvrirHistorique()); await p.waitForTimeout(600);
-await clic('#bPhoning'); await p.waitForTimeout(1200);
+await clic('#ongP'); await p.waitForTimeout(1200);
 
 /* ---------- 1. l'onglet existe ---------- */
 T('le module propose un quatrième onglet', await p.isVisible('#prOngJ'));

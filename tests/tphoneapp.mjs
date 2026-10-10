@@ -114,9 +114,9 @@ if (await p.isVisible('#eAccord')) { await clic('#bAccord'); await p.waitForTime
 
 /* ---------- 1. l'entrée dans le module ---------- */
 await p.evaluate(() => ouvrirHistorique()); await p.waitForTimeout(600);
-T('« Mes devis » propose le phoning',
-  await p.isVisible('#bPhoning'), await p.isVisible('#bPhoning'));
-await clic('#bPhoning'); await p.waitForTimeout(1200);
+T('la barre du bas propose le phoning',
+  await p.isVisible('#ongP'), await p.isVisible('#ongP'));
+await clic('#ongP'); await p.waitForTimeout(1200);
 T('l\'écran du phoning s\'ouvre', await p.isVisible('#ePro'));
 T('et le titre le dit', (await texte('#hTitre')) === 'Phoning', await texte('#hTitre'));
 T('la liste est arrivée du bureau',
@@ -446,15 +446,18 @@ const horaires = (deb, fin) => {
   h[AUJ] = deb + '-' + fin;
   return h;
 };
-const hhmm = (d) => String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-const OUVERT = (() => {
-  const a = new Date(Date.now() - 3600000), b = new Date(Date.now() + 3600000);
-  return horaires(hhmm(a), hhmm(b));          // ouvert maintenant
-})();
-const FERME = (() => {
-  const a = new Date(Date.now() - 3*3600000), b = new Date(Date.now() - 2*3600000);
-  return horaires(hhmm(a), hhmm(b));          // fermé depuis deux heures
-})();
+/* Les plages restent dans la journée en cours : une heure avant minuit,
+   « maintenant + 1 h » retombait sur 00:25 et la plage 22:25-00:25 n'avait
+   plus de sens — l'essai rougissait entre 23 h et 1 h du matin, et seulement
+   là. On raisonne donc en minutes depuis minuit, bornées à la journée. */
+const hm = (m) => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
+const MTN = (() => { const d = new Date(); return d.getHours()*60 + d.getMinutes(); })();
+const OUVERT = horaires(hm(Math.max(0, MTN - 60)), hm(Math.min(1439, MTN + 60)));
+/* Fermé : une heure qui n'englobe pas l'instant présent. Avant 3 h du matin,
+   il n'y a pas de place avant — on la prend après, ce qui ferme tout autant. */
+const FERME = MTN >= 180
+  ? horaires(hm(MTN - 180), hm(MTN - 120))
+  : horaires(hm(Math.min(1380, MTN + 120)), hm(Math.min(1439, MTN + 180)));
 
 /* Playwright ne passe qu'un seul argument à la fonction évaluée : les deux
    grilles d'horaires voyagent donc dans un tableau. */
