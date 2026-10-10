@@ -76,6 +76,20 @@ T('les deux autres ne le sont pas', !(await allume('#ongL')) && !(await allume('
 T('le corps réserve la place de la barre', await p.evaluate(() =>
   document.body.classList.contains('avecOnglets')));
 
+/* Le trait du bas de l'iPhone passe sur les derniers pixels de l'écran : les
+   libellés doivent s'arrêter avant, sinon « Mes devis » est coupé en deux. */
+const degagement = await p.evaluate(() => {
+  const b = document.getElementById('ongl').getBoundingClientRect();
+  const l = [...document.querySelectorAll('#ongl button span')].pop().getBoundingClientRect();
+  return { sous: Math.round(b.bottom - l.bottom), haut: Math.round(b.height),
+           mesure: getComputedStyle(document.documentElement).getPropertyValue('--hOngl').trim() };
+});
+T('les libellés gardent du dégagement sous eux, là où passe la barre du téléphone',
+  degagement.sous >= 20, degagement);
+T('la hauteur réelle de la barre est mesurée, pas écrite en dur',
+  /^\d+px$/.test(degagement.mesure) && Math.abs(parseInt(degagement.mesure, 10) - degagement.haut) <= 1,
+  degagement);
+
 /* ---------- 2. un appui mène au phoning ---------- */
 await clic('#ongP'); await p.waitForTimeout(1200);
 T('un seul appui ouvre le phoning', (await ecran()).join() === 'ePro', await ecran());
@@ -198,7 +212,7 @@ T('celui du prestataire non plus', !(await visible('#ongl')));
 T('aucune erreur JavaScript', err.length === 0, err);
 T('aucun bouton attendu ne manquait', rate.length === 0, rate);
 
-console.log('\n=== LA BARRE D\'ONGLETS DU BAS (v63) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
+console.log('\n=== LA BARRE D\'ONGLETS DU BAS (v63-64) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
 ko.forEach(x => console.log('  ✗ ' + x));
 await b.close();

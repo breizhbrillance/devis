@@ -27,7 +27,13 @@ const rate = [];
 
 const TOUJOURS = { lun:'00:00-23:59', mar:'00:00-23:59', mer:'00:00-23:59', jeu:'00:00-23:59',
                    ven:'00:00-23:59', sam:'00:00-23:59', dim:'00:00-23:59' };
-const ILYA = (h) => new Date(Date.now() - h*3600000).toISOString();
+/* « Il y a 26 heures » tombait avant-hier dès qu'on passait minuit : l'essai
+   cherchait « Hier » et trouvait une date. On compte en jours, à midi, pour
+   que le groupement soit le même à 9 h du matin et à 0 h 30. */
+const JOURS = (n) => {
+  const d = new Date(); d.setDate(d.getDate() - n); d.setHours(12, 0, 0, 0);
+  return d.toISOString();
+};
 
 prospects.push(
   { id:'vannes-peinture-du-golfe', ville:'VANNES', zone:'VANNES AGGLO', nom:'PEINTURE DU GOLFE',
@@ -51,9 +57,9 @@ configSup.prospection = true;
    appel d'avant-hier sur un prospect qui n'y est plus — le commercial doit
    quand même le voir, sans pouvoir rouvrir une fiche qui n'existe pas. */
 histoServi.push(
-  { t: ILYA(26), id:'auray-deco-bretonne', societe:'DECO BRETONNE', commune:'AURAY',
+  { t: JOURS(1), id:'auray-deco-bretonne', societe:'DECO BRETONNE', commune:'AURAY',
     resultat:'interesse', note:'rappeler en janvier', rappel:'' },
-  { t: ILYA(50), id:'parti-de-la-liste', societe:'ANCIENNE SARL', commune:'LORIENT',
+  { t: JOURS(2), id:'parti-de-la-liste', societe:'ANCIENNE SARL', commune:'LORIENT',
     resultat:'refus', note:'', rappel:'' }
 );
 
