@@ -180,6 +180,88 @@ T('remplacerLignes_ ne touche pas aux lignes d\'un autre devis', (() => {
   return ap.length === 3 && ap.some(x => String(x[0]) === 'DEV-AUTRE');
 })(), lire('LIGNES').map(x => x[0]));
 
+
+/* ---------- 6. la modification complète (v62) ----------
+
+   Jusqu'ici la révision ne servait qu'à poser une remise, et le classeur n'en
+   reprenait que les totaux. Depuis la v62 le commercial rouvre un devis non
+   signé et peut en changer le client, les prestations, la nature, la date. Si
+   la ligne du classeur gardait l'ancienne adresse, c'est là que l'équipe
+   serait envoyée. */
+g = socle();
+g.enregistrer_(enveloppe(0, false, false), COM);
+
+/* Le même devis revient : autre client, autre adresse, autre nature, deux fois
+   plus de vitres, un objet et une date souhaitée. */
+const modifie = enveloppe(0, false, true);
+modifie.devis.client = { type:'PART', societe:'', contact:'Anne Dupré', adresse:'9 venelle du Port',
+                         cp:'56400', ville:'Auray', siret:'', tva:'', tel:'06 11 22 33 44',
+                         email:'anne@test.fr', plus2ans:true };
+modifie.devis.nature = 'REMISE';
+modifie.devis.objet = 'Remise en état avant état des lieux';
+modifie.devis.delai = 'sous quinzaine';
+modifie.devis.notes = 'accès par la cour';
+modifie.devis.dateSouhaitee = '2026-11-18';
+modifie.devis.lignes = [
+  { reference:'REF-0001', categorie:'Vitrerie', designation:'Nettoyage de vitres',
+    qte:160, unite:'m2', pu:2.5, rem:0, tva:10, type:'PONCTUEL' }];
+modifie.devis.totaux = { ht:400, tva:40, ttc:440, htPonctuel:400, htMensuel:0,
+                         brut:400, remise:0, parTaux:{ 10:40 }, passages:1 };
+
+r = g.enregistrer_(modifie, COM);
+T('le devis modifié est reçu comme une révision', r && r.revise === true, r);
+T('et garde son numéro', r && r.numero === 'DEV-26-10/ MATE/ SLG-01', r && r.numero);
+d = lire('DEVIS');
+T('le DEVIS n\'a toujours qu\'une ligne', d.length === 2, d.length);
+T('le client a changé', d[1][col('CLIENT')] === 'Anne Dupré', d[1][col('CLIENT')]);
+T('et son type avec lui', d[1][col('TYPE_CLIENT')] === 'PARTICULIER', d[1][col('TYPE_CLIENT')]);
+T('l\'adresse suit — c\'est là que l\'équipe ira',
+  d[1][col('ADRESSE')] === '9 venelle du Port' && d[1][col('VILLE')] === 'Auray' &&
+  String(d[1][col('CP')]) === '56400',
+  [d[1][col('ADRESSE')], d[1][col('CP')], d[1][col('VILLE')]]);
+T('le téléphone et le courriel aussi',
+  d[1][col('TELEPHONE')] === '06 11 22 33 44' && d[1][col('EMAIL')] === 'anne@test.fr',
+  [d[1][col('TELEPHONE')], d[1][col('EMAIL')]]);
+T('la nature est reprise', d[1][col('NATURE')] === 'REMISE', d[1][col('NATURE')]);
+T('l\'objet aussi', /état des lieux/.test(String(d[1][col('OBJET')])), d[1][col('OBJET')]);
+T('le délai aussi', d[1][col('DELAI')] === 'sous quinzaine', d[1][col('DELAI')]);
+T('les notes aussi', d[1][col('NOTES')] === 'accès par la cour', d[1][col('NOTES')]);
+T('la date souhaitée aussi, et c\'est elle qui planifie',
+  String(d[1][col('DATE_SOUHAITEE')]).indexOf('2026-11-18') >= 0 ||
+  new Date(d[1][col('DATE_SOUHAITEE')]).getDate() === 18, d[1][col('DATE_SOUHAITEE')]);
+T('le logement de plus de deux ans est noté',
+  d[1][col('LOGEMENT_PLUS_2_ANS')] === 'OUI', d[1][col('LOGEMENT_PLUS_2_ANS')]);
+T('le taux de TVA suit : 10 %',
+  /^10\s*%?$/.test(String(d[1][col('TAUX_TVA')]).trim()), d[1][col('TAUX_TVA')]);
+T('les totaux sont ceux du devis modifié',
+  d[1][col('TOTAL_TTC')] === 440 && d[1][col('TOTAL_HT')] === 400, 
+  [d[1][col('TOTAL_HT')], d[1][col('TOTAL_TTC')]]);
+l = lire('LIGNES');
+T('les lignes sont remplacées, pas ajoutées', l.length === 2, l.length);
+T('et portent la nouvelle quantité',
+  Number(l[1][EN_L.indexOf('QTE')]) === 160, l[1][EN_L.indexOf('QTE')]);
+
+/* Ce qui appartient au bureau ne doit pas être effacé par une révision. */
+g = socle();
+g.enregistrer_(enveloppe(0, false, false), COM);
+const fig = lire('DEVIS');
+fig[1][col('MOTIF_REFUS')] = 'trop cher';
+fig[1][col('NOTE_COMMERCIAL')] = 'rappeler en janvier';
+fig[1][col('PHOTOS')] = 'https://drive/p1';
+creer('DEVIS', fig);
+g.enregistrer_(modifie, COM);
+d = lire('DEVIS');
+T('le motif noté par le bureau survit à la modification',
+  d[1][col('MOTIF_REFUS')] === 'trop cher', d[1][col('MOTIF_REFUS')]);
+T('la note du commercial aussi',
+  d[1][col('NOTE_COMMERCIAL')] === 'rappeler en janvier', d[1][col('NOTE_COMMERCIAL')]);
+T('et les photos déjà déposées aussi',
+  d[1][col('PHOTOS')] === 'https://drive/p1', d[1][col('PHOTOS')]);
+
+/* La distance ne vaut que pour les natures qui se vendent sur un secteur. */
+T('un devis de remise en état ne reçoit pas de distance',
+  !String(d[1][col('KM_AGENCE')]).trim(), d[1][col('KM_AGENCE')]);
+
 console.log('\n=== LE DEVIS RÉVISÉ, CÔTÉ CLASSEUR (v55) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
 ko.forEach(x => console.log('  ✗ ' + x));
