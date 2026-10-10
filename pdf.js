@@ -279,7 +279,12 @@ var PDF = (function () {
 
         var yl = y + 4.6;
         police('normal', 8.2, [55, 65, 81]);
-        if (txt(l.reference).trim()) doc.text(couper(l.reference, COL.ref.l)[0], COL.ref.g, yl);
+        /* La référence d'une ligne libre est une étiquette interne (LIBRE-1) :
+           elle sert au bureau, pas au client. On ne l'imprime pas. */
+        var refL = txt(l.reference).trim();
+        if (refL && refL.indexOf('LIBRE-') !== 0) {
+          doc.text(couper(refL, COL.ref.l)[0], COL.ref.g, yl);
+        }
 
         police('normal', 8.2);
         doc.text(des, COL.des.g, yl);

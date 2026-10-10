@@ -248,6 +248,24 @@
      on ne l'efface pas en silence, on le montre et on laisse décider. */
   .hcat{border-color:var(--warn)}
   .hcat .grpT .cpt{background:#FEF3C7;color:#92400E;border-color:#FDE68A}
+  /* La ligne libre : ce que le catalogue ne porte pas encore, écrit et chiffré
+     devant le client. Deux rangées plutôt qu'une colonne de plus — la largeur
+     d'un téléphone est déjà prise par la désignation et par le chiffre. */
+  .lib .grpT{cursor:default}
+  .libL{padding:11px 12px;border-bottom:1px solid var(--line)}
+  .libL input{margin:0}
+  .libD{width:100%;padding:10px;font-size:15px;font-weight:600}
+  .libR{display:flex;align-items:center;gap:7px;margin-top:7px}
+  .libQ{flex:0 0 58px;width:58px;padding:9px 6px;font-size:16px;text-align:right}
+  .libU{flex:1 1 56px;min-width:0;padding:9px 8px;font-size:14px}
+  .libP{flex:0 0 80px;width:80px;padding:9px 6px;font-size:16px;text-align:right}
+  .libT{flex:0 0 64px;text-align:right;font-weight:700;font-size:14px;color:var(--txt)}
+  .libX{flex:0 0 34px;height:38px;border:1.5px solid var(--line);background:#fff;
+        color:var(--mut);font-size:14px;line-height:1;padding:0;border-radius:10px}
+  .libX:active{border-color:var(--warn);color:var(--warn)}
+  .libAdd{padding:11px 12px}
+  .btnLib{width:100%;height:44px;border:1.5px dashed var(--acc);background:var(--acc-f);
+          color:var(--acc);font-weight:600;font-size:14px;border-radius:11px}
   /* suggestions : clients déjà connus + annuaire des entreprises */
   .sugg{border:1px solid var(--line);border-radius:10px;margin-top:5px;overflow:hidden;background:#fff}
   .sugg button{display:block;width:100%;text-align:left;background:#fff;border:0;
@@ -495,10 +513,13 @@
       <label>Objet du devis</label>
       <input id="fObjet" placeholder="Nettoyage maison fin de chantier" oninput="sauverBrouillon()">
       <div class="mini">S'imprime en titre, en haut du devis.</div>
-      <!-- Plus de « ligne libre », et plus de catalogue à parcourir : tout ce qui
-           est vendu est déjà là, dans l'ordre du classeur. Le commercial remplit,
-           il ne cherche pas. Une prestation manquante s'ajoute au bureau et
-           arrive sur tous les appareils à la synchronisation suivante. -->
+      <!-- Le catalogue est la page : tout ce qui est vendu est déjà là, dans
+           l'ordre du classeur, et le commercial remplit au lieu de chercher.
+           La ligne libre, tout en bas, est la sortie de secours : elle sert à
+           ce que le catalogue ne porte pas encore, et le bureau la voit passer
+           dans la colonne CONTROLE_TARIF. Une prestation qui revient s'ajoute
+           au catalogue, et arrive sur tous les appareils à la synchronisation
+           suivante. -->
       <div class="mini" style="margin-top:12px">Ouvre une catégorie, indique la surface ou le nombre
         de pièces, ajoute les forfaits. Un forfait ajouté se compte : « + » pour quatre cuisines.
         Ce qui reste à zéro n'apparaît pas sur le devis.</div>
@@ -964,11 +985,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=58"></script>
-<script src="jspdf.umd.min.js?v=58"></script>
-<script src="police.js?v=58"></script>
-<script src="logo.js?v=58"></script>
-<script src="pdf.js?v=58"></script>
-<script src="app.js?v=58"></script>
+<script src="config.js?v=59"></script>
+<script src="jspdf.umd.min.js?v=59"></script>
+<script src="police.js?v=59"></script>
+<script src="logo.js?v=59"></script>
+<script src="pdf.js?v=59"></script>
+<script src="app.js?v=59"></script>
 </body>
 </html>

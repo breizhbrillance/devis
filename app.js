@@ -292,7 +292,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v58';
+var VERSION_APP = 'v59';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -726,6 +726,8 @@ function suivant(){
   }
   if(ETAPE===3){
     if(!LIGNES.length) return erreur('Ajoute au moins une prestation.');
+    var vide = libreIncomplete();
+    if(vide) return erreur(vide + ' Complète-la ou retire-la.');
     sauverBrouillon(); return etape(4);
   }
   if(ETAPE===4){
@@ -1367,6 +1369,55 @@ function purgerSelonNature(){
   return avant - LIGNES.length;
 }
 
+/* ====================== LA LIGNE LIBRE ======================
+   Une prestation que le catalogue ne porte pas encore, écrite et chiffrée par
+   le commercial devant le client plutôt que de perdre l'affaire. Elle ne perce
+   pas le verrouillage des tarifs, elle s'y soumet autrement : elle porte une
+   référence réservée, et le bureau la voit arriver nommée et chiffrée dans la
+   colonne CONTROLE_TARIF du classeur. L'éloignement ne la touche pas — son
+   prix a été décidé sur place, il n'y a rien à relever. C'est le chemin déjà
+   ouvert par la majoration d'état des lieux : une référence que les deux côtés
+   connaissent. */
+var REF_LIBRE = 'LIBRE-';
+var LIBRE_SEQ = 0;
+function estLigneLibre(l){
+  return String((l && l.reference) || '').indexOf(REF_LIBRE) === 0;
+}
+/* Le compteur repart au-dessus du plus haut numéro déjà posé : un brouillon
+   repris ou un devis dupliqué ne doit pas recréer une référence déjà prise,
+   sinon deux lignes libres n'en feraient plus qu'une. */
+function recalerLibreSeq(){
+  var max = 0;
+  LIGNES.forEach(function(l){
+    if(!estLigneLibre(l)) return;
+    var n = Number(String(l.reference).slice(REF_LIBRE.length)) || 0;
+    if(n > max) max = n;
+  });
+  LIBRE_SEQ = max;
+}
+/* Une ligne libre naît vide : le commercial écrit dedans. Elle prend la TVA et
+   la remise du devis comme n'importe quelle autre, et se range en fin de liste
+   parce que ordonnerLignes() ne lui connaît pas de rang au catalogue. */
+function ajouterLigneLibre(){
+  LIBRE_SEQ++;
+  var l = {categorie:'Prestations complémentaires', designation:'', detail:'',
+    qte:1, unite:'forfait', pu:0, rem:REMISE.valeur, remMuet:REMISE.muet,
+    tva:(TAUX === null || TAUX === undefined ? nbReglage('tva_defaut') : TAUX),
+    type:(estRecurrent() ? 'MENSUEL' : 'PONCTUEL'),
+    reference:REF_LIBRE + LIBRE_SEQ};
+  LIGNES.push(l);
+  return l;
+}
+function ligneLibreDe(ref){
+  for(var i = 0; i < LIGNES.length; i++){
+    if(String(LIGNES[i].reference || '') === String(ref)) return LIGNES[i];
+  }
+  return null;
+}
+function lignesLibres(){
+  return LIGNES.filter(estLigneLibre);
+}
+
 function clePresta(p){
   var r = String((p && p.reference) || '').trim();
   return r ? 'R:' + r : 'D:' + normTexte(p && p.designation);
@@ -1444,6 +1495,7 @@ function rendreLignes(){
     rang += CATP[nom].length;
   });
   h += blocHorsCatalogue();
+  h += blocLibre();
   c.innerHTML = h;
   majBadges();
   majBarre();
@@ -1578,7 +1630,9 @@ function pasForfait(i, d){
 function lignesHorsCatalogue(){
   var connues = {};
   ((CFG && CFG.catalogue) || []).forEach(function(p){ connues[clePresta(p)] = 1; });
-  return LIGNES.filter(function(l){ return !connues[clePresta(l)]; });
+  return LIGNES.filter(function(l){
+    return !estLigneLibre(l) && !connues[clePresta(l)];
+  });
 }
 function blocHorsCatalogue(){
   var hs = lignesHorsCatalogue();
@@ -1598,6 +1652,86 @@ function blocHorsCatalogue(){
 function retirerHors(i){
   LIGNES.splice(i, 1);
   rendreLignes(); sauverBrouillon();
+}
+
+/* Le bloc des lignes libres, toujours là, en bas de la liste : le commercial
+   descend jusqu'au bout du catalogue avant d'y recourir, et c'est voulu — on
+   cherche d'abord la prestation qui existe. Deux rangées par ligne plutôt
+   qu'une colonne de plus : la largeur d'un téléphone est déjà prise. */
+function blocLibre(){
+  var ls = lignesLibres();
+  var h = '<div class="grp lib on" id="grpLibre"><div class="grpT">' +
+    '<span class="n">Ligne libre</span>' +
+    (ls.length ? '<span class="cpt">' + ls.length + '</span>' : '') +
+    '</div><div class="grpC">';
+  ls.forEach(function(l){
+    var r = ech(l.reference);
+    h += '<div class="libL" id="lb' + r + '">' +
+      '<input class="libD" placeholder="Ce que tu vends" value="' + ech(l.designation) + '" ' +
+        'oninput="setLibre(\'' + r + '\',\'designation\',this.value)">' +
+      '<div class="libR">' +
+        '<input class="libQ" type="number" inputmode="decimal" step="0.01" min="0" ' +
+          'aria-label="Quantité" value="' + nb(l.qte) + '" ' +
+          'oninput="setLibre(\'' + r + '\',\'qte\',this.value)">' +
+        '<input class="libU" aria-label="Unité" placeholder="unité" value="' + ech(l.unite) + '" ' +
+          'oninput="setLibre(\'' + r + '\',\'unite\',this.value)">' +
+        '<input class="libP" type="number" inputmode="decimal" step="0.01" min="0" ' +
+          'aria-label="Prix unitaire HT" placeholder="prix HT" ' +
+          'value="' + (Number(l.pu) ? nb(l.pu) : '') + '" ' +
+          'oninput="setLibre(\'' + r + '\',\'pu\',this.value)">' +
+        '<span class="libT" id="ltt' + r + '">' + eur(montantL(l)) + '</span>' +
+        '<button class="libX" onclick="retirerLibre(\'' + r + '\')" ' +
+          'aria-label="Retirer cette ligne">\u2715</button>' +
+      '</div></div>';
+  });
+  h += '<div class="libAdd">' +
+    '<button class="btnLib" onclick="ajouterLibre()">+ Ajouter une ligne libre</button>' +
+    '<div class="mini">Pour ce que le catalogue ne porte pas encore. Le prix est celui que tu ' +
+    'décides devant le client ; le bureau le voit passer et le rappellera si besoin.</div>' +
+    '</div>';
+  return h + '</div></div>';
+}
+function ajouterLibre(){
+  var l = ajouterLigneLibre();
+  rendreLignes(); sauverBrouillon();
+  var e = $('lb' + l.reference);
+  var d = e ? e.querySelector('.libD') : null;
+  if(d) d.focus();
+}
+/* On ne repeint que le total de la ligne touchée : un rendu complet referme le
+   clavier du téléphone au milieu d'un mot. */
+function setLibre(ref, champ, valeur){
+  var l = ligneLibreDe(ref);
+  if(!l) return;
+  if(champ === 'qte' || champ === 'pu'){
+    var n = Number(String(valeur).replace(',', '.'));
+    if(!isFinite(n) || n < 0) n = 0;
+    l[champ] = n;
+  } else {
+    l[champ] = String(valeur || '');
+  }
+  var t = $('ltt' + ref);
+  if(t) t.textContent = eur(montantL(l));
+  majBarre(); sauverBrouillon();
+}
+function retirerLibre(ref){
+  var l = ligneLibreDe(ref);
+  if(!l) return;
+  LIGNES.splice(LIGNES.indexOf(l), 1);
+  rendreLignes(); sauverBrouillon();
+}
+/* Une ligne libre sans intitulé ou sans prix n'est pas une prestation : elle
+   partirait au client comme une ligne vide à 0 €. On la signale avant de
+   quitter l'écran plutôt que de la jeter en silence. */
+function libreIncomplete(){
+  var mauvaise = null;
+  lignesLibres().forEach(function(l){
+    if(mauvaise) return;
+    if(!String(l.designation || '').trim()) mauvaise = 'Une ligne libre n\'a pas d\'intitulé.';
+    else if(!(Number(l.pu) > 0)) mauvaise = '« ' + l.designation + ' » n\'a pas de prix.';
+    else if(!(Number(l.qte) > 0)) mauvaise = '« ' + l.designation + ' » n\'a pas de quantité.';
+  });
+  return mauvaise;
 }
 
 /* ====================== CALCULETTE DE SURFACE ======================
@@ -1760,7 +1894,9 @@ function ligneMajoration(){
   var pct = majorationPct();
   if(!pct || !LIGNES.length) return null;
   var base = 0;
-  LIGNES.forEach(function(l){ base += brutL(l); });
+  /* Une ligne libre ne majore pas : son prix a été décidé sur place, il porte
+     déjà l'état du site. Le classeur calcule la même assiette. */
+  LIGNES.forEach(function(l){ if(!estLigneLibre(l)) base += brutL(l); });
   var m = Math.round(base * pct) / 100;
   if(m <= 0) return null;
   return {categorie:'État des lieux',
@@ -1858,7 +1994,10 @@ function tauxSupKm(){
   if(!(sup > 0)) return 0;
   var base = 0;
   LIGNES.forEach(function(l){
-    if(String(l.reference||'') === REF_MAJ) return;
+    /* Ni la majoration ni une ligne libre n'entrent dans l'assiette : la
+       première se calcule sur le reste, la seconde porte un prix décidé sur
+       place que le supplément n'a pas à diluer. */
+    if(String(l.reference||'') === REF_MAJ || estLigneLibre(l)) return;
     base += (Number(l.qte)||0) * (Number(l.pu)||0);
   });
   return base > 0 ? sup / base : 0;
@@ -1921,7 +2060,7 @@ function noteKm(){
 function lignesDevis(){
   var taux = tauxSupKm();
   var ls = LIGNES.map(function(l){
-    if(!taux) return l;
+    if(!taux || estLigneLibre(l)) return l;
     var c = {}; for(var k in l){ if(l.hasOwnProperty(k)) c[k] = l[k]; }
     c.pu = prixAvecKm(l.pu, taux);
     return c;
@@ -2490,6 +2629,7 @@ function sauverBrouillon(){
 }
 function restaurer(b){
   LIGNES = sansMajoration(b.lignes);
+  recalerLibreSeq();
   ETAT = (b.etat === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';   // l'ancien palier « sale » n'existe plus
   NATURE = b.nature || null;
   PASSAGES = Number(b.passages) || 0;
@@ -3253,9 +3393,13 @@ function dupliquer(id, btn){
       var o = {}; for(var k in l){ if(l.hasOwnProperty(k)) o[k] = l[k]; } return o;
     });
     LIGNES.forEach(function(l){
+      /* Une ligne libre garde son prix : il n'y a pas de catalogue où aller le
+         rechercher, et c'est bien pour ça qu'elle existe. */
+      if(estLigneLibre(l)) return;
       var pr = prestationRef(l.reference);
       if(pr) l.pu = Number(pr.pu) || 0;
     });
+    recalerLibreSeq();
     NATURE = d.nature || NATURE;
     PASSAGES = Number(d.passages) || 0;
     KM = (d.km === undefined || d.km === null) ? '' : String(d.km);
