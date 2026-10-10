@@ -21,6 +21,10 @@ export const configSup={};
    résultats d'appel qu'il reçoit. Une suite les pose avant lancer(). */
 export const prospects=[];
 export const appelsRecus=[];
+/* Le journal que le faux bureau rend à l'action « historique ». Une suite le
+   remplit avant lancer() ; `modeHisto` permet d'éprouver un refus. */
+export const histoServi=[];
+export const modeHisto={ v:'ok', complet:true };
 /* ok | refus : de quoi éprouver ce que fait l'application quand le bureau
    n'accepte pas ses résultats. */
 export const modeAppel={ v:'ok' };
@@ -55,6 +59,12 @@ export function lancer(port){
         if(modeAppel.v==='refus') return rep({ok:false, erreur:'refus'});
         (d.appels||[]).forEach(a=>appelsRecus.push(a));
         return rep({ok:true, recus:(d.appels||[]).length, refuses:[]});
+      }
+      if(d.action==='historique'){
+        if(modeHisto.v==='refus') return rep({ok:false, erreur:'refus'});
+        if(modeHisto.v==='panne'){ r.destroy(); return; }
+        return rep({ok:true, appels:histoServi.map(x=>({...x})),
+                    complet:modeHisto.complet, jours:60});
       }
       if(d.action!=='connexion') return rep({ok:true});
       if(mode.co==='panne'){ r.destroy(); return; }
