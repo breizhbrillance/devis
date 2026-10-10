@@ -12,7 +12,7 @@ var REMISE = {valeur:0, muet:false};
    C'est le devis qui est ponctuel ou récurrent, pas la prestation : le même
    lavage de sols se vend une fois en fin de chantier et quatre fois par mois
    en entretien. */
-var NATURE = null;      // 'ENTRETIEN' | 'VITRERIE' | 'CHANTIER' | 'REMISE'
+var NATURE = null;      // 'ENTRETIEN' | 'VITRERIE' | 'FACADE' | 'CHANTIER' | 'REMISE'
 var ETAT = 'NORMAL';    // état du site constaté : 'NORMAL' | 'TRES_SALE'
 var PASSAGES = 0;       // par mois, seulement pour un entretien
 var ETAPE = 1;
@@ -292,7 +292,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v59';
+var VERSION_APP = 'v60';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1142,6 +1142,7 @@ function majNature(){
   $('chENT').classList.toggle('hide', !pro);
   $('chENT').classList.toggle('on', NATURE === 'ENTRETIEN');
   $('chVIT').classList.toggle('on', NATURE === 'VITRERIE');
+  $('chFAC').classList.toggle('on', NATURE === 'FACADE');
   $('chCHA').classList.toggle('on', NATURE === 'CHANTIER');
   $('chREM').classList.toggle('on', NATURE === 'REMISE');
   /* Un entretien est toujours au contrat ; une vitrerie se vend au contrat ou
@@ -1207,9 +1208,11 @@ function majOrigine(){
 
 function estEntretien(){ return NATURE === 'ENTRETIEN'; }
 function estVitrerie(){ return NATURE === 'VITRERIE'; }
+function estFacade(){ return NATURE === 'FACADE'; }
 /* Les natures qui se vendent sur un secteur : l'équipe part de l'agence, et le
-   trajet se paie. Une vitrerie compte, au contrat comme en une seule fois. */
-function estMajorableKm(){ return estEntretien() || estVitrerie(); }
+   trajet se paie. Une vitrerie compte, au contrat comme en une seule fois ; une
+   façade ne se vend qu'en une fois, mais le camion roule quand même. */
+function estMajorableKm(){ return estEntretien() || estVitrerie() || estFacade(); }
 /* Le devis se répète-t-il dans le mois ? Un entretien, toujours. Une vitrerie,
    seulement si elle est vendue au contrat. C'est cette question, et non la
    nature seule, qui commande la mensualisation du total et la planification. */
@@ -1222,6 +1225,7 @@ function libelleNature(n){
   n = String(n || NATURE || '').toUpperCase();
   if(n === 'ENTRETIEN') return 'Entretien des locaux';
   if(n === 'VITRERIE')  return 'Vitrages et menuiseries';
+  if(n === 'FACADE')    return 'Nettoyage de façade';
   if(n === 'REMISE')    return 'Remise en état';
   return 'Nettoyage de fin de chantier';
 }
@@ -1326,7 +1330,7 @@ function normTexte(s){
    Une prestation peut n'appartenir qu'à certaines natures de devis : le
    décapage de la laitance ne se vend qu'en fin de chantier, le nettoyage
    vapeur des sols qu'en remise en état. C'est la colonne NATURES du CATALOGUE
-   qui le dit ; vide, la prestation se vend dans les trois. */
+   qui le dit ; vide, la prestation se vend dans toutes. */
 var CATV = [];                 // le catalogue tel que le commercial le voit
 
 function naturesDe(p){
@@ -2807,7 +2811,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       dateSouhaitee: val('fDate'),   // c'est elle qui sert à planifier
       delai: val('fDelai'),          // la phrase pour le client, rien de plus
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
-      nature: NATURE || 'CHANTIER',   // 'ENTRETIEN' | 'VITRERIE' | 'CHANTIER' | 'REMISE'
+      nature: NATURE || 'CHANTIER',   // ENTRETIEN | VITRERIE | FACADE | CHANTIER | REMISE
       origine: ORIGINE,                       // 'PROSPECTION' | 'ENTRANT', pour le suivi
       lieuSignature: TYPE === 'PART' ? LIEU : '',   // commande le formulaire de rétractation
       passages: estRecurrent() ? PASSAGES : 0,

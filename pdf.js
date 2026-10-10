@@ -197,6 +197,7 @@ var PDF = (function () {
     var natD = String(devis.nature || '').toUpperCase().trim();
     var nomNature = natD === 'ENTRETIEN' ? 'Entretien des locaux'
                   : natD === 'VITRERIE'  ? 'Vitrages et menuiseries'
+                  : natD === 'FACADE'    ? 'Nettoyage de façade'
                   : natD === 'REMISE'    ? 'Remise en état'
                   : natD === 'CHANTIER'  ? 'Nettoyage de fin de chantier' : '';
     if (nomNature) {
