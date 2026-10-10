@@ -270,9 +270,16 @@ function demarrer(){
     if(b && b.lignes && b.lignes.length){
       var cl = (b.client||{}).societe || (b.client||{}).contact || '';
       apresConnexion();
-      demander('Reprendre le devis en cours ?',
-               'Un devis non terminé a été retrouvé' + (cl ? ' : ' + cl : '') + '.',
-               'Le reprendre').then(function(oui){
+      /* Une modification interrompue n'est pas un devis en cours : le dire,
+         sinon le commercial répondrait « non » en croyant jeter un brouillon,
+         et perdrait les corrections qu'il avait déjà faites. */
+      var enMod = !!(b.modif && b.modif.id);
+      demander(enMod ? 'Reprendre la modification en cours ?' : 'Reprendre le devis en cours ?',
+               enMod
+                 ? 'La modification du devis ' + (b.modif.numero || '') +
+                   (cl ? ' (' + cl + ')' : '') + ' n\'a pas été terminée.'
+                 : 'Un devis non terminé a été retrouvé' + (cl ? ' : ' + cl : '') + '.',
+               enMod ? 'La reprendre' : 'Le reprendre').then(function(oui){
         if(oui){ restaurer(b); etape(2); }
         else { lsj('brouillon', null); }
       });
@@ -292,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v61';
+var VERSION_APP = 'v62';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -692,6 +699,7 @@ function etape(n){
   $('bSuiv').textContent = n===4 ? 'Enregistrer le devis' : 'Continuer';
   $('hTitre').textContent = ['','Type de client','Client','Prestations','Validation','Terminé','Mes devis'][n];
   if(n!==2) cacherSugg();
+  majBandeauModif();            // le rappel ne suit que le parcours du devis
   if(n===1) majType();
   if(n<=2) majBarre();          // le total du bas suit le devis en cours, pas le précédent
   if(n===3) rendreLignes();
@@ -2331,6 +2339,73 @@ function appliquerSignature(id, image, nom){
   });
 }
 
+/* Le devis modifié reprend la place de l'ancien : même fiche, même numéro,
+   mêmes photos, même date de création. Ce qui change, c'est son contenu, son
+   PDF, et le fait qu'il doit repartir au bureau — en révision, pour remplacer
+   la ligne du classeur au lieu d'en ajouter une.
+
+   On relit la fiche juste avant d'écrire : entre l'ouverture et maintenant, le
+   client a pu signer depuis un autre écran, et un devis signé ne se modifie
+   plus. Mieux vaut un refus clair qu'un montant changé dans son dos. */
+function enregistrerModification(b, envoi, moi, secours, devis, pdf64){
+  var cible = MODIF.id;
+  return DB.get(cible).then(function(enr){
+    if(!enr){
+      debloquer(b, secours);
+      return erreur('Ce devis n\'est plus sur l\'appareil. Rien n\'a été enregistré.');
+    }
+    if(estSigne(enr) && !devis.signature){
+      debloquer(b, secours);
+      return erreur('Ce devis a été signé entre-temps : il ne se modifie plus. ' +
+                    'Rien n\'a été enregistré.');
+    }
+    var avant = enr.numero;
+    /* Le numéro ne change que si le devis vient d'être signé ; l'ancien reste
+       inscrit, c'est celui que porte l'exemplaire déjà remis au client. */
+    if(devis.numero !== enr.numero && !enr.numeroOrigine) enr.numeroOrigine = enr.numero;
+    enr.numero = devis.numero;
+    enr.devis = devis;
+    enr.pdf = pdf64;
+    enr.nomFichier = PDF.nomFichier(devis);
+    enr.envoyerClient = envoi;
+    enr.statut = 'attente';
+    enr.revision = true;              // le bureau remplace, il n'ajoute pas
+    enr.nom = moi.nom; enr.code = moi.code; enr.appareil = APPAREIL;
+    enr.modifieLe = Date.now();
+    if(devis.signature && enr.verdict !== 'SIGNE'){
+      enr.verdict = 'SIGNE'; enr.motif = ''; enr.relance = '';
+      enr.verdictLe = Date.now(); enr.verdictEnvoye = false;
+    }
+    DERNIER = enr;
+    return DB.put(enr).then(function(){
+      var cl = devis.client.societe || devis.client.contact || '';
+      tracer('DEVIS MODIFIE', cl + ' — ' + eur(devis.totaux.ttc) + ' TTC' +
+             (devis.numero !== avant ? ' — était ' + avant : ''), devis.numero);
+      if(devis.signature){
+        tracer('SIGNATURE CLIENT', devis.signataire || cl, devis.numero);
+        tracer('RESULTAT SIGNE', 'signé à l\'écran', devis.numero);
+      }
+      MODIF = null; majBandeauModif();
+      lsj('brouillon', null);
+      chargerRepertoire();
+      $('okNum').textContent = devis.numero;
+      $('okTot').textContent = eur(devis.totaux.ttc)+' TTC';
+      $('okEtat').textContent = navigator.onLine
+        ? 'Devis modifié. Envoi au bureau en cours…'
+        : 'Devis modifié. Hors connexion : il repart dès que le réseau revient.';
+      debloquer(b, secours);
+      TERMINE_RETOUR = 0;
+      V_TYPE = ''; V_MOTIF = '';
+      montrerTermine();
+      synchroniser(false);
+    });
+  }, function(e){
+    debloquer(b, secours);
+    tracer('ERREUR MODIFICATION', String(e && e.message || e));
+    erreur('Le devis modifié n\'a pas pu être enregistré sur l\'appareil.');
+  });
+}
+
 /* ---------- REMISE SUR UN DEVIS DÉJÀ ÉTABLI ----------
 
    Le commercial a remis son devis, le client négocie une semaine plus tard.
@@ -2629,9 +2704,15 @@ function sauverBrouillon(){
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
                     nature:NATURE, passages:PASSAGES, etat:ETAT,
-                    km:KM, kmAuto:KM_AUTO, origine:ORIGINE, lieu:LIEU});
+                    km:KM, kmAuto:KM_AUTO, origine:ORIGINE, lieu:LIEU,
+                    modif:MODIF});
 }
 function restaurer(b){
+  /* Une modification interrompue (batterie, appli fermée) reprend où elle en
+     était : sans cela, le commercial croirait continuer et créerait un second
+     devis à l'enregistrement. */
+  MODIF = (b.modif && b.modif.id) ? {id:b.modif.id, numero:b.modif.numero || ''} : null;
+  majBandeauModif();
   LIGNES = sansMajoration(b.lignes);
   recalerLibreSeq();
   ETAT = (b.etat === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';   // l'ancien palier « sale » n'existe plus
@@ -2796,8 +2877,20 @@ function enregistrerSuite(b, envoi, moi, secours){
     /* Le client qui a signé à l'écran repart avec un devis signé : son numéro
        porte le mois de la signature et le suffixe / S dès maintenant. */
     var quandSig = SIG.image ? (SIG.quand || Date.now()) : 0;
+    /* En modification, le devis garde son numéro — sauf s'il se fait signer
+       à l'instant : un devis signé porte le mois de sa signature et le suffixe
+       / S, et l'ancien numéro reste noté, exactement comme une signature posée
+       depuis « Mes devis ». */
+    var numModif = '';
+    if(enModification()){
+      numModif = (SIG.image && !estNumeroSigne(MODIF.numero))
+        ? prochainNumero(moi.nom, nomClient(client), true, quandSig || Date.now(),
+                         initialesDuNumero(MODIF.numero))
+        : MODIF.numero;
+    }
     var devis = {
-      numero: prochainNumero(moi.nom, nomClient(client), !!SIG.image, quandSig || Date.now()),
+      numero: numModif ||
+              prochainNumero(moi.nom, nomClient(client), !!SIG.image, quandSig || Date.now()),
       /* La distance retenue : c'est elle qui a relevé les prix unitaires, et
          c'est sur elle que le bureau refera le calcul. */
       km: estMajorableKm() && String(KM).trim() !== '' ? kmDevis() : '',
@@ -2822,6 +2915,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       totaux: totaux()
     };
     var pdf64 = PDF.base64(devis, CFG.reglages);
+    if(enModification()) return enregistrerModification(b, envoi, moi, secours, devis, pdf64);
     var enr = {
       id: 'd-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),
       numero: devis.numero, devis: devis, pdf: pdf64,
@@ -3261,6 +3355,7 @@ function purger(){
 function ouvrirHistorique(){
   if(ETAPE >= 1 && ETAPE <= 5) ECRAN_AVANT = ETAPE;
   ETAPE=6; montrer('e6');
+  majBandeauModif();            // on quitte le parcours : le rappel n'a plus lieu d'être
   $('steps').classList.add('hide');
   barreRetour();
   $('bHist').classList.add('hide');      // on y est déjà
@@ -3301,6 +3396,7 @@ function rendreHistorique(){
           (e.verdict==='SIGNE' && !sig ? 'SIGNE' : 'SITE')+'\')">Photos'+(ph?' ('+ph+')':'')+'</button>'+
         (estSigne(e) ? '' :
           '<button class="btn sec sm" onclick="ouvrirSignatureDevis(\''+e.id+'\', this)">Signer</button>'+
+          '<button class="btn sec sm" onclick="ouvrirModification(\''+e.id+'\', this)">Modifier</button>'+
           '<button class="btn sec sm" onclick="ouvrirRemiseDevis(\''+e.id+'\', this)">Remise</button>')+
         '<button class="btn sec sm" onclick="dupliquer(\''+e.id+'\', this)">Dupliquer</button>'+
         (e.statut==='envoye' ? '' :
@@ -3373,6 +3469,101 @@ function renvoyer(id, btn){
 
 /* Repartir d'un devis existant : un devis de copropriété ressemble beaucoup
    au précédent, et une renégociation ne change souvent qu'une ligne. */
+/* ---------- MODIFIER UN DEVIS DÉJÀ ÉTABLI ----------
+
+   Le commercial s'est trompé d'une quantité, le client ajoute une pièce, une
+   adresse était fausse. Plutôt que de tout ressaisir — et de risquer un chiffre
+   qui diffère — il rouvre le devis depuis « Mes devis », refait le chemin
+   normal, et réenregistre.
+
+   Trois décisions de Simon (10 octobre 2026), et ce qu'elles impliquent :
+
+   — **le devis garde son numéro**. Le bureau reçoit une révision, pas un second
+     devis : c'est le même chemin que la remise de la v55, `revision: true`,
+     qui fait remplacer la ligne au lieu de l'ajouter ;
+   — **tout est modifiable**, parce qu'on repasse par les écrans ordinaires ;
+   — **les prix ne bougent pas**. C'est là que « Modifier » se sépare de
+     « Dupliquer » : dupliquer ouvre une affaire neuve et repart du catalogue du
+     jour, modifier reprend un devis déjà annoncé au client, dont les prix —
+     éloignement compris — ont déjà été dits. Un prix qui changerait tout seul
+     entre deux versions serait invisible et indéfendable.
+
+   Un devis signé n'y a pas droit, pour la même raison que la remise : le client
+   a accepté un montant. Et comme il peut se faire signer **pendant** la
+   modification, le cas est traité plus bas, à l'enregistrement. */
+var MODIF = null;      // {id, numero} du devis en cours de modification
+
+function enModification(){ return !!(MODIF && MODIF.id); }
+
+function ouvrirModification(id, btn){
+  if(btn) occuper(btn, '…');
+  DB.get(id).then(function(e){
+    if(btn) libere(btn);
+    if(!e || !e.devis) return;
+    if(estSigne(e)){
+      return erreur('Ce devis est signé : il ne se modifie plus. Utilise « Dupliquer » ' +
+                    'pour en établir un nouveau.');
+    }
+    var d = e.devis, c = d.client || {};
+    nouveauDevis();                 // remet tout à zéro, MODIF compris
+    MODIF = {id: e.id, numero: e.numero};
+    TYPE = (c.type === 'PART') ? 'PART' : 'PRO';
+    PLUS2ANS = (c.plus2ans === true || c.plus2ans === false) ? c.plus2ans : null;
+    majType();
+    if(PLUS2ANS !== null) appliquerTaux(PLUS2ANS ? 10 : 20);
+    ['Societe','Siret','Tva','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
+      $('c'+k).value = c[k.toLowerCase()] || '';
+    });
+    /* Les lignes telles qu'elles ont été chiffrées, prix compris. On retire la
+       seule ligne que l'application refabrique elle-même — la majoration d'état
+       des lieux — pour qu'elle ne se compte pas deux fois. */
+    LIGNES = sansMajoration(d.lignes).map(function(l){
+      var o = {}; for(var k in l){ if(l.hasOwnProperty(k)) o[k] = l[k]; } return o;
+    });
+    recalerLibreSeq();
+    REMISE = {valeur: Number(d.remise) || 0, muet: false};
+    LIGNES.forEach(function(l){ if(l.remMuet) REMISE.muet = true; });
+    NATURE = d.nature || NATURE;
+    PASSAGES = Number(d.passages) || 0;
+    KM = (d.km === undefined || d.km === null) ? '' : String(d.km);
+    KM_AUTO = false;                // la distance du devis, pas celle d'aujourd'hui
+    majNature();
+    majKm();
+    ETAT = (d.etatSite === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';
+    ORIGINE = (d.origine === 'ENTRANT') ? 'ENTRANT' : 'PROSPECTION';
+    LIEU = (d.lieuSignature === 'AGENCE') ? 'AGENCE' : 'CLIENT';
+    majOrigine();
+    $('fObjet').value = d.objet || '';
+    $('fDate').value = d.dateSouhaitee || '';
+    $('fDelai').value = d.delai || '';
+    $('fNotes').value = d.notes || '';
+    tracer('DEVIS MODIFIE', 'ouvert pour modification', e.numero);
+    majBandeauModif();
+    sauverBrouillon();
+    etape(2);
+    window.scrollTo(0,0);
+  });
+}
+
+/* Le bandeau qui rappelle, à chaque écran, qu'on reprend un devis et qu'on n'en
+   crée pas un neuf. Sans lui, rien ne distinguerait les deux parcours — et le
+   commercial croirait avoir fait un second devis. */
+function majBandeauModif(){
+  var b = $('bandModif');
+  if(!b) return;
+  /* Seulement sur les quatre écrans du devis : ailleurs — « Mes devis », le
+     phoning, l'écran de fin — il n'aurait rien à dire et occuperait la place. */
+  var ici = enModification() && ETAPE >= 1 && ETAPE <= 4;
+  b.classList.toggle('hide', !ici);
+  if(ici) $('bandModifNum').textContent = MODIF.numero;
+}
+function abandonnerModification(){
+  if(!enModification()) return;
+  tracer('MODIFICATION ABANDONNEE', '', MODIF.numero);
+  nouveauDevis();
+  ouvrirHistorique();
+}
+
 function dupliquer(id, btn){
   if(btn) occuper(btn, '');
   DB.get(id).then(function(e){
@@ -4161,6 +4352,7 @@ function nouveauDevis(){
   TYPE = null; PLUS2ANS = null; TAUX = null;
   ORIGINE = 'PROSPECTION'; LIEU = 'CLIENT'; majOrigine();
   TERMINE_RETOUR = 0; V_TYPE = ''; V_MOTIF = '';
+  MODIF = null; majBandeauModif();
   $('steps').classList.remove('hide');
   etape(1);
 }

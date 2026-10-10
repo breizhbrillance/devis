@@ -297,6 +297,12 @@
   .prOng button{flex:1;border:0;background:transparent;padding:9px 6px;border-radius:999px;
                 font-weight:600;color:var(--mut);font-size:14px;min-width:0}
   .prOng button.on{background:#fff;color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .bandModif{display:flex;align-items:center;justify-content:space-between;gap:10px;
+             flex-wrap:wrap;background:var(--acc-f);border:1px solid var(--acc-b);
+             color:var(--acc-t);border-radius:12px;padding:10px 14px;margin-bottom:14px;
+             font-size:14px}
+  .bandModif b{font-variant-numeric:tabular-nums}
+  .bandModif .lien{color:var(--acc-t);font-weight:600;white-space:nowrap}
   .prJTete{display:flex;align-items:center;justify-content:space-between;gap:10px}
   .prJMaj{width:auto;margin:0;padding:7px 14px;font-size:13.5px}
   .prJJour{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
@@ -374,6 +380,15 @@
 
 <main>
   <div id="erreur" class="err hide"></div>
+
+  <!-- On reprend un devis, on n'en crée pas un neuf. Le bandeau reste visible
+       à chaque écran du parcours : sans lui, les deux chemins seraient
+       indiscernables et le commercial croirait avoir fait un second devis. -->
+  <div id="bandModif" class="bandModif hide">
+    <span>Modification du devis <b id="bandModifNum"></b> — il gardera son numéro
+      et ses prix.</span>
+    <button class="lien" onclick="abandonnerModification()">Abandonner</button>
+  </div>
 
   <!-- CONNEXION — écran à part : il disparaît de la chaîne une fois la connexion faite -->
   <section id="eCo" class="card hide">
@@ -1013,11 +1028,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=61"></script>
-<script src="jspdf.umd.min.js?v=61"></script>
-<script src="police.js?v=61"></script>
-<script src="logo.js?v=61"></script>
-<script src="pdf.js?v=61"></script>
-<script src="app.js?v=61"></script>
+<script src="config.js?v=62"></script>
+<script src="jspdf.umd.min.js?v=62"></script>
+<script src="police.js?v=62"></script>
+<script src="logo.js?v=62"></script>
+<script src="pdf.js?v=62"></script>
+<script src="app.js?v=62"></script>
 </body>
 </html>
