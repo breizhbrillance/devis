@@ -299,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v63';
+var VERSION_APP = 'v64';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -484,6 +484,9 @@ function majOnglets(){
   var ou = ici ? ONGLET_ECRAN[ECRAN_VU] : '';
   b.classList.toggle('hide', !ici);
   document.body.classList.toggle('avecOnglets', ici);
+  /* Sa hauteur dépend du dégagement du bas, qui varie d'un téléphone à
+     l'autre : on la mesure une fois posée plutôt que de l'écrire en dur. */
+  if(ici) document.documentElement.style.setProperty('--hOngl', b.offsetHeight + 'px');
   $('ongD').classList.toggle('on', ou === 'devis');
   $('ongL').classList.toggle('on', ou === 'liste');
   $('ongP').classList.toggle('on', ou === 'phoning');
