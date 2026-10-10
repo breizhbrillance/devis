@@ -94,6 +94,23 @@
        padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px;z-index:30}
   .bar .tt{flex:1;display:flex;flex-direction:column;justify-content:center;line-height:1.25}
   .bar .tt b{font-size:17px}.bar .tt span{font-size:11px;color:var(--mut)}
+  /* Les trois lieux du commercial. La barre est fixée au bas de l'écran et ne
+     suit pas le parcours d'un devis : pendant la saisie, seul « Continuer »
+     a sa place en bas. */
+  .ongl{position:fixed;left:0;right:0;bottom:0;z-index:31;display:flex;
+        background:#fff;border-top:1px solid var(--line);
+        padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+  .ongl button{flex:1;border:0;background:transparent;padding:4px 2px;cursor:pointer;
+        display:flex;flex-direction:column;align-items:center;gap:3px;
+        font-family:inherit;font-size:11px;font-weight:600;line-height:1.1;
+        color:var(--mut);-webkit-tap-highlight-color:transparent}
+  .ongl button svg{width:22px;height:22px;fill:none;stroke:currentColor;
+        stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .ongl button.on{color:var(--acc)}
+  /* Le contenu ne doit pas finir sous la barre, et « Continuer » se pose
+     au-dessus d'elle plutôt que derrière. */
+  body.avecOnglets{padding-bottom:180px}
+  body.avecOnglets .bar{bottom:calc(58px + env(safe-area-inset-bottom))}
   .x{background:none;color:var(--danger);font-size:13.5px;padding:9px 10px;min-height:38px;
      border-radius:8px;flex:0 0 auto}
   .x:active{background:#FBE9E9}
@@ -745,9 +762,9 @@
     </div>
     <button class="btn" onclick="nouveauDevis()">Nouveau devis</button>
     <!-- La prospection téléphonique vit à côté des devis, pas dedans : c'est le
-         même commercial, le même téléphone, mais pas le même moment. -->
-    <button class="btn sec hide" id="bPhoning" style="margin-top:10px"
-            onclick="ouvrirPhoning()">Phoning</button>
+         même commercial, le même téléphone, mais pas le même moment. Elle
+         s'atteint par la barre d'onglets du bas depuis la v63 ; le bouton qui
+         fermait cette liste faisait double emploi. -->
     <div class="mini" style="text-align:center;margin-top:14px">
       Catalogue mis à jour le <span id="majCat">—</span> ·
       <a href="#" onclick="rafraichirConfig();return false;">actualiser</a><br>
@@ -840,6 +857,26 @@
   <div class="tt" id="bTT"><b id="bTot">0,00 €</b><span id="bTotL">TTC</span></div>
   <button class="btn" style="flex:1.2" id="bSuiv" onclick="suivant()">Continuer</button>
 </div>
+
+<!-- LES TROIS LIEUX — le devis en cours, les devis faits, la prospection.
+     Le phoning n'est plus au bout de la liste des devis : c'est un lieu, à un
+     appui depuis n'importe lequel des deux autres. La barre n'apparaît que
+     pour qui a la prospection, et jamais pendant la saisie ni pendant la
+     modification d'un devis, où l'on ne doit pas partir par mégarde. -->
+<nav class="ongl hide" id="ongl">
+  <button id="ongD" onclick="ongletDevis()">
+    <svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4"/><path d="M9 13h6M9 17h4"/></svg>
+    <span>Devis</span>
+  </button>
+  <button id="ongL" onclick="ouvrirHistorique()">
+    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    <span>Mes devis</span>
+  </button>
+  <button id="ongP" onclick="ouvrirPhoning()">
+    <svg viewBox="0 0 24 24"><path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5z"/></svg>
+    <span>Phoning</span>
+  </button>
+</nav>
 
 <!-- SIGNATURE PLEIN ÉCRAN -->
 <!-- Le devis à l'écran, dans l'application : rien à télécharger pour le
@@ -1028,11 +1065,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=62"></script>
-<script src="jspdf.umd.min.js?v=62"></script>
-<script src="police.js?v=62"></script>
-<script src="logo.js?v=62"></script>
-<script src="pdf.js?v=62"></script>
-<script src="app.js?v=62"></script>
+<script src="config.js?v=63"></script>
+<script src="jspdf.umd.min.js?v=63"></script>
+<script src="police.js?v=63"></script>
+<script src="logo.js?v=63"></script>
+<script src="pdf.js?v=63"></script>
+<script src="app.js?v=63"></script>
 </body>
 </html>

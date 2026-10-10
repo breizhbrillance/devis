@@ -299,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v62';
+var VERSION_APP = 'v63';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -454,15 +454,51 @@ function repondreConf(oui){
 
 /* ====================== NAVIGATION ====================== */
 var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','ePro','eAg1','eAg2','eAd1','eAd2'];
+var ECRAN_VU = '';
+/* Les trois lieux de la barre du bas, et l'onglet qui s'allume sur chacun. */
+var ONGLET_ECRAN = { e1:'devis', e6:'liste', ePro:'phoning' };
+/* Où en était le devis en cours quand on l'a quitté pour les devis faits ou
+   pour le phoning : l'onglet « Devis » y ramène au lieu de tout reprendre. */
+var ETAPE_DEVIS = 1;
 function montrer(id){
+  ECRAN_VU = id;
   ECRANS.forEach(function(k){ $(k).classList.toggle('hide', k!==id); });
   // La couleur suit le métier, pas l'écran : on la pose ici, seul endroit par
   // lequel passent tous les changements d'écran.
   try{ document.body.classList.toggle('admin', estAdmin()); }catch(e){}
+  majOnglets();
+}
+
+/* La barre n'a de sens que pour le commercial qui prospecte : sans la
+   prospection il ne reste que deux lieux, déjà atteignables par l'en-tête.
+   Pendant la modification d'un devis elle disparaît aussi — on ne quitte pas
+   une correction en cours d'un appui distrait. */
+function ongletsIci(){
+  if(!(CFG && CFG.prospection)) return false;
+  if(enModification()) return false;
+  return !!ONGLET_ECRAN[ECRAN_VU];
+}
+function majOnglets(){
+  var b = $('ongl'); if(!b) return;
+  var ici = ongletsIci();
+  var ou = ici ? ONGLET_ECRAN[ECRAN_VU] : '';
+  b.classList.toggle('hide', !ici);
+  document.body.classList.toggle('avecOnglets', ici);
+  $('ongD').classList.toggle('on', ou === 'devis');
+  $('ongL').classList.toggle('on', ou === 'liste');
+  $('ongP').classList.toggle('on', ou === 'phoning');
+}
+/* L'onglet « Devis » reprend le devis en cours là où il en était ; il n'en
+   commence pas un neuf, qui effacerait la saisie entamée. */
+function ongletDevis(){
+  etape(ETAPE_DEVIS >= 1 && ETAPE_DEVIS <= 4 ? ETAPE_DEVIS : 1);
 }
 /* La barre du bas ne garde que le bouton Retour sur les écrans hors parcours :
    « Mes devis » et les photos ne doivent jamais être une impasse. */
 function barreRetour(){
+  /* Là où la barre d'onglets est posée, « Retour » ne dit plus rien : les
+     trois lieux sont côte à côte, on ne revient pas, on change d'onglet. */
+  if(ongletsIci()){ $('bar').classList.add('hide'); return; }
   $('bar').classList.remove('hide');
   $('bPrec').classList.remove('hide');
   $('bTT').classList.add('hide');
@@ -491,6 +527,7 @@ function revenir(){
 
 function montrerTermine(){
   ETAPE = 5;
+  ETAPE_DEVIS = 1;              // le devis est fait : l'onglet n'y ramène plus
   montrer('e5');
   $('steps').classList.add('hide');
   if(TERMINE_RETOUR === 6) barreRetour(); else $('bar').classList.add('hide');
@@ -689,6 +726,7 @@ function barreVisible(){
 function etape(n){
   if(n<1) n=1;
   ETAPE=n; erreur('');
+  if(n>=1 && n<=4) ETAPE_DEVIS = n;
   montrer('e'+n);
   barreComplete();
   [1,2,3,4].forEach(function(i){ $('s'+i).classList.toggle('on', i<=n); });
@@ -3363,10 +3401,6 @@ function ouvrirHistorique(){
   var moi = session();
   $('quiSuisJe').textContent = (moi && moi.nom) || '—';
   var m=$('majCat'); if(m && CFG && CFG.maj) m.textContent = new Date(CFG.maj).toLocaleDateString('fr-FR');
-  /* Le phoning n'apparaît que si le bureau l'a ouvert (réglage
-     prospection_active). Une configuration d'avant la v56 ne le connaît pas :
-     le bouton reste caché jusqu'au prochain rafraîchissement. */
-  $('bPhoning').classList.toggle('hide', !(CFG && CFG.prospection));
   rendreHistorique(); window.scrollTo(0,0);
 }
 function rendreHistorique(){
@@ -4352,6 +4386,7 @@ function nouveauDevis(){
   TYPE = null; PLUS2ANS = null; TAUX = null;
   ORIGINE = 'PROSPECTION'; LIEU = 'CLIENT'; majOrigine();
   TERMINE_RETOUR = 0; V_TYPE = ''; V_MOTIF = '';
+  ETAPE_DEVIS = 1;
   MODIF = null; majBandeauModif();
   $('steps').classList.remove('hide');
   etape(1);
