@@ -43,9 +43,16 @@ await client();
 /* ---------- 1. ce qu'on voit en arrivant ---------- */
 T('on arrive sur les prestations', await p.isVisible('#e3'));
 T('les trois catégories sont là',
-  (await p.$$('#lignes .grp')).length === 3, (await p.$$('#lignes .grp')).length);
+  (await p.$$('#lignes .grp:not(.lib)')).length === 3,
+  (await p.$$('#lignes .grp:not(.lib)')).length);
 T('toutes fermées au départ',
-  await p.evaluate(()=>[...document.querySelectorAll('#lignes .grp')].every(g=>!g.classList.contains('on'))));
+  await p.evaluate(()=>[...document.querySelectorAll('#lignes .grp:not(.lib)')]
+    .every(g=>!g.classList.contains('on'))));
+/* Le bloc de la ligne libre, lui, reste ouvert : il n'a rien à replier, et le
+   commercial doit le voir en arrivant au bout du catalogue. */
+T('le bloc de la ligne libre est à part, et ouvert',
+  await p.evaluate(()=>{ const g=document.querySelector('#lignes .grp.lib');
+    return !!g && g.classList.contains('on'); }));
 T('aucune prestation visible tant que rien n\'est ouvert',
   await p.evaluate(()=>[...document.querySelectorAll('#lignes .pres')]
     .every(e=>e.getBoundingClientRect().height === 0)));

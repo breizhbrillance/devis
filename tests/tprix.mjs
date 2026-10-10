@@ -1,5 +1,6 @@
-/* Le commercial ne choisit plus les prix : ce que l'écran laisse faire,
-   et ce qu'il ne laisse plus faire. */
+/* Le commercial ne choisit pas les prix du catalogue : ce que l'écran laisse
+   faire, et ce qu'il ne laisse pas faire. La ligne libre est la seule porte,
+   elle est à part et elle est signalée — voir tlibre.mjs. */
 import {chromium} from 'playwright';
 import {lancer, recu} from './srvco.mjs';
 import {ajouterUne, poserQte, cocher, ouvrirBloc, allerRemise} from './presta.mjs';
@@ -29,17 +30,23 @@ await p.click('#bSuiv'); await p.waitForTimeout(500);
 T('on arrive à l\'écran des prestations', await p.isVisible('#e3'));
 
 /* ---------- 1. rien ne s'invente sur cet écran ---------- */
-const boutons3 = await p.evaluate(()=>[...document.querySelectorAll('#e3 button')].map(b=>b.textContent.trim()));
-T('plus de bouton « Ligne libre »',
-  !boutons3.some(x=>/ligne libre/i.test(x)), boutons3);
-T('ajouterLibre n\'existe plus',
-  await p.evaluate(()=>typeof ajouterLibre === 'undefined'));
 T('plus de fenêtre de catalogue à ouvrir',
   await p.evaluate(()=>typeof ouvrirCatalogue === 'undefined'));
 T('le catalogue est affiché en entier',
-  (await p.$$('#lignes .grp')).length === 3, (await p.$$('#lignes .grp')).length);
+  (await p.$$('#lignes .grp:not(.lib)')).length === 3,
+  (await p.$$('#lignes .grp:not(.lib)')).length);
 T('chaque prestation du classeur a sa ligne',
   (await p.$$('#lignes .pres')).length === 3, (await p.$$('#lignes .pres')).length);
+/* La ligne libre existe, mais elle est à part : elle ne se glisse pas au
+   milieu du catalogue, et aucun prix du catalogue ne devient saisissable. */
+T('le bloc « Ligne libre » est le dernier de la liste',
+  await p.evaluate(()=>{
+    const g=[...document.querySelectorAll('#lignes .grp')];
+    return g.length>0 && g[g.length-1].classList.contains('lib');
+  }));
+T('aucun champ de prix dans les blocs du catalogue',
+  await p.evaluate(()=>[...document.querySelectorAll('#lignes .grp:not(.lib) input')]
+    .every(e=>e.classList.contains('q'))));
 
 /* ---------- 2. une quantité posée fait la ligne ---------- */
 await ajouterUne(p, 0);
@@ -91,6 +98,13 @@ await poserQte(p, 0, 100);
 /* ---------- 6. par la porte de derrière ---------- */
 T('poser refuse une prestation inconnue du catalogue',
   await p.evaluate(()=>{ const n=LIGNES.length; poser('R:INVENTEE', 3); return LIGNES.length===n; }));
+T('une ligne libre ne peut pas se faire passer pour une prestation du catalogue',
+  await p.evaluate(()=>{
+    const l = ajouterLigneLibre();
+    const imposteur = (l.reference === 'R:REF-0001') || !estLigneLibre(l);
+    LIGNES.splice(LIGNES.indexOf(l), 1);
+    return !imposteur;
+  }));
 
 /* ---------- 7. le plafond de remise tient ---------- */
 await allerRemise(p);

@@ -108,6 +108,45 @@ r = g.controlerTarifs_({lignes:[
   {reference:'', designation:'Prestation inventée', qte:1, pu:500, rem:0}]}, regN);
 T('prestation inconnue : signalée comme hors catalogue', /hors catalogue/.test(r), r);
 
+/* ---------- 10 bis. la ligne libre : attendue, pas refusée ---------- */
+r = g.controlerTarifs_({lignes:[
+  {reference:'LIBRE-1', designation:'Débarras de la cave', qte:3, unite:'heure', pu:45, rem:0}]}, regN);
+T('une ligne libre n\'est pas traitée en « hors catalogue »', !/hors catalogue/.test(r), r);
+T('elle est signalée nommément au bureau', /ligne libre/.test(r) && /Débarras de la cave/.test(r), r);
+T('avec son prix et son montant', /45 €/.test(r) && /135 €/.test(r), r);
+T('et le devis n\'est pas refusé pour autant : c\'est un signalement',
+  r.indexOf('À VÉRIFIER') === 0, r);
+r = g.controlerTarifs_({lignes:[
+  {reference:'LIBRE-1', designation:'Débarras', qte:1, pu:100, rem:50}]}, regN);
+T('le plafond de remise s\'applique quand même à une ligne libre',
+  /remise 50 %/.test(r), r);
+/* La référence réservée se lit au début, pas n'importe où : sinon une
+   référence inventée qui la contient ouvrirait la même porte sans le dire. */
+r = g.controlerTarifs_({lignes:[
+  {reference:'X-LIBRE-1', designation:'Prestation inventée', qte:1, pu:900, rem:0}]}, regN);
+T('une référence qui contient le préfixe sans commencer par lui reste hors catalogue',
+  /hors catalogue/.test(r) && !/ligne libre/.test(r), r);
+/* L'assiette de la majoration d'état des lieux ignore la ligne libre : son
+   prix a été décidé sur place. Les deux côtés doivent compter pareil. */
+creer('REGLAGES',[['CLE','VALEUR','NOTE'],['societe_nom','BB',''],
+                  ['remise_max','10',''],['majoration_tres_sale','20','']]);
+const regMaj = g.lireReglages_();
+r = g.controlerTarifs_({nature:'CHANTIER', lignes:[
+  {reference:refVitrerie, designation:'Vitrerie extérieure', qte:100, pu:3, rem:0},
+  {reference:'LIBRE-1', designation:'Débarras', qte:1, pu:500, rem:0},
+  {reference:'MAJ-ETAT', designation:'Majoration pour état des lieux (+20 %)',
+   qte:1, pu:60, rem:0}]}, regMaj);
+T('la majoration se calcule sur le catalogue seul, pas sur la ligne libre',
+  !/majoration de/.test(r), r);
+r = g.controlerTarifs_({nature:'CHANTIER', lignes:[
+  {reference:refVitrerie, designation:'Vitrerie extérieure', qte:100, pu:3, rem:0},
+  {reference:'LIBRE-1', designation:'Débarras', qte:1, pu:500, rem:0},
+  {reference:'MAJ-ETAT', designation:'Majoration pour état des lieux (+20 %)',
+   qte:1, pu:160, rem:0}]}, regMaj);
+T('une majoration gonflée de la ligne libre est donc bien vue',
+  /majoration de 160/.test(r), r);
+creer('REGLAGES',[['CLE','VALEUR','NOTE'],['societe_nom','BB',''],['remise_max','10','']]);
+
 /* ---------- 11. vieille ligne sans référence mais au bon nom ---------- */
 r = g.controlerTarifs_({lignes:[
   {reference:'', designation:'Vitrerie extérieure', qte:50, pu:3, rem:0}]}, regN);

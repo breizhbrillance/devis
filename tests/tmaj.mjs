@@ -118,11 +118,11 @@ T('la mise à jour de structure l\'ajoute à un classeur qui ne l\'a pas, et n\'
   lire('REGLAGES').some(l => l[0] === 'majoration_tres_sale' && String(l[1]) === '30'), lire('REGLAGES').map(l=>l[0]));
 
 const G = g.CATALOGUE_DEFAUT_;
-T('la grille par défaut compte 35 prestations', G.length === 35, G.length);
+T('la grille par défaut compte 38 prestations', G.length === 38, G.length);
 T('de dix colonnes chacune', G.every(l => l.length === 10), G.filter(l => l.length !== 10));
 const refs = G.map(l => l[8]);
-T('aux références uniques, de REF-0001 à REF-0035',
-  new Set(refs).size === 35 && refs.slice().sort().join() === Array.from({length:35},(_, i)=>'REF-00'+('0'+(i+1)).slice(-2)).join(), refs);
+T('aux références uniques, de REF-0001 à REF-0038',
+  new Set(refs).size === 38 && refs.slice().sort().join() === Array.from({length:38},(_, i)=>'REF-00'+('0'+(i+1)).slice(-2)).join(), refs);
 /* Les six dernières sont celles de la vitrerie (v53), reprises du modèle
    duplicable « Devis nettoyage vitrages et menuiseries ». */
 const vit = G.filter(l => l[9] === 'VITRERIE');
@@ -133,6 +133,28 @@ T('toutes rangées sous « Vitrages et menuiseries »',
 T('la mise en place est un forfait à 10 €, le tout compris à 55 €',
   G.find(l => l[8] === 'REF-0030')[4] === 10 && G.find(l => l[8] === 'REF-0035')[4] === 55,
   vit.map(l => l[4]));
+/* Les trois dernières sont celles de la façade (v60), reprises du devis type
+   que Simon a relevé : nettoyage et antimousse au mètre carré, nacelle à la
+   journée. Les 108 m² du devis type donnent 1 609,20 + 421,20 + 450 = 2 480,40 €. */
+const fac = G.filter(l => l[9] === 'FACADE');
+T('trois prestations de façade, et elles seules portent cette nature',
+  fac.length === 3 && fac.every(l => l[8] >= 'REF-0036'), fac.map(l => l[8]));
+T('toutes rangées sous « Nettoyage de façade »',
+  fac.every(l => l[0] === 'Nettoyage de façade'), fac.map(l => l[0]));
+T('le nettoyage est à 14,90 € le m², l\'antimousse à 3,90 €',
+  G.find(l => l[8] === 'REF-0036')[4] === 14.90 && G.find(l => l[8] === 'REF-0037')[4] === 3.90 &&
+  G.find(l => l[8] === 'REF-0036')[3] === 'm²' && G.find(l => l[8] === 'REF-0037')[3] === 'm²',
+  fac.map(l => [l[3], l[4]]));
+T('la nacelle est un forfait à la journée, 450 €',
+  G.find(l => l[8] === 'REF-0038')[4] === 450 && /journ/.test(G.find(l => l[8] === 'REF-0038')[3]),
+  G.find(l => l[8] === 'REF-0038'));
+T('les 108 m² du devis type font bien 2 480,40 € HT',
+  Math.round((108 * 14.90 + 108 * 3.90 + 450) * 100) / 100 === 2480.40);
+T('la TVA de repli de la façade est à 10 %, comme un logement de plus de deux ans',
+  fac.every(l => l[5] === 10), fac.map(l => l[5]));
+T('et le nettoyage porte le détail des cinq étapes',
+  (G.find(l => l[8] === 'REF-0036')[2].match(/\u2022/g) || []).length === 4,
+  G.find(l => l[8] === 'REF-0036')[2]);
 T('aucune prestation ne se vend plus dans les trois natures', G.every(l => String(l[9]).trim() !== ''), G.filter(l=>!l[9]));
 const ent = G.filter(l => l[9] === 'ENTRETIEN');
 T('quatorze tâches d\'entretien, toutes à cocher', ent.length === 14 && ent.every(l => l[3] === 'forfait'), ent.length);
