@@ -292,7 +292,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v60';
+var VERSION_APP = 'v61';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4184,6 +4184,9 @@ var PR = {
   liste: [],          // les prospects tels que le bureau les connaît
   file: [],           // les résultats pas encore partis
   hist: {},           // les tentatives faites sur CET appareil, pour la fiche
+  journal: [],        // ce que le bureau a gardé de mes appels, tous appareils
+  journalMaj: '',     // quand le bureau a servi ce journal
+  journalComplet: true,
   maj: '',            // horodatage du dernier chargement, pour ne demander que les changements
   relance: 3,         // heures avant de retenter un prospect qui n'a pas répondu
   courant: null,      // fiche ouverte depuis la liste, hors file
@@ -4221,6 +4224,8 @@ function prCharger(){
   PR.liste = lsj('pr.liste') || [];
   PR.file = lsj('pr.file') || [];
   PR.hist = lsj('pr.hist') || {};
+  PR.journal = lsj('pr.journal') || [];
+  PR.journalMaj = ls('pr.journalmaj') || '';
   PR.maj = ls('pr.maj') || '';
   PR.relance = Number(ls('pr.relance')) || 3;
   PR.ville = ls('pr.ville') || '';
@@ -4232,6 +4237,8 @@ function prRanger(){
   lsj('pr.liste', PR.liste);
   lsj('pr.file', PR.file);
   lsj('pr.hist', PR.hist);
+  lsj('pr.journal', PR.journal);
+  ls('pr.journalmaj', PR.journalMaj);
   ls('pr.maj', PR.maj);
 }
 
@@ -4358,11 +4365,14 @@ function prOnglet(n){
   PR.onglet = n;
   $('prVueAppels').classList.toggle('hide', n !== 'appels');
   $('prVueListe').classList.toggle('hide', n !== 'liste');
+  $('prVueJournal').classList.toggle('hide', n !== 'journal');
   $('prVueReglages').classList.toggle('hide', n !== 'reglages');
   $('prOngA').classList.toggle('on', n === 'appels');
   $('prOngL').classList.toggle('on', n === 'liste');
+  $('prOngJ').classList.toggle('on', n === 'journal');
   $('prOngR').classList.toggle('on', n === 'reglages');
   if(n === 'liste') prRendreListe();
+  if(n === 'journal'){ prRendreJournal(); prChargerJournal(); }
   if(n === 'reglages') prRendreSource();
 }
 function prSetVille(v){ PR.ville = v; ls('pr.ville', v); PR.courant = null; prRendre(true); }
@@ -4377,6 +4387,7 @@ function prRendre(force){
   prRendreVilles();
   prRendreFiche(f);
   if(PR.onglet === 'liste') prRendreListe();
+  if(PR.onglet === 'journal') prRendreJournal();
   if(force) prRanger();
 }
 
@@ -4615,7 +4626,7 @@ function prResultatFinal(code){
            rappel: code === 'rappel' ? PR.rappelLe : ''};
   PR.annuler = {id:p.id, file:PR.file.slice(0), hist:(PR.hist[p.id]||[]).slice(0)};
   PR.file.push(a);
-  PR.hist[p.id] = (PR.hist[p.id] || []).concat([{t:a.t, r:code}]).slice(-20);
+  PR.hist[p.id] = (PR.hist[p.id] || []).concat([{t:a.t, r:code, n:note}]).slice(-20);
   delete PR.brouillons[p.id];
   PR.courant = null;
   PR.rappelOuvert = false;
@@ -4714,6 +4725,175 @@ function prRendreSource(){
     : 'Aucune liste chargée.';
 }
 
+/* ---------------------- l'onglet Journal ----------------------
+   Ce que le commercial a fait, groupé par jour. Trois sources se superposent,
+   de la moins sûre à la plus sûre :
+
+   — ce qui attend d'être envoyé (PR.file), pour que l'appel qu'on vient de
+     noter apparaisse même sans réseau ;
+   — ce que cet appareil a gardé (PR.hist), qui survit à l'envoi ;
+   — ce que le bureau renvoie (PR.journal), qui porte aussi ce qui a été fait
+     depuis un autre téléphone, et qui l'emporte quand les deux se croisent.
+
+   La clé de fusion est celle que le classeur emploie lui-même pour refuser un
+   lot renvoyé deux fois : l'identifiant du prospect et l'horodatage à la
+   seconde. Le classeur arrondit à la seconde en écrivant, on arrondit pareil
+   en relisant, sinon le même appel compterait deux fois. */
+
+function prCleAppel(id, t){
+  var d = new Date(t);
+  return id + '|' + (isNaN(d.getTime()) ? String(t) : Math.floor(d.getTime()/1000));
+}
+
+/* Le journal, du plus récent au plus ancien. Chaque entrée porte de quoi
+   s'afficher seule : le bureau donne la société, l'appareil ne connaît que
+   l'identifiant et va la chercher dans la liste — et ne la trouve pas toujours,
+   si le prospect a quitté la liste depuis. */
+function prJournal(){
+  var vus = {}, out = [];
+  var poser = function(e){
+    var c = prCleAppel(e.id, e.t);
+    if(vus[c] != null){
+      // déjà là : on ne garde que ce qui manquait à l'autre source
+      var d = out[vus[c]];
+      if(!d.societe && e.societe) d.societe = e.societe;
+      if(!d.commune && e.commune) d.commune = e.commune;
+      if(!d.note && e.note) d.note = e.note;
+      if(!d.rappel && e.rappel) d.rappel = e.rappel;
+      if(e.envoye === false) d.envoye = false;
+      return;
+    }
+    vus[c] = out.length;
+    out.push(e);
+  };
+
+  PR.journal.forEach(function(a){
+    poser({t:a.t, id:a.id, resultat:a.resultat, note:a.note || '',
+           rappel:a.rappel || '', societe:a.societe || '', commune:a.commune || '',
+           envoye:true});
+  });
+  Object.keys(PR.hist).forEach(function(id){
+    (PR.hist[id] || []).forEach(function(h){
+      var p = prParId(id);
+      poser({t:h.t, id:id, resultat:h.r, note:h.n || '', rappel:'',
+             societe:p ? p.nom : '', commune:p ? p.ville : '', envoye:true});
+    });
+  });
+  PR.file.forEach(function(a){
+    var p = prParId(a.id);
+    poser({t:a.t, id:a.id, resultat:a.resultat, note:a.note || '',
+           rappel:a.rappel || '', societe:p ? p.nom : '', commune:p ? p.ville : '',
+           envoye:false});
+  });
+
+  out.sort(function(a, b){ return (new Date(b.t)) - (new Date(a.t)); });
+  /* Un téléphone ne peint pas des milliers de lignes, et personne ne remonte
+     si loin : au-delà, l'écran le dit plutôt que de ramer. */
+  out.tronque = out.length > PR_JOURNAL_MAX;
+  return out.tronque ? out.slice(0, PR_JOURNAL_MAX) : out;
+}
+var PR_JOURNAL_MAX = 400;
+
+/* Le titre d'un groupe : le jour tel qu'on le dit, pas tel qu'on l'écrit. */
+function prJourTitre(d){
+  var auj = new Date(); auj.setHours(0,0,0,0);
+  var j = new Date(d); j.setHours(0,0,0,0);
+  var ecart = Math.round((auj - j) / 86400000);
+  if(ecart === 0) return 'Aujourd\'hui';
+  if(ecart === 1) return 'Hier';
+  var t = j.toLocaleDateString('fr-FR', {weekday:'long', day:'numeric', month:'long'});
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+function prRendreJournal(){
+  var b = $('prJournal');
+  if(!b) return;
+  var tout = prJournal();
+  var tronque = !!tout.tronque;
+  if(!tout.length){
+    b.innerHTML = '<div class="empty">Aucun appel pour l\'instant.<br>' +
+      'Ce que tu notes dans l\'onglet Appels apparaîtra ici, jour par jour.</div>';
+    $('prJEtat').textContent = '';
+    return;
+  }
+
+  /* Un groupe par jour, dans l'ordre où les appels arrivent — ils sont déjà
+     triés, il suffit de couper quand le jour change. */
+  var h = '', jour = '', ouvert = false;
+  tout.forEach(function(e){
+    var d = new Date(e.t);
+    var titre = prJourTitre(d);
+    if(titre !== jour){
+      if(ouvert) h += '</div>';
+      jour = titre;
+      var n = tout.filter(function(x){ return prJourTitre(new Date(x.t)) === titre; }).length;
+      h += '<div class="prJJour"><span>' + ech(titre) + '</span>' +
+           '<span>' + n + ' appel' + (n > 1 ? 's' : '') + '</span></div><div>';
+      ouvert = true;
+    }
+    var r = PR_RES[e.resultat] || {l:e.resultat, c:''};
+    var p = prParId(e.id);
+    var nom = e.societe || (p ? p.nom : '') || 'Prospect retiré de la liste';
+    var heure = new Date(e.t).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+    var sous = [heure, e.commune || (p ? p.ville : '')].filter(function(x){ return x; }).join(' · ');
+    if(e.note) sous += ' · ' + e.note.slice(0, 60);
+    if(!e.envoye) sous += ' · à envoyer';
+    /* Sans fiche à rouvrir, la ligne n'est pas un bouton : rien ne doit
+       suggérer un appui qui ne mènerait nulle part. */
+    h += p
+      ? '<button class="prLigne" onclick="prOuvrirFiche(\'' + ech(e.id) + '\')">' +
+        '<span><b>' + ech(nom) + '</b><span>' + ech(sous) + '</span></span>' +
+        '<span class="prEtiq ' + r.c + '">' + ech(r.l) + '</span></button>'
+      : '<div class="prLigne prLigneMorte">' +
+        '<span><b>' + ech(nom) + '</b><span>' + ech(sous) + '</span></span>' +
+        '<span class="prEtiq ' + r.c + '">' + ech(r.l) + '</span></div>';
+  });
+  if(ouvert) h += '</div>';
+  b.innerHTML = h;
+
+  var e = $('prJEtat');
+  if(e){
+    e.textContent = tout.length + ' appel' + (tout.length > 1 ? 's' : '') +
+      (tronque || !PR.journalComplet ? ' (les plus récents)' : '') +
+      (PR.journalMaj ? ' · bureau relu ' + prQuandTexte(PR.journalMaj) : '') +
+      (PR.journalMaj ? '' : ' · depuis ce téléphone seulement');
+  }
+}
+
+/* Le bureau est interrogé à l'ouverture de l'onglet, jamais de façon
+   bloquante : hors connexion, ce que l'appareil a gardé s'affiche déjà, et la
+   demande échouera sans rien effacer. */
+var PR_JOURNAL_EN_COURS = false;
+function prChargerJournal(btn){
+  var moi = session();
+  if(!moi || !navigator.onLine){
+    if(btn){ libere(btn); etatReseau(null, 'Hors connexion : le journal de ce téléphone reste affiché.', 'off'); }
+    return Promise.resolve();
+  }
+  if(PR_JOURNAL_EN_COURS) return Promise.resolve();
+  PR_JOURNAL_EN_COURS = true;
+  if(btn) occuper(btn, 'Chargement…');
+  return poster({action:'historique', nom:moi.nom, code:moi.code}, 30000)
+    .then(function(r){
+      if(!r || !r.ok) throw new Error((r && r.erreur) || 'refus');
+      PR.journal = r.appels || [];
+      PR.journalComplet = r.complet !== false;
+      PR.journalMaj = new Date().toISOString();
+      prRanger();
+      if(PR.onglet === 'journal') prRendreJournal();
+    })
+    /* Un .catch() après, et non le second argument du .then() : celui-ci ne
+       rattrape pas ce que le premier a levé, et le refus du bureau finirait
+       en promesse rejetée dans la console du commercial. */
+    .catch(function(){
+      if(btn) etatReseau(null, 'Le journal n\'a pas pu être relu. Réessaie.', 'err');
+    })
+    .then(function(){
+      PR_JOURNAL_EN_COURS = false;
+      if(btn) libere(btn);
+    });
+}
+
 /* ---------------------- échanges avec le bureau ---------------------- */
 
 function prRecharger(btn){
@@ -4728,7 +4908,6 @@ function prRecharger(btn){
   return prPousser().then(function(){
     return poster({action:'prospects', nom:moi.nom, code:moi.code, depuis:PR.maj}, 40000);
   }).then(function(r){
-    if(btn) libere(btn);
     if(!r || !r.ok) throw new Error((r && r.erreur) || 'refus');
     if(r.relanceHeures) { PR.relance = r.relanceHeures; ls('pr.relance', String(PR.relance)); }
     prFusionner(r.prospects || [], !!r.complet);
@@ -4737,8 +4916,10 @@ function prRecharger(btn){
     prRanger();
     prRendre();
     prRendreSource();
-  }, function(){
-    if(btn){ libere(btn); etatReseau(null, 'La liste n\'a pas pu être chargée. Réessaie.', 'err'); }
+  }).catch(function(){
+    if(btn) etatReseau(null, 'La liste n\'a pas pu être chargée. Réessaie.', 'err');
+  }).then(function(){
+    if(btn) libere(btn);
   });
 }
 

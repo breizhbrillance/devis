@@ -297,6 +297,12 @@
   .prOng button{flex:1;border:0;background:transparent;padding:9px 6px;border-radius:999px;
                 font-weight:600;color:var(--mut);font-size:14px;min-width:0}
   .prOng button.on{background:#fff;color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .prJTete{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .prJMaj{width:auto;margin:0;padding:7px 14px;font-size:13.5px}
+  .prJJour{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+           margin:16px 0 6px;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;
+           color:var(--mut);font-weight:600;border-bottom:1px solid var(--line);padding-bottom:4px}
+  .prLigneMorte{opacity:.6;cursor:default}
   .prStat{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13px;color:var(--mut);margin-bottom:12px}
   .prStat b{color:var(--txt);font-variant-numeric:tabular-nums}
   .prFiltres{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
@@ -743,6 +749,7 @@
     <div class="prOng">
       <button id="prOngA" class="on" onclick="prOnglet('appels')">Appels <span id="prNb"></span></button>
       <button id="prOngL" onclick="prOnglet('liste')">Liste</button>
+      <button id="prOngJ" onclick="prOnglet('journal')">Journal</button>
       <button id="prOngR" onclick="prOnglet('reglages')">Réglages</button>
     </div>
 
@@ -762,6 +769,20 @@
                oninput="prRendreListe()" autocomplete="off">
         <div class="prQuand" id="prFiltreStatut"></div>
         <div id="prListe"></div>
+      </div>
+    </div>
+
+    <!-- Ce que le commercial a fait, jour par jour. Ce que l'appareil a gardé
+         s'affiche tout de suite ; le bureau complète dès qu'il y a du réseau,
+         et c'est lui qui porte ce qui a été fait depuis un autre téléphone. -->
+    <div id="prVueJournal" class="hide">
+      <div class="card">
+        <div class="prJTete">
+          <h2 style="margin:0">Mes appels</h2>
+          <button class="btn sec prJMaj" onclick="prChargerJournal(this)">Relire</button>
+        </div>
+        <div class="mini" id="prJEtat"></div>
+        <div id="prJournal"></div>
       </div>
     </div>
 
@@ -992,11 +1013,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=60"></script>
-<script src="jspdf.umd.min.js?v=60"></script>
-<script src="police.js?v=60"></script>
-<script src="logo.js?v=60"></script>
-<script src="pdf.js?v=60"></script>
-<script src="app.js?v=60"></script>
+<script src="config.js?v=61"></script>
+<script src="jspdf.umd.min.js?v=61"></script>
+<script src="police.js?v=61"></script>
+<script src="logo.js?v=61"></script>
+<script src="pdf.js?v=61"></script>
+<script src="app.js?v=61"></script>
 </body>
 </html>
