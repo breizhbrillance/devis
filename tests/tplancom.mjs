@@ -146,7 +146,22 @@ T('une fiche de prestataire désactivée ne lui ouvre pas de planning',
 r = rep(g, { action: 'planning', nom: 'SIMON LG', code: 'ab1!' });
 T('et l\'action lui est refusée', r.ok === false, r);
 
-/* ---------- 8. l'homonymie, écrite autrement ---------- */
+/* ---------- 8. une fiche sans code n'ouvre rien ---------- */
+/* Un commercial qui pose des chantiers n'a pas besoin d'un second code : il
+   entre par sa fiche de commercial. Sa ligne de prestataire reste donc sans
+   code — et une ligne sans code ne doit laisser entrer personne. */
+g = poser([MAXIME, Object.assign({}, SIMON_PRESTA, { NOM: 'PAUL SANS CODE', CODE: '' })]);
+r = rep(g, { action: 'connexion', nom: 'PAUL SANS CODE', code: '' });
+T('une fiche sans code n\'ouvre pas le compte, même avec un code vide',
+  r.ok === false && r.refus === true, r);
+r = rep(g, { action: 'connexion', nom: 'PAUL SANS CODE', code: 'nimporte' });
+T('ni avec n\'importe quel code', r.ok === false && r.refus === true, r);
+T('et le refus est le même que pour un nom inconnu',
+  /Nom ou code incorrect/.test(String(r.erreur)), r.erreur);
+r = rep(g, { action: 'connexion', nom: 'MAXIME', code: 'kw7!' });
+T('les fiches qui ont un code s\'ouvrent toujours', r.ok === true, r);
+
+/* ---------- 9. l'homonymie, écrite autrement ---------- */
 g = poser([MAXIME, Object.assign({}, SIMON_PRESTA, { NOM: 'Simon LG' })]);
 r = rep(g, { action: 'connexion', nom: 'SIMON LG', code: 'ab1!' });
 T('la casse ne fait pas deux personnes', r.config.planning === true, r.config.planning);
