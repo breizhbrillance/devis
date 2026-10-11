@@ -29,7 +29,13 @@ var SH = {
      tentative, pour qu'un statut ne soit jamais le seul témoin de ce qui s'est
      passé — un « pas intéressé » posé par erreur se relit dans le journal. */
   PROSPECTS: 'PROSPECTS',
-  APPELS: 'APPELS'
+  APPELS: 'APPELS',
+  /* Les contrats d'entretien qui reviennent tout seuls. Un chantier naît
+     normalement d'un devis signé ; ceux-là viennent d'un engagement pris
+     avant l'application, ou sans devis dans l'application. L'onglet décrit la
+     série — qui, où, quel jour, à quelle heure, à quel rythme — et le classeur
+     en tire les chantiers des semaines qui viennent. */
+  RECURRENTS: 'RECURRENTS'
 };
 
 /* Les prospects sont communs à toute l'équipe (choix de Simon, 8 octobre 2026) :
@@ -84,7 +90,23 @@ var ENTETES_CHANTIERS_ = [
      peut corriger. MINUTES, juste au-dessus, est tout autre chose : le temps
      réellement pointé par le salarié. LOT dit « 2/3 » quand un chantier a été
      découpé sur plusieurs journées. */
-  'DUREE_PREVUE_MIN', 'LOT'
+  /* RECURRENT porte la clé de l'occurrence qui a produit ce chantier,
+     « R-001|2026-10-16 ». C'est elle qui empêche la génération de le poser
+     deux fois, et elle seule : la date et le client ne suffiraient pas, un
+     client pouvant avoir deux passages le même jour. Vide sur un chantier
+     né d'un devis. */
+  'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT'
+];
+
+/* La série récurrente. JOUR vaut LUNDI..DIMANCHE pour les fréquences
+   hebdomadaires ; JOUR_MOIS vaut 1 à 31 pour la fréquence mensuelle.
+   FREQUENCE : HEBDO, QUINZAINE (une semaine sur deux, comptée depuis DEBUT),
+   MENSUEL. FIN vide = sans terme. PRESTATIONS est la fiche de travail : sans
+   devis derrière, c'est le seul endroit où dire au salarié ce qu'il fait. */
+var ENTETES_RECURRENTS_ = [
+  'ID', 'CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES',
+  'FREQUENCE', 'JOUR', 'JOUR_MOIS', 'HEURE', 'DUREE_MIN',
+  'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF', 'PRESTATIONS', 'NOTE'
 ];
 
 /* A PLANIFIER : le devis est signé, personne ni date encore posés.
@@ -121,6 +143,11 @@ function onOpen() {
     .addSeparator()
     .addItem('13. Importer les prospects à appeler', 'importerProspects')
     .addItem('14. Reporter les statuts dans le fichier de prospection', 'reporterStatuts')
+    .addItem('15. Mettre à jour la base de prospects maintenant', 'majBaseProspects')
+    .addItem('16. Activer la mise à jour automatique (lun/mer/ven)', 'activerMajProspects')
+    .addItem('17. Arrêter la mise à jour automatique', 'arreterMajProspects')
+    .addSeparator()
+    .addItem('18. Poser le planning des contrats récurrents', 'genererRecurrents')
     .addToUi();
 }
 
@@ -321,7 +348,9 @@ function majStructure_() {
   creerOnglet_(ss, SH.COMMUNES, ENTETES_COMMUNES_);
   creerOnglet_(ss, SH.PROSPECTS, ENTETES_PROSPECTS_);
   creerOnglet_(ss, SH.APPELS, ENTETES_APPELS_);
+  creerOnglet_(ss, SH.RECURRENTS, ENTETES_RECURRENTS_);
   [[SH.PRESTATAIRES, ENTETES_PRESTATAIRES_], [SH.CHANTIERS, ENTETES_CHANTIERS_],
+   [SH.RECURRENTS, ENTETES_RECURRENTS_],
    [SH.ADMINS, ENTETES_ADMINS_], [SH.COMMUNES, ENTETES_COMMUNES_],
    [SH.PROSPECTS, ENTETES_PROSPECTS_], [SH.APPELS, ENTETES_APPELS_],
    [SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES']]]
@@ -368,9 +397,10 @@ function majStructure_() {
     }
 
     /* NATURES dit à quelles natures de devis la prestation appartient
-       (ENTRETIEN, VITRERIE, CHANTIER, REMISE, séparées par des virgules). Vide, elle se
-       vend dans les trois : c'est le cas de presque tout le catalogue, et c'est
-       pourquoi la colonne peut rester vide sans rien casser. */
+       (ENTRETIEN, VITRERIE, FACADE, CHANTIER, REMISE, séparées par des virgules).
+       Vide, elle se vend dans toutes : c'est le cas de presque tout le
+       catalogue, et c'est pourquoi la colonne peut rester vide sans rien
+       casser. */
     if (enC.indexOf('NATURES') < 0) {
       var iNat = shC.getLastColumn();
       shC.getRange(1, iNat + 1).setValue('NATURES')
@@ -446,6 +476,8 @@ var REGLAGES_DEFAUT_ = [
   ['tva_defaut', '20', 'Taux de TVA par défaut en %'],
   ['remise_max', '20', 'Remise maximale que le commercial peut accorder, en % — 0 pour l\'interdire'],
   ['passages_mois_defaut', '4', 'Contrat mensuel : nombre de passages créés par mois si le devis ne le précise pas'],
+  ['recurrents_semaines', '8',
+   'Contrats récurrents (onglet ' + 'RECURRENTS' + ') : combien de semaines de planning sont posées devant soi'],
   ['pointage_retention_mois', '36', 'Durée de conservation des pointages arrivée/départ, en mois'],
   ['texte_information_agent', 'L\'application enregistre, à chaque utilisation : les connexions, l\'heure d\'arrivée et l\'heure de départ de chaque chantier, les prestations cochées, les photos prises et les signalements.\n\nCes informations servent au suivi des interventions, à la preuve du travail effectué auprès des clients, et au décompte du temps de travail. Elles sont conservées {mois} mois, puis effacées.\n\nConformément au règlement général sur la protection des données, tu peux demander à consulter les informations qui te concernent et faire rectifier une erreur, en écrivant à breizhbrillance@gmail.com.', 'Texte affiché à chaque connexion d\'un agent — {mois} est remplacé par pointage_retention_mois'],
   ['validite_jours', '30', 'Durée de validité du devis en jours'],
@@ -501,6 +533,9 @@ var REGLAGES_DEFAUT_ = [
   ['prospection_entete_ligne', '3', 'Ligne d\'en-tête dans le fichier de prospection'],
   ['prospection_avec_tel', 'OUI', 'N\'importer que les établissements qui ont un numéro — les autres ne sont pas appelables'],
   ['prospection_relance_heures', '3', 'Heures à attendre avant de retenter un prospect qui n\'a pas répondu'],
+  ['prospection_maj_active', 'OUI', 'Mise à jour automatique de la base de prospects (lundi, mercredi, vendredi) — NON pour la suspendre sans retirer le déclencheur'],
+  ['prospection_maj_departement', '56', 'Département interrogé dans l\'annuaire des entreprises'],
+  ['prospection_effectif_min_btp', '6', 'Le BTP n\'entre qu\'à partir de ce nombre de salariés — la peinture (43.34Z) entre en entier'],
   ['sel_codes', '', 'Généré automatiquement — ne pas modifier']
 ];
 
@@ -547,7 +582,14 @@ var CATALOGUE_DEFAUT_ = [
   ['Vitrages et menuiseries', 'Vitrages extérieurs', '', 'm²', 4, 20, 'PONCTUEL', 'OUI', 'REF-0032', 'VITRERIE'],
   ['Vitrages et menuiseries', 'Nettoyage des menuiseries, rails et appuis de fenêtre', '', 'm²', 5, 20, 'PONCTUEL', 'OUI', 'REF-0033', 'VITRERIE'],
   ['Vitrages et menuiseries', 'Dépoussiérage et nettoyage des volets roulants', '', 'm²', 3, 20, 'PONCTUEL', 'OUI', 'REF-0034', 'VITRERIE'],
-  ['Vitrages et menuiseries', 'Nettoyage des vitrages, huisseries, rails et verrières', '', 'forfait', 55, 20, 'PONCTUEL', 'OUI', 'REF-0035', 'VITRERIE']
+  ['Vitrages et menuiseries', 'Nettoyage des vitrages, huisseries, rails et verrières', '', 'forfait', 55, 20, 'PONCTUEL', 'OUI', 'REF-0035', 'VITRERIE'],
+  /* Façade : un chantier à part, comme la vitrerie. Le nettoyage et l'antimousse
+     se chiffrent au mètre carré de mur traité ; la nacelle se loue à la journée et
+     ne suit donc pas la surface. La TVA inscrite ici n'est qu'un repli : sur le
+     terrain l'appli applique 10 % au logement de plus de deux ans, 20 % sinon. */
+  ['Nettoyage de façade', 'Nettoyage de façade', 'Mise en sécurité du chantier • protection de la maison et de ses abords • pulvérisation du nettoyant sans chlore • passage du nettoyeur réglé au jet plat • finition et nettoyage du chantier', 'm²', 14.90, 10, 'PONCTUEL', 'OUI', 'REF-0036', 'FACADE'],
+  ['Nettoyage de façade', "Pulvérisation d'antimousse végétale, non-retour de mousse garanti 2 ans", '', 'm²', 3.90, 10, 'PONCTUEL', 'OUI', 'REF-0037', 'FACADE'],
+  ['Nettoyage de façade', 'Forfait nacelle à la journée', '', 'journée(s)', 450, 10, 'PONCTUEL', 'OUI', 'REF-0038', 'FACADE']
 ];
 
 /** Remplace le contenu du CATALOGUE par la grille de prix de référence. */
@@ -652,7 +694,7 @@ function doPost(e) {
     var d = JSON.parse(e.postData.contents);
     var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
                    'planning', 'chantier', 'tableau', 'planifier',
-                   'prospects', 'appel'];
+                   'prospects', 'appel', 'historique'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -675,11 +717,11 @@ function doPost(e) {
     var admin = com.role === 'ADMIN';
     var permis = admin
       ? ['connexion', 'config', 'journal', 'tableau', 'planifier', 'statut',
-         'prospects', 'appel']
+         'prospects', 'appel', 'historique']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
-           'prospects', 'appel'];
+           'prospects', 'appel', 'historique'];
     if (permis.indexOf(d.action) < 0) {
       tracerServeur_(com.nom, 'ACTION REFUSEE', d.action, '', d.appareil || '');
       return reponse_({ ok: false, erreur: 'action non autorisée pour ce compte' });
@@ -710,6 +752,7 @@ function doPost(e) {
     if (d.action === 'photo') return reponse_(enregistrerPhoto_(d));
     if (d.action === 'statut') return reponse_(enregistrerStatut_(d, com));
     if (d.action === 'prospects') return reponse_(listeProspects_(d));
+    if (d.action === 'historique') return reponse_(historiqueAppels_(d, com));
     /* Les résultats d'appel arrivent par lots : le commercial passe des heures
        sans réseau, et renvoie tout d'un coup. Le verrou protège le compteur de
        tentatives, qui se lit avant de se réécrire. */
@@ -950,16 +993,51 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
     }
   }
 
-  majDevis_(numero, {
+  /* Tout ce qu'une modification peut changer, et pas seulement la remise.
+     À l'origine (v55) cette fonction ne servait qu'à poser une remise sur un
+     devis déjà établi, et elle ne réécrivait que les totaux. Depuis la v62, le
+     commercial peut rouvrir un devis non signé et en changer le client, les
+     prestations, la nature ou la date : si le classeur n'en reprenait que les
+     totaux, il garderait l'ancienne adresse et l'ancienne nature, et c'est sur
+     elles que seraient posés les chantiers.
+
+     Ce qui ne se réécrit pas, et pourquoi : NUMERO et ID_DEVIS identifient la
+     ligne ; DATE est celle du devis d'origine, pas de sa correction ; le suivi
+     du bureau — STATUT, SIGNE, MOTIF_REFUS, RELANCE_LE, NOTE_COMMERCIAL —
+     appartient au bureau et une révision n'a pas à l'effacer. */
+  var c = devis.client || {};
+  /* La distance ne vaut que pour les natures qui se vendent sur un secteur,
+     comme à la création : sur un chantier elle resterait vide. */
+  var kmR = majorableKm_(devis.nature) ? kmDevis_(devis, communes) : '';
+  var maj = {
     LIEN_PDF: lien,
+    CLIENT: c.societe || c.contact || '',
+    TYPE_CLIENT: String(c.type || '').toUpperCase() === 'PART' ? 'PARTICULIER' : 'PROFESSIONNEL',
+    SIRET_CLIENT: c.siret || '', TVA_CLIENT: c.tva || '',
+    CONTACT: c.contact || '', TELEPHONE: c.tel || '', EMAIL: c.email || '',
+    ADRESSE: c.adresse || '', CP: c.cp || '', VILLE: c.ville || '',
     REMISE_PCT: Number(devis.remise) || 0,
     TOTAL_HT_PONCTUEL: t.htPonctuel || 0,
     TOTAL_HT_MENSUEL: t.htMensuel || 0,
     TOTAL_HT: t.ht || 0,
     TOTAL_TVA: t.tva || 0,
     TOTAL_TTC: t.ttc || 0,
+    VALIDITE: devis.validite ? new Date(devis.validite) : '',
+    OBJET: devis.objet || '',
+    LOGEMENT_PLUS_2_ANS: (c.plus2ans === true ? 'OUI' : (c.plus2ans === false ? 'NON' : '')),
+    TAUX_TVA: tauxPrincipal_(devis),
+    DELAI: devis.delai || '',
+    DATE_SOUHAITEE: jourValide_(devis.dateSouhaitee),
+    NATURE: natureDevis_(devis.nature),
+    ETAT_SITE: etatSite_(devis.etatSite),
+    KM_AGENCE: kmR,
+    ORIGINE: origineDevis_(devis.origine),
+    LIEU_SIGNATURE: String(c.type || '').toUpperCase() === 'PART' ? lieuDevis_(devis.lieuSignature) : '',
+    PASSAGES_MOIS: Number(devis.passages) || '',
+    NOTES: devis.notes || '',
     CONTROLE_TARIF: controle
-  });
+  };
+  majDevis_(numero, maj);
 
   /* Les lignes aussi : leur remise et leur montant ont changé. On réécrit
      celles de ce devis plutôt que d'en ajouter, sinon le devis en aurait deux
@@ -971,7 +1049,8 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
   }
 
   tracerServeur_(devis.commercial || com.nom, 'DEVIS REVISE',
-                 'remise ' + pct + ' % — ' + (t.ttc || 0) + ' € TTC',
+                 (pct ? 'remise ' + pct + ' % — ' : '') + (t.ttc || 0) + ' € TTC — ' +
+                 ((devis.lignes || []).length) + ' ligne(s)',
                  numero, d.appareil || '');
   if (controle) {
     tracerServeur_(devis.commercial || com.nom, 'ECART TARIF', controle,
@@ -1547,7 +1626,7 @@ function tableauAdmin_() {
       adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
       acces: String(o.ACCES || ''),
       date: plan ? isoJour_(d) : '',
-      heure: o.HEURE ? String(o.HEURE) : '',
+      heure: heureTexte_(o.HEURE),
       prestataire: String(o.PRESTATAIRE || ''),
       statut: String(o.STATUT || 'A PLANIFIER'),
       arrivee: Number(o.ARRIVEE) || 0, depart: Number(o.DEPART) || 0,
@@ -2506,13 +2585,15 @@ function signalerConflits_(reg) {
 }
 
 /* ENTRETIEN (contrat régulier, mensualisé), VITRERIE (vitrages et menuiseries,
-   au contrat ou en une fois), CHANTIER (fin de chantier) ou REMISE (remise en
-   état). Les deux dernières sont des interventions uniques : elles ne diffèrent
-   que par ce qu'on y fait, et par le nom sur le devis. */
+   au contrat ou en une fois), FACADE (nettoyage de façade et antimousse),
+   CHANTIER (fin de chantier) ou REMISE (remise en état). Les trois dernières
+   sont des interventions uniques : elles ne diffèrent que par ce qu'on y fait,
+   et par le nom sur le devis. */
 function natureDevis_(v) {
   var n = String(v || '').toUpperCase().trim();
   if (n === 'ENTRETIEN') return 'ENTRETIEN';
   if (n === 'VITRERIE' || n === 'VITRAGE' || n === 'VITRAGES') return 'VITRERIE';
+  if (n === 'FACADE' || n === 'FAÇADE' || n === 'FACADES' || n === 'FAÇADES') return 'FACADE';
   if (n === 'REMISE' || n === 'REMISE EN ETAT' || n === 'REMISE_EN_ETAT') return 'REMISE';
   return 'CHANTIER';
 }
@@ -2523,6 +2604,7 @@ function natureLisible_(v) {
   if (n === 'ENTRETIEN') return 'Entretien des locaux';
   if (n === 'VITRERIE') return 'Vitrages et menuiseries';
   if (n === 'REMISE') return 'Remise en état';
+  if (n === 'FACADE') return 'Nettoyage de façade';
   return 'Nettoyage de fin de chantier';
 }
 
@@ -2536,16 +2618,18 @@ function natureLisible_(v) {
  */
 /**
  * Cette nature se vend-elle sur un secteur, loin de l'agence ? L'entretien des
- * locaux et la vitrerie, oui : l'équipe part de Vannes et y revient, et le
- * trajet se paie. Un chantier et une remise en état sont des interventions
- * chiffrées au cas par cas, le déplacement y est déjà dans le prix.
+ * locaux, la vitrerie et la façade, oui : l'équipe part de Vannes et y revient,
+ * et le trajet se paie. Un chantier et une remise en état sont des
+ * interventions chiffrées au cas par cas, le déplacement y est déjà dans le
+ * prix.
  *
  * La vitrerie compte qu'elle soit vendue au contrat ou en une seule fois : le
- * camion roule autant pour un passage que pour douze.
+ * camion roule autant pour un passage que pour douze. La façade ne se vend
+ * qu'en une fois, mais le camion roule quand même.
  */
 function majorableKm_(nature) {
   var n = natureDevis_(nature);
-  return n === 'ENTRETIEN' || n === 'VITRERIE';
+  return n === 'ENTRETIEN' || n === 'VITRERIE' || n === 'FACADE';
 }
 
 /* D'où vient le client. Tout ce qui n'est pas « appel entrant » est de la
@@ -2682,6 +2766,227 @@ function genererChantiers_(numero) {
   return rows.length;
 }
 
+/* ====================== LES CONTRATS RÉCURRENTS ======================
+   Un chantier naît normalement d'un devis signé. Ceux-ci viennent d'ailleurs :
+   d'un engagement pris avant l'application, ou d'un client qu'on nettoie
+   chaque semaine depuis des années sans qu'un devis l'ait jamais dit ici.
+   L'onglet RECURRENTS décrit la série — qui, où, quel jour, à quelle heure, à
+   quel rythme — et le classeur en tire les chantiers des semaines qui
+   viennent.
+
+   Pourquoi générer plutôt que coller une fois pour toutes : un planning figé
+   sur un an est périmé au premier changement d'horaire, et personne ne
+   réécrit trois cents lignes à la main. On garde donc la règle, et on pose
+   devant soi juste ce qu'il faut pour travailler.
+
+   Ce que la génération ne fait jamais : réécrire un chantier déjà posé. Elle
+   n'ajoute que les occurrences absentes, reconnues par la clé RECURRENT
+   « R-001|2026-10-16 ». Le gérant peut donc déplacer une date, changer le
+   salarié, annuler un passage : rien ne le reprendra. */
+
+var RECURRENTS_SEMAINES_ = 8;
+var JOURS_SEMAINE_ = ['DIMANCHE', 'LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI'];
+
+/** Combien de semaines on pose devant soi. */
+function semainesRecurrents_(reg) {
+  var n = Number(String((reg && reg.recurrents_semaines) || '').replace(',', '.'));
+  if (!isFinite(n) || n < 1) n = RECURRENTS_SEMAINES_;
+  if (n > 52) n = 52;
+  return Math.round(n);
+}
+
+/** « jeudi », « JEU », « Jeudi matin » → 4. Rien de reconnu → -1. */
+function jourSemaineNum_(t) {
+  var n = normNom_(t);
+  if (!n) return -1;
+  for (var i = 0; i < JOURS_SEMAINE_.length; i++) {
+    if (n.indexOf(normNom_(JOURS_SEMAINE_[i]).slice(0, 3)) === 0) return i;
+  }
+  return -1;
+}
+
+/** Le jour, à minuit, débarrassé de l'heure — pour comparer des dates. */
+function minuit_(d) {
+  var x = new Date(d); x.setHours(0, 0, 0, 0); return x;
+}
+
+/** Les occurrences d'une série entre deux dates incluses. */
+function occurrencesRecurrent_(r, du, au) {
+  var freq = String(r.FREQUENCE || '').toUpperCase().trim();
+  var debut = r.DEBUT ? minuit_(r.DEBUT) : null;
+  var fin = r.FIN ? minuit_(r.FIN) : null;
+  if (debut && isNaN(debut.getTime())) debut = null;
+  if (fin && isNaN(fin.getTime())) fin = null;
+
+  var d0 = minuit_(du), d1 = minuit_(au);
+  if (debut && debut > d0) d0 = debut;
+  if (fin && fin < d1) d1 = fin;
+  if (d0 > d1) return [];
+
+  var jour = jourSemaineNum_(r.JOUR);
+  var jourMois = Math.round(Number(r.JOUR_MOIS) || 0);
+
+  /* La quinzaine se compte depuis le DÉBUT de la série, pas depuis
+     aujourd'hui : sans ancrage, la semaine paire changerait de sens à chaque
+     génération et le client serait nettoyé deux fois, puis pas du tout. */
+  var ancre = null;
+  if (freq === 'QUINZAINE') {
+    if (!debut || jour < 0) return [];
+    ancre = new Date(debut);
+    while (ancre.getDay() !== jour) ancre.setDate(ancre.getDate() + 1);
+  }
+
+  var out = [];
+  for (var d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
+    var ok = false;
+    if (freq === 'HEBDO') {
+      ok = (jour >= 0 && d.getDay() === jour);
+    } else if (freq === 'QUINZAINE') {
+      ok = (d.getDay() === jour && d >= ancre &&
+            Math.round((minuit_(d) - ancre) / 86400000 / 7) % 2 === 0);
+    } else if (freq === 'MENSUEL') {
+      if (jourMois >= 1 && jourMois <= 31) {
+        var dernier = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        /* Le 31 d'un mois de trente jours tombe le 30 : un contrat « le 31 »
+           ne saute pas février. */
+        ok = (d.getDate() === Math.min(jourMois, dernier));
+      }
+    }
+    if (ok) out.push(new Date(d));
+  }
+  return out;
+}
+
+/**
+ * Pose les chantiers des contrats récurrents sur les semaines qui viennent.
+ * Idempotente : deux passages de suite ne créent rien la seconde fois.
+ * Renvoie { poses, annules, series }.
+ */
+function genererRecurrents_() {
+  var bilan = { poses: 0, annules: 0, series: 0, motif: '' };
+  var ss = SpreadsheetApp.getActive();
+  var shR = ss.getSheetByName(SH.RECURRENTS);
+  var sh = ss.getSheetByName(SH.CHANTIERS);
+  if (!shR || !sh) { bilan.motif = 'onglet absent'; return bilan; }
+
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cId = en.indexOf('ID'), cRec = en.indexOf('RECURRENT');
+  var cDate = en.indexOf('DATE'), cStatut = en.indexOf('STATUT'), cArr = en.indexOf('ARRIVEE');
+  if (cId < 0 || cRec < 0 || cDate < 0 || cStatut < 0) {
+    bilan.motif = 'colonnes absentes — lancer « Mettre à jour la structure »';
+    return bilan;
+  }
+
+  var reg = lireReglages_();
+  var aujourd = minuit_(new Date());
+  var horizon = new Date(aujourd);
+  horizon.setDate(horizon.getDate() + semainesRecurrents_(reg) * 7);
+
+  var v = sh.getLastRow() > 1
+    ? sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues() : [];
+  var deja = {};
+  v.forEach(function (r, i) {
+    var k = String(r[cRec] || '').trim();
+    if (k) deja[k] = { rang: i + 2, ligne: r };
+  });
+
+  var series = objetsDe_(SH.RECURRENTS).filter(function (r) {
+    return String(r.ID || '').trim() && String(r.ACTIF || '').toUpperCase().trim() !== 'NON';
+  });
+  bilan.series = series.length;
+
+  var suivant = prochainNumChantier_(sh, cId);
+  var maintenant = new Date();
+  var rows = [], rang = 0;
+
+  series.forEach(function (r) {
+    var id = String(r.ID).trim();
+    occurrencesRecurrent_(r, aujourd, horizon).forEach(function (d) {
+      var cle = id + '|' + isoJour_(d);
+      if (deja[cle]) return;
+      var v2 = {
+        ID: 'CH-' + ('000' + (suivant + rang)).slice(-4),
+        NUMERO: '',
+        CLIENT: String(r.CLIENT || ''),
+        ADRESSE: String(r.ADRESSE || ''), CP: String(r.CP || ''), VILLE: String(r.VILLE || ''),
+        ACCES: String(r.ACCES || ''),
+        DATE: d, HEURE: heureTexte_(r.HEURE),
+        PRESTATAIRE: String(r.PRESTATAIRE || ''),
+        /* Date et salarié posés : le chantier est planifié, il part sur le
+           téléphone. Sans salarié, il reste à planifier et remonte en tête de
+           l'écran du gérant. */
+        STATUT: String(r.PRESTATAIRE || '').trim() ? 'PLANIFIE' : 'A PLANIFIER',
+        ARRIVEE: '', DEPART: '', MINUTES: '',
+        PRESTATIONS_FAITES: '', SIGNALEMENT: '', PHOTOS: 0,
+        /* Sans devis derrière, la fiche de travail du salarié serait vide :
+           ce que dit la série est tout ce qu'il aura. */
+        NOTE: String(r.PRESTATIONS || r.NOTE || ''),
+        CREE_LE: maintenant,
+        DUREE_PREVUE_MIN: Math.round(Number(r.DUREE_MIN) || 0) || '',
+        LOT: '', RECURRENT: cle
+      };
+      rows.push(en.map(function (h) { return v2.hasOwnProperty(h) ? v2[h] : ''; }));
+      rang++;
+    });
+  });
+
+  if (rows.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, en.length).setValues(rows);
+    bilan.poses = rows.length;
+  }
+
+  /* Ménage : une série arrêtée ne doit pas laisser des passages derrière elle.
+     On n'annule que ce qui est à venir et que personne n'a commencé — et
+     seulement parce que la série s'est arrêtée, jamais parce que la date ne
+     tombe plus juste : le gérant a le droit de déplacer un passage. */
+  var vivantes = {};
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    var id = String(r.ID || '').trim();
+    if (!id) return;
+    var fin = r.FIN ? minuit_(r.FIN) : null;
+    if (fin && isNaN(fin.getTime())) fin = null;
+    vivantes[id] = {
+      actif: String(r.ACTIF || '').toUpperCase().trim() !== 'NON',
+      fin: fin
+    };
+  });
+  for (var k in deja) {
+    if (!deja.hasOwnProperty(k)) continue;
+    var id2 = k.split('|')[0];
+    var etat = vivantes[id2];
+    var l = deja[k].ligne;
+    var dl = l[cDate] ? minuit_(l[cDate]) : null;
+    if (!dl || isNaN(dl.getTime()) || dl < aujourd) continue;
+    if (String(l[cStatut] || '').toUpperCase().trim() === 'ANNULE') continue;
+    if (cArr >= 0 && String(l[cArr] || '').trim()) continue;     // déjà pointé
+    var morte = !etat || !etat.actif || (etat.fin && dl > etat.fin);
+    if (!morte) continue;
+    sh.getRange(deja[k].rang, cStatut + 1).setValue('ANNULE');
+    bilan.annules++;
+  }
+
+  if (bilan.poses || bilan.annules) {
+    tracerServeur_('SYSTEME', 'PLANNING RECURRENT',
+      bilan.poses + ' posé(s), ' + bilan.annules + ' annulé(s), ' +
+      bilan.series + ' série(s)', '', '');
+  }
+  return bilan;
+}
+
+/** Depuis le menu : pose le planning récurrent et dit ce qui a bougé. */
+function genererRecurrents() {
+  majStructure_();
+  var b = genererRecurrents_();
+  SpreadsheetApp.getUi().alert(
+    b.motif ? 'Rien fait : ' + b.motif :
+    b.series + ' contrat(s) récurrent(s) lus.\n\n' +
+    b.poses + ' chantier(s) ajouté(s) dans l\'onglet ' + SH.CHANTIERS + '.\n' +
+    b.annules + ' passage(s) à venir annulé(s), série arrêtée.\n\n' +
+    'Les chantiers déjà posés ne sont jamais réécrits : une date déplacée ou ' +
+    'un salarié changé à la main le restent.');
+}
+
 /** Les chantiers d'un agent : ceux à venir, et les trente derniers jours. */
 function planningDe_(nom) {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
@@ -2725,9 +3030,7 @@ function planningDe_(nom) {
       adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
       acces: String(o.ACCES || ''),
       date: Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
-      heure: o.HEURE instanceof Date
-        ? Utilities.formatDate(o.HEURE, Session.getScriptTimeZone(), 'HH:mm')
-        : String(o.HEURE || ''),
+      heure: heureTexte_(o.HEURE),
       statut: String(o.STATUT || 'PLANIFIE'),
       arrivee: o.ARRIVEE ? new Date(o.ARRIVEE).getTime() : 0,
       depart: o.DEPART ? new Date(o.DEPART).getTime() : 0,
@@ -2982,7 +3285,7 @@ function jourValide_(v) {
 function naturesCatalogue_(v) {
   var vus = {}, sortie = [];
   String(v || '').toUpperCase().split(/[^A-Z]+/).forEach(function (m) {
-    if (m !== 'ENTRETIEN' && m !== 'VITRERIE' && m !== 'CHANTIER' && m !== 'REMISE') return;
+    if (m !== 'ENTRETIEN' && m !== 'VITRERIE' && m !== 'CHANTIER' && m !== 'REMISE' && m !== 'FACADE') return;
     if (vus[m]) return;
     vus[m] = true; sortie.push(m);
   });
@@ -3098,6 +3401,16 @@ function dossierDevis_(reg, date, commercial) {
  * script réglé sur Paris, y devient le 29 septembre. Tout le tableau de bord
  * affichait ainsi des dates en avance d'un jour sur la réalité.
  */
+/* L'heure d'une cellule. Le tableur range « 08:00 » comme une date du
+   30 décembre 1899 à 8 h : la passer à String() donnerait
+   « Sat Dec 30 1899 08:00:00 GMT+0009 » sur l'écran du gérant. */
+function heureTexte_(v) {
+  if (v instanceof Date) {
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm');
+  }
+  return String(v == null ? '' : v).trim();
+}
+
 function isoJour_(d) {
   return Utilities.formatDate(new Date(d), Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
@@ -3115,6 +3428,14 @@ function isoJour_(d) {
  * périmé ; ou quelqu'un a modifié le devis avant l'envoi.
  */
 var REF_MAJORATION_ = 'MAJ-ETAT';
+/* Une ligne écrite et chiffrée par le commercial devant le client, pour ce que
+   le catalogue ne porte pas encore. Elle n'est pas « hors catalogue » : elle
+   est attendue, et signalée nommément dans CONTROLE_TARIF pour que le bureau
+   la lise, décide, et l'ajoute au catalogue si elle revient. */
+var REF_LIBRE_ = 'LIBRE-';
+function estLigneLibre_(l) {
+  return String((l && l.reference) || '').trim().indexOf(REF_LIBRE_) === 0;
+}
 
 /* Un pourcentage de REGLAGES, borné entre 0 et 100. Illisible ou vide : zéro. */
 function pourcentReglage_(v) {
@@ -3406,6 +3727,9 @@ function controlerTarifs_(devis, reg, communes) {
   var base = 0;
   lignes.forEach(function (l) {
     if (String(l.reference || '').trim() === REF_MAJORATION_) return;
+    /* Une ligne libre ne majore pas l'état des lieux : son prix a été décidé
+       sur place, il porte déjà ce qu'il doit porter. */
+    if (estLigneLibre_(l)) return;
     base += Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) * 100) / 100;
   });
   var tauxPermis = [pourcentReglage_(reg.majoration_tres_sale)]
@@ -3431,6 +3755,13 @@ function controlerTarifs_(devis, reg, communes) {
         ecarts.push(rang + ' : majoration de ' + montant + ' € qui ne correspond pas au taux du classeur (' +
                     (tauxPermis.length ? tauxPermis[0] + ' %' : 'aucun') + ' de ' + base + ' €)');
       }
+    } else if (estLigneLibre_(l)) {
+      /* On ne la refuse pas — c'est tout l'intérêt — mais le bureau doit la
+         voir : intitulé, quantité et prix, en clair, dans CONTROLE_TARIF. */
+      var mL = Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) * 100) / 100;
+      ecarts.push('ligne ' + (i + 1) + ' : ligne libre « ' + (l.designation || 'sans nom') +
+                  ' », ' + (Number(l.qte) || 0) + ' ' + (l.unite || '') +
+                  ' à ' + (Number(l.pu) || 0) + ' € = ' + mL + ' €');
     } else if (!p) {
       ecarts.push(rang + ' : hors catalogue');
     } else {
@@ -3898,6 +4229,10 @@ function automateQuotidien() {
   var annules = 0, conflits = 0;
   try { annules = annulerRefuses_(); conflits = signalerConflits_(reg); }
   catch (eP) { tracerServeur_('SYSTEME', 'PLANNING ECHEC', String(eP && eP.message || eP), '', ''); }
+  /* Le planning récurrent avance d'un jour chaque nuit : sans cela l'horizon
+     se viderait et le salarié finirait par ne plus rien voir. */
+  try { genererRecurrents_(); }
+  catch (eR) { tracerServeur_('SYSTEME', 'RECURRENTS ECHEC', String(eR && eR.message || eR), '', ''); }
   var aFacturer = majAFacturer_();
   majTableauDeBord_();
 
@@ -4468,6 +4803,87 @@ function listeProspects_(d) {
            maj: new Date().toISOString() };
 }
 
+/* ---------------------- SON JOURNAL D'APPELS ----------------------
+ *
+ * Ce que le commercial a fait, et lui seul. L'onglet APPELS garde une ligne
+ * par tentative et ne la réécrit jamais : c'est donc lui qui fait foi, pas la
+ * ligne du prospect, qui ne porte que le dernier résultat.
+ *
+ * On lit à rebours depuis la fin de la feuille et l'on s'arrête dès qu'on a de
+ * quoi remplir l'écran : la feuille grossit d'une ligne par appel et sera un
+ * jour très longue, alors qu'un commercial ne remonte jamais bien loin.
+ *
+ * Deux bornes, parce qu'une seule ne suffirait pas : le nombre de lignes
+ * (l'écran n'en montre pas davantage) et l'ancienneté (un journal de l'an
+ * dernier n'aide personne et pèserait pour rien dans la réponse).
+ */
+var HISTO_MAX_ = 300;
+var HISTO_JOURS_ = 60;
+var HISTO_LIGNES_ = 5000;   // jusqu'où l'on remonte dans la feuille, au pire
+var HISTO_MARGE_ = 200;     // de quoi absorber le désordre décrit plus bas
+
+function historiqueAppels_(d, com) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.APPELS);
+  if (!sh || sh.getLastRow() < 2) return { ok: true, appels: [], complet: true, jours: HISTO_JOURS_ };
+
+  var col = colonnes_(sh);
+  if (col.HORODATAGE == null || col.COMMERCIAL == null) {
+    return { ok: false, erreur: 'L\'onglet APPELS n\'a pas ses colonnes d\'origine.' };
+  }
+
+  var max = Math.max(1, Math.min(Number(d && d.max) || HISTO_MAX_, HISTO_MAX_));
+  var limite = Date.now() - HISTO_JOURS_ * 86400000;
+  var nCol = sh.getLastColumn();
+  var trouves = [], ligne = sh.getLastRow(), lues = 0, ecartes = false;
+
+  /* Par tranches, de la fin vers le début : une seule lecture de toute la
+     feuille coûterait cher le jour où elle portera des dizaines de milliers de
+     lignes, et l'on n'en veut que la fin.
+
+     On ramasse un peu plus que demandé, puis on trie. La feuille s'écrit par
+     ajout, donc sa fin porte bien les dernières lignes **reçues** — mais pas
+     forcément les derniers appels **passés** : un téléphone resté hors réseau
+     toute la matinée envoie l'après-midi des appels datés du matin, qui
+     s'inscrivent après des appels plus récents d'un collègue. Sans tri, le
+     journal afficherait ce désordre tel quel. */
+  while (ligne >= 2 && trouves.length < max + HISTO_MARGE_ && lues < HISTO_LIGNES_) {
+    var depart = Math.max(2, ligne - 499);
+    var bloc = sh.getRange(depart, 1, ligne - depart + 1, nCol).getValues();
+    for (var i = bloc.length - 1; i >= 0; i--) {
+      lues++;
+      var r = bloc[i];
+      if (String(r[col.COMMERCIAL] || '').trim() !== com.nom) continue;
+      var q = r[col.HORODATAGE];
+      var t = (q instanceof Date) ? q.getTime() : Date.parse(q);
+      if (!t || isNaN(t)) continue;
+      /* Trop ancien : on l'écarte mais on continue de descendre. S'arrêter ici
+         perdrait tout ce qui le suit, et la feuille n'est pas assez ordonnée
+         pour qu'une seule vieille ligne prouve que les autres le sont. */
+      if (t < limite) { ecartes = true; continue; }
+      trouves.push({
+        t: new Date(t).toISOString(),
+        id: String(r[col.ID_PROSPECT] || ''),
+        societe: String(r[col.SOCIETE] || ''),
+        commune: String(r[col.COMMUNE] || ''),
+        resultat: String(r[col.RESULTAT] || ''),
+        note: String(r[col.NOTE] || ''),
+        rappel: col.RAPPEL_LE != null && r[col.RAPPEL_LE] ? isoDe_(r[col.RAPPEL_LE]) : ''
+      });
+    }
+    ligne = depart - 1;
+  }
+
+  trouves.sort(function (a, b) { return a.t < b.t ? 1 : a.t > b.t ? -1 : 0; });
+  var coupe = trouves.length > max;
+
+  /* « complet » dit au téléphone s'il tient tout ce que le bureau garde, ou
+     seulement le haut de la pile : c'est ce qui lui permet d'écrire « les plus
+     récents » plutôt que de laisser croire à un journal entier. */
+  return { ok: true, appels: coupe ? trouves.slice(0, max) : trouves,
+           complet: !coupe && !ecartes && ligne < 2 && lues < HISTO_LIGNES_,
+           jours: HISTO_JOURS_ };
+}
+
 /* ---------------------- UN RÉSULTAT D'APPEL ---------------------- */
 
 /**
@@ -4557,3 +4973,637 @@ function enregistrerAppels_(d, com) {
   }
   return { ok: true, recus: recus, refuses: refuses, maj: new Date().toISOString() };
 }
+
+/* ====================== LA BASE DE PROSPECTS SE TIENT À JOUR ======================
+   Demande de Simon, 8 octobre 2026 : « je veux que la base s'update 3 fois par
+   semaine, nouveaux numéros de téléphone, nouvelles boîtes ».
+
+   Ce qui est automatisé ici : **les nouvelles entreprises**. Elles viennent de
+   l'annuaire officiel (recherche-entreprises.api.gouv.fr), qui est public,
+   gratuit, sans clé, et qui donne le nom, l'adresse, le code NAF, l'effectif et
+   le SIREN.
+
+   Ce qui ne l'est pas : **les numéros de téléphone**. L'annuaire officiel n'en
+   contient aucun, et aucune colonne d'horaires non plus — c'est vérifié, pas
+   supposé. Les 1 156 numéros de la base viennent de relevés PagesJaunes faits à
+   la main ; Simon a choisi (8 octobre) de continuer ainsi, à la demande, plutôt
+   que de payer une source officielle ou d'industrialiser un relevé que les
+   conditions d'utilisation de PagesJaunes interdisent et que leurs serveurs
+   bloquent. Une entreprise ajoutée ici arrive donc **sans numéro** : elle entre
+   dans la base, pas encore dans la file d'appels.
+
+   L'annuaire n'a **ni filtre ni tri par date de création** (vérifié sur son
+   schéma OpenAPI) : impossible de demander « seulement les nouvelles ». Il faut
+   balayer chaque code NAF et comparer les SIREN à ceux qu'on a déjà. D'où les
+   appels groupés et le curseur ci-dessous. */
+
+var MAJ_PROSPECTS_ = 'majBaseProspects';
+var CURSEUR_MAJ_ = 'prospection_maj_curseur';
+var BUDGET_MAJ_MS_ = 4 * 60 * 1000;
+/* L'API Sirene de l'INSEE, et non plus recherche-entreprises.api.gouv.fr : ce
+   dernier renvoie 502 à tout ce qui vient des serveurs de Google (vérifié le
+   9 octobre 2026 — la même URL répondait 200 depuis un navigateur, et Apps Script
+   joignait sans peine d'autres sites). Sirene demande une clé, gratuite, que Simon
+   colle lui-même dans le réglage prospection_insee_cle ; en échange elle interroge
+   directement les ÉTABLISSEMENTS, ce qui supprime la question du siège social.
+   Débit autorisé : 30 requêtes par minute. */
+var API_SIRENE_ = 'https://api.insee.fr/api-sirene/3.11/siret';
+var PAUSE_SIRENE_MS_ = 2100;   // 30 req/min, avec un peu de marge
+
+/* OpenStreetMap porte le téléphone ET les horaires, gratuitement. Le serveur
+   principal d'Overpass est injoignable depuis Apps Script (« Address unavailable »,
+   9 octobre) ; les miroirs sont essayés dans l'ordre. */
+var MIROIRS_OSM_ = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.osm.jp/api/interpreter',
+  'https://overpass-api.de/api/interpreter'
+];
+
+/* L'INSEE code les effectifs ; la base de Simon les écrit en clair. Une tranche
+   inconnue ou non renseignée vaut « NC », comme dans sa feuille LISTES. */
+var TRANCHES_INSEE_ = {
+  'NN': 'NC', '00': '0 salarié', '01': '1-2', '02': '3-5', '03': '6-9',
+  '11': '10-19', '12': '20-49', '21': '50-99', '22': '100-199', '31': '200-249',
+  '32': '250-499', '41': '500-999', '42': '1000-1999', '51': '2000-4999',
+  '52': '5000-9999', '53': '10000 et plus'
+};
+/* Le plus petit effectif de la tranche, pour le seuil des six salariés du BTP. */
+var TRANCHE_MINI_ = {
+  'NN': 0, '00': 0, '01': 1, '02': 3, '03': 6, '11': 10, '12': 20, '21': 50,
+  '22': 100, '31': 200, '32': 250, '41': 500, '42': 1000, '51': 2000,
+  '52': 5000, '53': 10000
+};
+
+/** Les secteurs, leurs poids et leurs codes NAF, lus dans l'onglet LISTES du
+    fichier de prospection : Simon peut en ajouter sans toucher à ce script. */
+function secteursProspection_(src) {
+  var sh = src.getSheetByName('LISTES');
+  if (!sh || sh.getLastRow() < 2) return { secteurs: [], bareme: {} };
+  var g = sh.getRange(1, 1, sh.getLastRow(), Math.max(7, sh.getLastColumn())).getValues();
+  var secteurs = [], bareme = {};
+  for (var i = 1; i < g.length; i++) {
+    var nom = String(g[i][0] || '').trim();
+    var poids = Number(g[i][1]) || 0;
+    var nafs = String(g[i][2] || '').match(/\d{2}\.\d{2}[A-Z]?/g) || [];
+    if (nom && nafs.length) secteurs.push({ nom: nom, poids: poids, nafs: nafs });
+    // la colonne F porte le libellé d'effectif, la G ses points
+    var lib = String(g[i][5] || '').trim();
+    if (lib) bareme[lib.toUpperCase()] = Number(g[i][6]) || 0;
+  }
+  return { secteurs: secteurs, bareme: bareme };
+}
+
+/** L'adresse telle que la base de Simon l'écrit : une seule ligne, en capitales. */
+/** L'établissement de l'entreprise situé dans le département visé : le siège quand il
+    y est, sinon le premier établissement ouvert qu'on y trouve. Rien, s'il n'y en a
+    aucun — l'entreprise n'a alors rien à faire dans la base de Simon. */
+/** Le nom sous lequel le commercial va reconnaître l'entreprise au téléphone :
+    l'enseigne si elle existe, sinon la dénomination, sinon le nom de la personne. */
+function nomEtablissement_(e) {
+  var p = (e.periodesEtablissement || [])[0] || {};
+  var u = e.uniteLegale || {};
+  var nom = p.enseigne1Etablissement || p.denominationUsuelleEtablissement ||
+            u.denominationUniteLegale || u.denominationUsuelle1UniteLegale ||
+            [u.prenom1UniteLegale, u.nomUniteLegale].filter(function (x) { return x; }).join(' ');
+  return String(nom || '').trim().toUpperCase();
+}
+
+/** La période en cours de l'établissement : Sirene les empile, la première est
+    la plus récente. */
+function periodeCourante_(e) {
+  return (e.periodesEtablissement || [])[0] || {};
+}
+
+function adresseSiege_(a) {
+  if (!a) return '';
+  var p = [a.complementAdresseEtablissement, a.numeroVoieEtablissement,
+           a.indiceRepetitionEtablissement, a.typeVoieEtablissement,
+           a.libelleVoieEtablissement, a.codePostalEtablissement,
+           a.libelleCommuneEtablissement];
+  return p.filter(function (x) { return x; }).join(' ').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+/** Une page de l'annuaire. Rendue séparément pour que le banc puisse la servir. */
+function urlAnnuaire_(naf, dep, curseur) {
+  /* Le code commune commence par le numéro du département : c'est plus sûr que le
+     code postal, qui déborde parfois sur le département voisin. */
+  /* Les variables qui changent dans le temps — l'activité, l'état, l'enseigne —
+     s'interrogent **dans periode(...)**, sans quoi Sirene répond « Erreur de syntaxe
+     dans le paramètre q » même sur la requête la plus simple. Six écritures ont été
+     essayées le 9 octobre avant de trouver celle-ci. Le code commune, lui, ne change
+     pas et reste dehors ; son joker est accepté et borne au département. */
+  var q = 'periode(activitePrincipaleEtablissement:' + naf +
+          ' AND etatAdministratifEtablissement:A)' +
+          ' AND codeCommuneEtablissement:' + dep + '*';
+  return API_SIRENE_ + '?q=' + encodeURIComponent(q) +
+         '&nombre=1000&curseur=' + encodeURIComponent(curseur || '*');
+}
+
+/* Appelée par le menu ET par le déclencheur de lundi, mercredi et vendredi. Un
+   déclencheur horaire tourne **sans interface** : SpreadsheetApp.getUi() y lève une
+   exception, et la mise à jour ne serait jamais faite. Le compte rendu part donc au
+   JOURNAL dans ce cas, et dans une fenêtre quand quelqu'un est là pour la lire. */
+/* Diagnostic jetable : d'où vient le refus de l'annuaire ? Écrit les codes au JOURNAL.
+   À retirer une fois la cause connue. */
+/* Diagnostic : d'où vient un refus ? Écrit les codes au JOURNAL, sans jamais
+   montrer la clé. Utile le jour où Sirene changera d'adresse ou de règles. */
+/* Diagnostic : quelle écriture du paramètre q Sirene accepte-t-il ? Écrit les codes
+   au JOURNAL, sans jamais montrer la clé. */
+/* Diagnostic : quelle écriture du paramètre q Sirene accepte-t-il ? */
+/* Un coup de sonde sur Sirene, écrit au JOURNAL, sans jamais montrer la clé.
+   À lancer le jour où la mise à jour ne ramène plus rien : il dit en une ligne si
+   la clé est là, si le service répond, et combien d'établissements il annonce. */
+/* Un coup de sonde sur les services interrogés, écrit au JOURNAL, sans jamais montrer
+   la clé. À lancer le jour où une mise à jour ne ramène plus rien. */
+function testerAnnuaire() {
+  var reg = lireReglages_();
+  var cle = String(reg.prospection_insee_cle || '').trim();
+  var dep = String(reg.prospection_maj_departement || '56').trim();
+  var dit = ['cle ' + (cle ? 'presente (' + cle.length + ')' : 'ABSENTE')];
+
+  try {
+    var r = UrlFetchApp.fetch(urlAnnuaire_('69.20Z', dep, '*'), {
+      muteHttpExceptions: true,
+      headers: { 'Accept': 'application/json', 'X-INSEE-Api-Key-Integration': cle }
+    });
+    var h = {};
+    try { h = JSON.parse(r.getContentText()).header || {}; } catch (e0) {}
+    dit.push('Sirene = ' + r.getResponseCode() +
+             (h.total != null ? ', ' + h.total + ' etablissements' : ''));
+  } catch (err) {
+    dit.push('Sirene = EXCEPTION ' + String(err && err.message || err).slice(0, 60));
+  }
+
+  /* OpenStreetMap : la seule source gratuite qui porte téléphone ET horaires.
+     Reste à savoir si elle accepte les serveurs de Google — l'annuaire des
+     entreprises, lui, les refuse (502 sur tout, le 9 octobre). */
+  var q = '[out:json][timeout:60];area["ref:INSEE"="' + dep + '"][admin_level=6]->.a;' +
+          'nwr["phone"]["opening_hours"]["name"](area.a);out count;';
+  MIROIRS_OSM_.forEach(function (m) {
+    try {
+      var o = UrlFetchApp.fetch(m, { method: 'post', contentType: 'application/x-www-form-urlencoded', payload: 'data=' + encodeURIComponent(q),
+        muteHttpExceptions: true, headers: { 'Accept': 'application/json' } });
+      var n = '';
+      try { n = ', ' + (((JSON.parse(o.getContentText()).elements || [])[0] || {}).tags || {}).total + ' objets'; }
+      catch (e1) { n = ' [' + String(o.getContentText()).slice(0, 50).replace(/\s+/g, ' ') + ']'; }
+      dit.push(m.replace(/^https:\/\//, '').split('/')[0] + ' = ' + o.getResponseCode() + n);
+    } catch (err2) {
+      dit.push(m.replace(/^https:\/\//, '').split('/')[0] + ' = KO ' +
+               String(err2 && err2.message || err2).slice(0, 40));
+    }
+  });
+
+  tracerServeur_('SERVEUR', 'TEST ANNUAIRE', dit.join(' | '), '', '');
+  return dit.join('\n');
+}
+
+/* OSM écrit « Mo-Fr 09:00-12:00,14:00-18:00; Sa 09:00-12:00; Su off ». La file
+   d'appels veut une colonne par jour. On ne garde que ce qui est sûr : une
+   règle qui dépend d'une date (saison, jour férié, vacances scolaires) est
+   écartée plutôt que devinée — Simon ne veut que des horaires vérifiés. */
+var JOURS_OSM_ = { MO: 'LUN', TU: 'MAR', WE: 'MER', TH: 'JEU', FR: 'VEN', SA: 'SAM', SU: 'DIM' };
+var ORDRE_OSM_ = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
+var JOUR_SEUL_ = '(?:Mo|Tu|We|Th|Fr|Sa|Su)';
+var SELECTEUR_ = '(?:' + JOUR_SEUL_ + '(?:\\s*-\\s*' + JOUR_SEUL_ + ')?)';
+var PLAGE_ = '\\d{1,2}:\\d{2}\\s*-\\s*\\d{1,2}:\\d{2}';
+
+/** Les jours que désigne « Mo-We,Fr », dans l'ordre d'OSM. */
+function joursOsm_(selecteur) {
+  var out = [];
+  String(selecteur).split(',').forEach(function (bout) {
+    var b = bout.trim();
+    if (!b) return;
+    var pair = b.split('-');
+    if (pair.length === 2) {
+      var a = ORDRE_OSM_.indexOf(pair[0].trim().toUpperCase());
+      var z = ORDRE_OSM_.indexOf(pair[1].trim().toUpperCase());
+      if (a < 0 || z < 0) return;
+      for (var k = a; ; k = (k + 1) % 7) { out.push(ORDRE_OSM_[k]); if (k === z) break; }
+    } else {
+      var u = ORDRE_OSM_.indexOf(b.toUpperCase());
+      if (u >= 0) out.push(ORDRE_OSM_[u]);
+    }
+  });
+  return out;
+}
+
+/** « 9:00-12:00, 14:00-18:00 » → « 09:00-12:00 / 14:00-18:00 ». */
+function plagesOsm_(texte) {
+  var out = [], re = new RegExp('(\\d{1,2}):(\\d{2})\\s*-\\s*(\\d{1,2}):(\\d{2})', 'g'), m;
+  var deux = function (x) { return x.length === 1 ? '0' + x : x; };
+  while ((m = re.exec(String(texte)))) {
+    out.push(deux(m[1]) + ':' + m[2] + '-' + deux(m[3]) + ':' + m[4]);
+  }
+  return out.join(' / ');
+}
+
+/** Remet les plages d'un jour dans l'ordre des heures et ôte les doublons. */
+function rangerPlages_(v) {
+  if (v === 'Fermé') return v;
+  var vus = {}, l = [];
+  String(v).split('/').forEach(function (p) {
+    var t = p.trim();
+    if (t && !vus[t]) { vus[t] = 1; l.push(t); }
+  });
+  l.sort(function (a, b) { return a < b ? -1 : a > b ? 1 : 0; });
+  return l.join(' / ');
+}
+
+function horairesOsm_(texte) {
+  var s = String(texte == null ? '' : texte).trim();
+  if (!s) return null;
+  var out = {}, pose = false;
+  if (/^24\s*\/\s*7$/.test(s)) {
+    ORDRE_OSM_.forEach(function (j) { out[JOURS_OSM_[j]] = '00:00-24:00'; });
+    return out;
+  }
+  s.split(';').forEach(function (regle) {
+    var r = regle.trim();
+    if (!r) return;
+    /* Une date, une année, une plage de mois, les congés : on passe. */
+    if (/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|easter|week|sunrise|sunset)\b/i.test(r)) return;
+    if (/\d{4}/.test(r) || r.indexOf('[') >= 0) return;
+    /* « PH » et « SH » collés au sélecteur : on les retire ; seuls, on passe. */
+    r = r.replace(/\b(PH|SH)\s*,\s*/gi, '').replace(/\s*,\s*(PH|SH)\b/gi, '');
+    if (/^\s*(PH|SH)\b/i.test(r)) return;
+
+    var groupe = new RegExp('(' + SELECTEUR_ + '(?:\\s*,\\s*(?=' + JOUR_SEUL_ + '\\b)' + SELECTEUR_ + ')*)' +
+                            '\\s+((?:' + PLAGE_ + ')(?:\\s*,\\s*' + PLAGE_ + ')*|off|closed)', 'gi');
+    /* Dans OSM, le point-virgule remplace la règle précédente, la virgule s'y
+       ajoute. Les groupes d'une même règle se cumulent donc sur un jour. */
+    var m, trouve = false, cumul = {};
+    while ((m = groupe.exec(r))) {
+      trouve = true;
+      var jours = joursOsm_(m[1]);
+      var v = /^(off|closed)$/i.test(m[2].trim()) ? 'Fermé' : plagesOsm_(m[2]);
+      jours.forEach(function (j) {
+        cumul[JOURS_OSM_[j]] = cumul[JOURS_OSM_[j]] ? cumul[JOURS_OSM_[j]] + ' / ' + v : v;
+      });
+      pose = true;
+    }
+    if (trouve) {
+      Object.keys(cumul).forEach(function (j) { out[j] = rangerPlages_(cumul[j]); });
+      return;
+    }
+    /* Pas de jour nommé : la règle vaut pour la semaine entière. */
+    var seul = plagesOsm_(r);
+    if (seul && !new RegExp(JOUR_SEUL_, 'i').test(r.replace(/\d/g, ''))) {
+      ORDRE_OSM_.forEach(function (j) { out[JOURS_OSM_[j]] = seul; });
+      pose = true;
+    }
+  });
+  return pose ? out : null;
+}
+
+/** Un seul passage : les horaires relevés dans OpenStreetMap le 9 octobre 2026,
+    découpés jour par jour et posés dans les colonnes LUN à DIM de BASE. */
+function poserHorairesOsm() {
+  /* Garde-fou : si l analyseur a ete abime en route, on ne pose rien. */
+  var essai = horairesOsm_('Mo-We 09:00-12:00,14:00-18:00; Th off');
+  if (!essai || essai.LUN !== '09:00-12:00 / 14:00-18:00' || essai.MER !== essai.LUN ||
+      essai.JEU !== 'Fermé' || essai.VEN) {
+    throw new Error('Analyseur d horaires abime : ' + JSON.stringify(essai));
+  }
+  var T = '477637342|Mo-We 09:00-16:30; Fr 09:00-16:00~777734039|Mo-Fr 08:45-12:00, 13:00-17:30~878427566|Mo-Fr 09:00-12:00,14:00-18:00~843879818|Mo-Fr 09:00-12:00,13:30-18:00; Sa 09:00-12:00~777903816|Tu 09:00-12:30,14:00-18:00; We 09:00-12:30,13:45-18:00; Th 09:00-12:30,15:00-18:00; Fr 09:00-12:30,13:45-18:00; Sa 08:30-12:45~775709702|Mo 13:00-17:00; Tu-Fr 10:00-12:45, 14:00-17:00~876580325|Mo-Sa 09:00-12:00,14:00-18:30~855801072|Tu-Fr 08:30-12:30,13:45-18:00; Sa 08:30-12:30~378786396|Tu 09:00-12:30,14:00-18:00; We,Fr 09:00-12:30,13:45-18:00; Th 09:00-12:30,15:00-18:00; Sa 08:30-12:45~850951633|Mo-Fr 09:00-18:00~440985224|Mo, Tu, Th, Fr 09:00-12:00, 14:00-17:00~390375756|Mo-Sa 09:00-12:00,14:00-19:00~349974931|Mo-Fr 08:45-12:10,13:50-17:00; Tu 08:45-12:10,14:50-17:00~378830848|Tu-Fr 09:00-12:30,14:00-18:00; Sa 08:30-12:45~398972901|Mo-Fr 09:45-12:45,14:00-17:45~498834845|Mo-Fr 09:00-19:00; Sa 09:00-17:00; Su off~394280697|Mo-Fr 08:00-18:00~444656789|Mo-Fr 09:00-18:00~492420641|Mo-Sa 09:30-19:30~382385276|Apr-Sep~531515716|Mo-Fr 09:00-12:00,14:00-18:00~841335227|Mo-Fr 09:00-12:00,14:00-18:00~441258357|Mo-Sa 09:00-19:00~981305212|Th-Mo 19:00-23:45~788033371|Mo-Fr 09:00-12:00,14:00-18:00~490411477|Tu-Sa~523499846|Mo-Fr 09:00-12:00,13:30-18:00; Sa 09:00-12:00~818337073|Tu-Sa 09:00-12:30, Tu-Fr 14:00-18:00~449674548|Tu-Fr 09:00-12:00,14:00-18:30; Sa 09:00-12:00~393755848|Mo-Fr 09:00-18:30; Sa 09:00-17:00~378829295|Tu 09:00-12:30,14:00-18:00; We 09:00-12:30,13:45-18:00; Th 09:00-12:30,15:00-18:00; Fr 09:00-12:30,13:45-18:00; Sa 08:30-12:45~378831440|Tu-Fr 09:00-12:30; Sa 08:30-12:45~984674705|Mo-Fr 09:00-12:00,14:00-17:30~810335620|Mo-Fr 08:00-12:00,14:00-18:30~444394191|Mo-Fr 09:00-12:00, 14:00-18:00~381144252|Tu-Sa 09:00-12:15,14:00-19:00~944887371|Mo-Fr 09:00-19:00; Sa 09:00-18:00~838474898|Mo-Fr 09:30-12:30,14:00-19:00; Sa 09:30-12:30,14:00-18:00~503999385|Mo 14:00-19:00; Tu-Sa 09:30-19:00~303435010|Mo-Sa 09:30-12:30, 14:00-18:00~990406035|Mo-Fr 09:00-12:00,14:00-18:00~903590305|Mo 09:00-12:00,14:00-18:00; We-Fr 09:00-12:00,14:00-18:00~511803462|Mo,Fr 09:00-12:30,14:00-18:30; Sa 09:00-12:30~403998479|Mo-Fr 09:00-12:00,14:00-19:00; Sa 09:00-12:30,14:00-18:00~440109692|Tu,We,Fr,Sa 09:00-12:30, Mo-Sa 14:00-19:00, Th 10:00-12:30~503921389|Mo-Sa 09:30-19:30~841386279|Mo-Fr 06:00-23:00; Sa-Su 08:00-20:00~722013851|2026 Apr 03-2026 Oct 24~953838612|Mo 09:00-12:30,14:00-18:30; Tu 09:00-13:00; We 09:00-12:30,14:00-19:00; Th 09:00-12:30,13:30-18:00; Fr 09:00-12:30,14:00-19:00; Sa-Su off~820027688|24/7~442286548|Mo 09:00-13:00,14:00-19:00; Tu 09:00-13:30,14:00-19:00; Th 09:00-19:00; Fr 09:00-13:30,14:00-19:00; Sa 09:00-13:30,14:00-16:30~514944883|Tu 09:00-12:00,14:00-19:00; We 08:30-12:30; Th 09:00-19:00; Fr 08:30-19:00~490202157|Tu,Th,Fr 09:00-18:30; We 09:00-12:00; Sa 08:30-17:00~505019679|Mo-Fr 09:00-19:00, Sa 09:00-18:00~534033881|Tu,Th,Fr 08:30-12:00,13:30-19:00; We 08:30-12:00,14:00-19:00; Sa 08:30-15:30~753617042|Mo 09:00-12:00,14:00-16:00; Tu-Fr 09:00-12:00,14:00-19:00; Sa 08:30-12:30,13:30-16:00~500396080|Tu-Fr 09:00-19:00; Sa 09:00-15:00~518302195|Mo 09:00-18:30; Tu-Fr 09:00-19:00; Sa 09:00-17:00~881614333|Mo 14:00-19:00; Tu,We 09:00-19:00; Th 13:00-20:00; Fr 09:00-19:00; Sa 09:00-17:00~524708112|Mo,Tu,Th,Fr 09:00-18:00; Sa 09:00-14:00~445131717|Tu-Fr 08:00-12:00,13:30-19:00; Sa 08:00-12:00,13:30-16:00~948053640|Mo 09:00-19:00; Tu-Fr 09:00-19:00; Sa 09:00-16:00~533652582|Mo-Fr 09:00-19:00; Sa 09:00-17:00~391676244|Tu-Fr 09:00-12:00,14:00-19:00; Sa 09:00-12:00~889085346|Mo-Fr 09:00-19:00~799809017|Mo 10:00-19:00; Tu-Sa 09:00-19:00~992160283|Tu-Sa 09:00-18:00~841399546|Tu 09:00-13:00, 14:00-18:30; We-Fr 09:00-13:00, 14:00-19:00; Sa 09:00-13:00, 14:00-17:00~824160238|Mo-Sa 09:00-19:00~943195982|Mo-Fr 09:00-12:00,14:00-19:00; Sa 09:00-12:00,14:00-18:00~350344198|Mo-Fr 08:30-12:00,14:00-18:00~452985914|Mo-Fr 07:30-19:30; Sa 07:30-17:30~532804226|Mo-We 08:30-12:00,14:00-18:00; Th 08:00-12:00,14:00-18:00; Fr 08:00-12:00,14:00-17:00~810504563|Mo-Sa 08:00-18:00~994490126|Tu-Sa 12:00-14:00,19:15-21:00~501774343|Tu 12:00-14:00,18:30-21:00; We 12:00-14:00; Th 12:00-14:00,18:30-21:00; Fr,Sa 12:00-14:00,18:30-21:30; Su 18:30-21:30; Mo off~934118613|We-Th 12:00-13:30,19:00-21:00~452417876|Mo 10:00-20:00; Tu-Su 10:00-01:00~399000926|Mo-Sa 06:30-21:00; Su 08:30-21:00~982346108|Fr 12:00-14:30, 19:00-21:30; Mo-Th 12:00-14:30, 19:00-21:00~927894287|Th-Sa 18:00-25:00, Su 11:00-19:00~948814769|We-Su 12:00-14:00, We-Sa 19:00-22:00~412320038|Mo-Fr 08:30-14:30, 16:30-18:30~838557221|Tu-Sa 12:00-14:00,19:00-22:00; Su 12:00-14:00~881966097|We-Su 14:30-17:30~834911422|Mo,Tu 12:00-14:00; Th-Sa 12:00-14:00,19:00-21:00; Su 12:00-14:00,19:00-20:45~850383241|Tu-Sa 12:00-13:45, 19:00-21:30~490842507|Mo-Su,PH 12:00-14:00,19:00-22:00~944250612|Mo-Fr 08:00-16:00~910201714|Mo-Fr 09:30-15:00~103268678|Tu-Sa 12:00+, 19:00+~377553060|SH We-Su 12:00-14:00, 19:00-21:00; Fr-Su 12:00-14:00, 19:00-21:00~829473487|Tu-Sa 12:00-14:00, 19:00-22:00~979355567|Tu-We,Su 10:00-17:00; Th-Sa 10:00-23:30~411849342|Mo-Fr 09:00-17:00~999532286|Mo-Su 10:00-22:00~881036578|Mo-We 11:30-16:00; Th 11:30-20:45; Fr-Sa 11:30-22:00~878810795|Tu 19:00-22:00; We-Sa 12:00-14:00,19:00-22:00; Su 12:00-14:00~487860645|We-Fr 12:00-13:30,19:00-22:00;Sa 12:00-13:30,19:00-24:00;Su 19:00-22:00; PH off~947514527|We-Th 12:00-13:30,18:30-21:00; Fr-Sa 12:00-13:30,18:30-22:00; Su 18:30-22:00~835308412|Mo 12:00-13:30; We,Th 12:00-13:30,19:30-20:30; Fr 12:00-13:30,19:30-20:45; Sa 12:15-13:30,19:30-21:00; Su 11:45-13:30~981639354|Tu-Su 11:00-14:30,18:00-22:00~848696969|Mo-Su 09:00-21:00~898498571|We-Su~839198967|Tu-Su 12:00-15:00, 19:00-22:00~403378243|Tu-Sa 12:00-14:00,19:00-22:00~500459029|Mo-Su 10:30-11:30~503611808|Mo-We 12:00-14:00; Th-Su 12:00-14:00,19:00-21:30~987831963|Mo-Fr 12:00-22:00~810585406|Th-Sa 11:30-18:30; Mo 11:30-18:00; Su 11:00-18:00~883341141|Mo-Sa 19:00-22:30~532619392|Mo-Su 09:00-20:00~940624190|Tu-Sa 12:00-15:00, 18:00-22:00~523423184|Tu-Fr 12:00-15:00; Tu-Th 19:00-00:00; Fr, Sa 19:00-01:00~995148673|We-Th 09:00-23:00; Fr-Sa 09:00-23:30; Su 09:00-18:00~490865177|Mo,Tu,Th-Sa 12:00-22:00~821190790|Tu-Sa 11:00-18:00~384893079|Apr 11 - Sep 25~881384192|Mo-Sa 17:00-21:00; Su 18:00-21:00~788607604|May-Sep~753997956|Mo-Th 12:00-13:30,19:00-20:30; Fr,Su 12:00-13:30; Sa 19:00-20:30~453458804|Apr-Sep~450115746|Apr-Sep~388138000|Mo-Fr 08:30-17:30~431896851|Mo-Th 08:30-12:30,14:00-18:00; Fr 08:30-12:30,14:00-17:00~552120222|Tu-Fr 08:45-12:30; Sa 09:00-12:45~813755345|Mo-Sa 10:00-19:00~444927149|Mo 14:00-19:00; Tu-Fr 09:00-12:00,14:00-19:00; Sa 09:00-12:00,14:00-18:00~318906443|Mo-Th 11:30-15:00,18:00-22:00; Fr 11:30-15:00,18:00-22:30; Sa 11:30-22:30; Su 11:30-22:00~450152921|Mo-Su 11:00-23:00~215600032|Jun-Sep~215600057|Apr-Oct~215602632|Jul 01 - Aug 29';
+  var reg = lireReglages_();
+  var src = SpreadsheetApp.openById(String(reg.prospection_fichier_id || '').trim());
+  var vise = String(reg.prospection_onglet || 'BASE').trim();
+  var sh = src.getSheetByName(vise);
+  if (!sh) throw new Error('Onglet ' + vise + ' introuvable.');
+  var li = Number(reg.prospection_entete_ligne) || 3;
+  var en = colonnesBase_(sh, li);
+  if (en.SIREN == null) throw new Error('Colonne SIREN introuvable.');
+
+  var voulues = ['SOURCE HORAIRES', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'];
+  var entete = sh.getRange(li, 1, 1, sh.getLastColumn()).getValues()[0];
+  var ou = {};
+  entete.forEach(function (h, k) { ou[normNom_(h).toUpperCase().trim()] = k; });
+  var large = sh.getLastColumn();
+  voulues.forEach(function (nom) {
+    if (ou[nom] == null) { sh.getRange(li, large + 1).setValue(nom); ou[nom] = large; large++; }
+  });
+
+  var par = {};
+  T.split('~').forEach(function (bout) {
+    var k = bout.indexOf('|');
+    if (k > 0) par[bout.slice(0, k)] = bout.slice(k + 1);
+  });
+
+  var n = sh.getLastRow() - li;
+  var grille = sh.getRange(li + 1, 1, n, large).getValues();
+  var poses = 0, muets = 0;
+  for (var i = 0; i < n; i++) {
+    var s = String(grille[i][en.SIREN] || '').replace(/[^0-9]/g, '');
+    if (!s || !par[s]) continue;
+    var h = horairesOsm_(par[s]);
+    if (!h) { muets++; continue; }
+    var ecrit = false;
+    ['LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'].forEach(function (j) {
+      if (!h[j]) return;
+      if (String(grille[i][ou[j]] || '').trim()) return;
+      grille[i][ou[j]] = h[j];
+      ecrit = true;
+    });
+    if (ecrit && !String(grille[i][ou['SOURCE HORAIRES']] || '').trim()) {
+      grille[i][ou['SOURCE HORAIRES']] = 'OpenStreetMap';
+    }
+    if (ecrit) poses++;
+  }
+  sh.getRange(li + 1, 1, n, large).setValues(grille);
+  tracerServeur_('SERVEUR', 'OSM HORAIRES',
+                 poses + ' fiche(s) avec des horaires, ' + muets + ' ecartee(s) (saison ou heures absentes)', '', '');
+  return poses;
+}
+
+function poserOsm(){var T='390872539=0297373231;777734039=0297467373;477733000=0297467126;878427566=0297234001;883637597=0297658602;843879818=0297261006;777903816=0297442398;855801072=0297350003;378786396=0299085250;850951633=0297689437;440985224=0297641827;800179491=0297419026;390375756=0297241232;349974931=0257900002;378830848=0297017480;439512054=0297621111;898530563=0297651303;394280697=0297882626;531068864=0297217505;382385276=0297570206;350849451=0297655030;531515716=0297335367;841335227=0297335367;881202998=0297662112;981305212=0297309161;383348521=0297473429;788033371=0297234001;490411477=0297865740;523499846=0297261006;818337073=0297931286;449674548=0297356660;393755848=0297845475;378829295=0297442398;775617095=0297371256;378831440=0297505348;350042644=0297702235;984674705=0297624722;810335620=0230190130;799141924=0297608843;425014735=0297365989;383334869=0643753033;444297576=0297651303;524101557=0297211919;381144252=0297600569;944887371=0214992407;914442702=0297564833;487645566=0297570438;950985192=0297347170;809747033=0297501734;432926525=0297502252;951697655=0297417425;990406035=0297233335;423041888=0297027000;777832635=0297651880;383844693=0297442800;813473378=0297862480;800383366=0297548000;903590305=0607664657;409144391=0297116368;511803462=0297080808;825096779=0297475152;403998479=0297235858;517598108=0297110242;440109692=0297211681;841386279=0650549541;821881091=0297811601;834193450=0297507870;377664743=0297557675;928797398=0297832121;490429651=0297250201;350404166=0297502437;722013851=0297673330;803414291=0297257680;832064539=0299082665;491413761=0695613256;820027688=0297553535;478863665=0297593325;995244472=0297255123;442286548=0299937411;419904289=0297236992;514944883=0297236890;490202157=0297236653;842243644=0297653290;524147238=0297650405;889723078=0297362401;505019679=0297361295;534033881=0297361338;753617042=0299081775;500396080=0299080464;518302195=0297230922;304195167=0297334118;881614333=0297117136;524708112=0297212749;445131717=0297751862;948053640=0297656351;533652582=0297618387;391676244=0297348425;889085346=0626575573;841399546=0297482466;879730380=0297502314;943195982=0670652711;350344198=0297222255;452985914=0299081017;532804226=0297402600;441137692=0297766461;108515065=0297766461;384750493=0299080636;810504563=0986180130;911621662=0953323331;994490126=0297528829;499442465=0297563730;501774343=0297560416;502073745=0297520504;939368361=0297276299;934489717=0299085810;803368265=0297410389;952481265=0297624691;802828707=0610777053;934118613=0297555368;497830448=0297740701;421804279=0297740701;452417876=0297234111;399000926=0297234294;939768164=0297667666;982346108=0297220437;927894287=0297076257;452633753=0297328663;948814769=0297850309;412320038=0297222035;838557221=0299082344;881966097=0299085411;834911422=0299932182;850383241=0299700690;490842507=0299907460;495347742=0297761931;944250612=0297322267;910201714=0973591609;531381051=0297291308;510447550=0297315942;344522693=0297318126;904403466=0297692323;844661033=0951129106;103268678=0297212881;377553060=0297641724;829473487=0297306127;979355567=0297641409;378684831=0297395123;943036830=0297112463;533461307=0297751060;411849342=0297415656;999532286=0987781744;851924191=0297132950;881036578=0297607996;824139943=0297331715;939758637=0297298159;878810795=0297858180;938026333=0297441739;487860645=0297346513;453096687=0297290535;947514527=0649217066;835308412=0222214432;981639354=0222217728;848696969=0297433694;411371909=0297434755;898498571=0297264652;839198967=0297308021;403378243=0297250511;500459029=0297575679;909832255=0297440577;503611808=0297660613;420551962=0297430200;478485568=0297436919;323825729=0297631690;987831963=0297476982;810585406=0956332045;390266294=0297612325;339607772=0297408205;913150264=0297615090;514111319=0297462700;433891132=0297540834;507935591=0297684980;823745104=0297473491;883341141=0297476991;420471187=0297549654;532619392=0981422949;940624190=0297425674;523423184=0297477605;528666480=0297473491;995148673=0297613525;490865177=0297464262;821190790=0297537138;384893079=0297440198;881384192=0297240537;788607604=0297570523;753997956=0297705109;453458804=0297557878;983859927=0297267760;847713708=0297502056;502749856=0298925352;941625162=0230859066;947921631=0297089105;821150901=0297235155;441264041=0297433752;437832769=0297452288;450115746=0297419050;885061192=0299723108;809526833=0297070292;388138000=0297340203;431896851=0299088458;443101829=0297393938;539064410=0297328855;385211743=0297569082;950937201=0241093908;344743505=0297400450;510206105=0256546043;390115913=0297418953;511564221=0297662750;329626261=0297683250;487421349=0297683250;775678584=0972720202;552120222=0297682469;998823504=0222760460;813755345=0984412751;328161245=0297681828;388828279=0297440054;403252679=0297474377;444927149=0297511346;318906443=0297814300;383246253=0297451314;450152921=0297655873;478826746=0617471798;215600032=0297447049;215600057=0297537559;215602095=0297276169;215602111=0297435013;215602343=0297309525;215602632=0297576027';var par={};T.split(';').forEach(function(p){var a=p.split('=');if(a.length===2)par[a[0]]=a[1];});var reg=lireReglages_();var src=SpreadsheetApp.openById(String(reg.prospection_fichier_id||'').trim());var vise=String(reg.prospection_onglet||'BASE').trim();var sh=src.getSheetByName(vise);if(!sh)throw new Error('Onglet '+vise+' introuvable.');var li=Number(reg.prospection_entete_ligne)||3;var en=colonnesBase_(sh,li);var cT=-1;sh.getRange(li,1,1,sh.getLastColumn()).getValues()[0].forEach(function(h,k){if(normNom_(h).toUpperCase().trim()==='TEL')cT=k;});if(cT<0||en.SIREN==null)throw new Error('Colonne TEL ou SIREN introuvable.');var n=sh.getLastRow()-li;var rg=sh.getRange(li+1,cT+1,n,1),col=rg.getValues(),sir=sh.getRange(li+1,en.SIREN+1,n,1).getValues(),nT=0;for(var i=0;i<n;i++){var s=String(sir[i][0]||'').replace(/[^0-9]/g,'');var d=par[s];if(!d)continue;if(String(col[i][0]||'').trim())continue;col[i][0]=d.slice(0,2)+' '+d.slice(2,4)+' '+d.slice(4,6)+' '+d.slice(6,8)+' '+d.slice(8,10);nT++;}rg.setValues(col);tracerServeur_('SERVEUR','OSM POSE',nT+' numero(s) pose(s) depuis OpenStreetMap','','');return nT;} function majBaseProspects() {
+  var ui = null;
+  try { ui = SpreadsheetApp.getUi(); } catch (eUi) { ui = null; }
+  var r;
+  try {
+    r = majBaseProspects_();
+  } catch (err) {
+    var mal = 'Mise à jour impossible : ' + String(err && err.message || err);
+    tracerServeur_('SERVEUR', 'BASE PROSPECTS MAJ', mal, '', '');
+    if (ui) return ui.alert(mal);
+    throw err;
+  }
+  var dit =
+    r.ajoutes + ' nouvelle(s) entreprise(s) ajoutée(s) à la base.\n\n' +
+    r.codes + ' code(s) NAF parcouru(s) sur ' + r.codesTotal + ', ' +
+    r.lus + ' établissement(s) lus.\n' +
+    (r.reste ? 'Il reste ' + r.reste + ' code(s) : la prochaine exécution reprendra là.\n' : 'Tour complet.\n') +
+    (r.sansZone ? '\n' + r.sansZone + ' sont dans une commune que la base ne connaissait pas : leur colonne ZONE est vide.\n' : '') +
+    (r.incidents ? '\n⚠ L\'annuaire a refusé des demandes : ' + r.incidents +
+                   '\nLe compte ci-dessus est donc incomplet. Relance dans quelques minutes.\n' : '') +
+    '\nElles arrivent sans numéro : l\'annuaire officiel n\'en fournit pas.';
+  if (ui) ui.alert(dit);
+}
+
+function majBaseProspects_(options) {
+  options = options || {};
+  var reg = lireReglages_();
+  if (!options.force && String(reg.prospection_maj_active || 'OUI').toUpperCase() === 'NON') {
+    return { ajoutes: 0, lus: 0, codes: 0, codesTotal: 0, reste: 0, sansZone: 0, inactif: true };
+  }
+  var id = String(options.fichier || reg.prospection_fichier_id || '').trim();
+  if (!id) throw new Error('Renseigne prospection_fichier_id dans l\'onglet REGLAGES.');
+  var dep = String(options.departement || reg.prospection_maj_departement || '56').trim();
+  var ligneEntete = Number(options.entete || reg.prospection_entete_ligne) || 3;
+  var vise = String(options.onglet != null ? options.onglet : (reg.prospection_onglet || 'BASE')).trim();
+  var seuilBtp = Number(options.seuilBtp || reg.prospection_effectif_min_btp) || 6;
+  var cle = String(options.cle || reg.prospection_insee_cle || '').trim();
+  if (!cle) {
+    throw new Error('Il manque la clé de l\'API Sirene. Crée-la sur portail-api.insee.fr ' +
+                    '(compte gratuit, application en mode simple, souscription à l\'API Sirene ' +
+                    'en accès public) puis colle-la dans REGLAGES, ligne prospection_insee_cle.');
+  }
+
+  var src = SpreadsheetApp.openById(id);
+  var sh = src.getSheetByName(vise);
+  if (!sh) throw new Error('Aucun onglet « ' + vise + ' » dans le fichier de prospection.');
+
+  var liste = secteursProspection_(src);
+  if (!liste.secteurs.length) throw new Error('Aucun code NAF lisible dans l\'onglet LISTES.');
+
+  /* Un couple (code NAF, secteur) par passage : un même code ne sert qu'un
+     secteur, et l'ordre de LISTES fixe l'ordre du tour. */
+  var travaux = [];
+  liste.secteurs.forEach(function (s) {
+    s.nafs.forEach(function (n) { travaux.push({ naf: n, secteur: s }); });
+  });
+
+  var en = colonnesBase_(sh, ligneEntete);
+  if (en.SOCIETE == null || en.SIREN == null) {
+    throw new Error('L\'onglet « ' + vise + ' » n\'a pas de colonne SIREN : impossible de reconnaître les nouvelles.');
+  }
+
+  var nLignes = Math.max(0, sh.getLastRow() - ligneEntete);
+  var large = sh.getLastColumn();
+  var grille = nLignes ? sh.getRange(ligneEntete + 1, 1, nLignes, large).getValues() : [];
+  var connus = {}, zoneDe = {}, voisins = {};
+  grille.forEach(function (r) {
+    var si = String(r[en.SIREN] == null ? '' : r[en.SIREN]).replace(/\D/g, '');
+    if (si) connus[si] = 1;
+    if (en.COMMUNE != null && en.ZONE != null) {
+      var v = normNom_(r[en.COMMUNE]), z = String(r[en.ZONE] || '').trim();
+      if (v && z && !zoneDe[v]) zoneDe[v] = z;
+    }
+    if (en.ADRESSE != null) {
+      var a = normNom_(r[en.ADRESSE]);
+      if (a) voisins[a] = (voisins[a] || 0) + 1;
+    }
+  });
+
+  var props = PropertiesService.getScriptProperties();
+  var depart = options.depuis != null ? Number(options.depuis)
+                                      : Number(props.getProperty(CURSEUR_MAJ_)) || 0;
+  if (depart >= travaux.length) depart = 0;
+
+  incidentsMaj_ = {};
+  var debut = Date.now(), lus = 0, codes = 0, ajouts = [], sansZone = 0, i;
+  for (i = depart; i < travaux.length; i++) {
+    if (Date.now() - debut > BUDGET_MAJ_MS_) break;
+    var t = travaux[i];
+    codes++;
+    var pages = lireAnnuaire_(t.naf, dep, debut, cle);
+    pages.forEach(function (e) {
+      lus++;
+      var si = String(e.siren || '').replace(/\D/g, '');
+      /* Sirene rend des ÉTABLISSEMENTS : celui-ci est forcément dans le département,
+         plus de siège social parisien à démêler. Une entreprise qui a plusieurs
+         établissements ici ne fait qu'une fiche — la clé de PROSPECTS est le SIREN. */
+      if (!si || connus[si]) return;
+      /* L'INSEE interdit de publier un établissement non diffusible. */
+      if (String(e.statutDiffusionEtablissement || 'O').toUpperCase() === 'P') return;
+      var periode = periodeCourante_(e);
+      if (String(periode.etatAdministratifEtablissement || 'A').toUpperCase() === 'F') return;
+      var tr = String(e.trancheEffectifsEtablissement || 'NN');
+      /* La règle de Simon : le BTP n'entre qu'à partir de six salariés, sauf la
+         peinture (43.34Z), qui est son métier et qu'il veut en entier. */
+      if (/BTP/i.test(t.secteur.nom) && t.naf !== '43.34Z' &&
+          (TRANCHE_MINI_[tr] || 0) < seuilBtp) return;
+
+      connus[si] = 1;
+      var adr = e.adresseEtablissement || {};
+      var commune = String(adr.libelleCommuneEtablissement || '').trim().toUpperCase();
+      var zone = zoneDe[normNom_(commune)] || '';
+      if (!zone) sansZone++;
+      var adresse = adresseSiege_(adr);
+      var nb = (voisins[normNom_(adresse)] || 0) + 1;
+      voisins[normNom_(adresse)] = nb;
+      var effectif = TRANCHES_INSEE_[tr] || 'NC';
+
+      var l = new Array(large).fill('');
+      var poser = function (nom, v) { if (en[nom] != null) l[en[nom]] = v; };
+      poser('SOCIETE', nomEtablissement_(e));
+      poser('SECTEUR', t.secteur.nom);
+      poser('ACTIVITE', String(periode.activitePrincipaleEtablissement || t.naf));
+      poser('COMMUNE', commune);
+      poser('ZONE', zone);
+      poser('ADRESSE', adresse);
+      poser('EFFECTIF', effectif);
+      /* Poids du secteur + points d'effectif. **Le bonus de voisinage n'est pas
+         appliqué** : la règle exacte de Simon (0 à 2 selon le nombre
+         d'établissements à la même adresse) n'a pas pu être relue, et une
+         priorité inventée fausserait l'ordre de sa file. À trancher avec lui. */
+      poser('PRIORITE', t.secteur.poids + (liste.bareme[effectif.toUpperCase()] || 0));
+      poser('TYPE', 'Société');
+      poser('SIREN', si);
+      poser('SOURCE', 'Sirene INSEE (maj auto)');
+      poser('MEME_ADRESSE', nb);
+      ajouts.push(l);
+    });
+  }
+
+  if (ajouts.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, ajouts.length, large).setValues(ajouts);
+  }
+  var fini = i >= travaux.length;
+  props.setProperty(CURSEUR_MAJ_, fini ? '0' : String(i));
+
+  var refus = resumeIncidents_();
+  tracerServeur_('SERVEUR', 'BASE PROSPECTS MAJ',
+    ajouts.length + ' nouvelle(s) sur ' + lus + ' lue(s), ' + codes + ' code(s) NAF' +
+    (refus ? ' — REFUS : ' + refus : ''), '', '');
+  return { ajoutes: ajouts.length, lus: lus, codes: codes, codesTotal: travaux.length,
+           reste: fini ? 0 : travaux.length - i, sansZone: sansZone,
+           incidents: resumeIncidents_() };
+}
+
+/** Les refus de l'annuaire, en une phrase lisible, ou rien s'il n'y en a pas eu. */
+function resumeIncidents_() {
+  var p = [];
+  for (var k in incidentsMaj_) {
+    if (Object.prototype.hasOwnProperty.call(incidentsMaj_, k)) {
+      p.push(k + ' × ' + incidentsMaj_[k]);
+    }
+  }
+  return p.join(', ');
+}
+
+/** Les colonnes de la base de prospection, par nom d'en-tête. */
+function colonnesBase_(sh, ligneEntete) {
+  var en = {};
+  if (sh.getLastColumn() === 0) return en;
+  sh.getRange(ligneEntete, 1, 1, sh.getLastColumn()).getValues()[0].forEach(function (h, k) {
+    var n = normNom_(h).toUpperCase().replace(/\s+/g, ' ').trim();
+    if (n.indexOf('NOM DE LA SOC') === 0 || n === 'SOCIETE') en.SOCIETE = k;
+    else if (n === 'SECTEUR') en.SECTEUR = k;
+    else if (n === 'ACTIVITE') en.ACTIVITE = k;
+    else if (n === 'VILLE' || n === 'COMMUNE') en.COMMUNE = k;
+    else if (n === 'ZONE') en.ZONE = k;
+    else if (n.indexOf('ADRESSE') === 0) en.ADRESSE = k;
+    else if (n === 'EFFECTIF') en.EFFECTIF = k;
+    else if (n === 'PRIORITE') en.PRIORITE = k;
+    else if (n === 'SIREN') en.SIREN = k;
+    else if (n === 'TYPE') en.TYPE = k;
+    else if (n === 'SOURCE') en.SOURCE = k;
+    else if (n.indexOf('NB A LA MEME ADRESSE') === 0) en.MEME_ADRESSE = k;
+  });
+  return en;
+}
+
+/**
+ * Toutes les entreprises d'un code NAF dans le département. La première page
+ * donne le total, les suivantes partent **groupées** : l'annuaire répond en
+ * trois secondes, et les demander une par une mettrait un quart d'heure là où
+ * `fetchAll` met une minute.
+ */
+function lireAnnuaire_(naf, dep, debut, cle) {
+  var out = [], curseur = '*', tours = 0;
+  /* Sirene pagine par curseur et non par numéro de page : chaque réponse dit
+     par où continuer, et le curseur cesse de bouger quand on a tout lu. */
+  while (tours < 40) {
+    if (Date.now() - debut > BUDGET_MAJ_MS_) break;
+    var r = recupererJson_(urlAnnuaire_(naf, dep, curseur), cle);
+    if (!r) break;
+    var lot = r.etablissements || [];
+    out = out.concat(lot);
+    var h = r.header || {};
+    var suivant = String(h.curseurSuivant || '');
+    if (!lot.length || !suivant || suivant === curseur) break;
+    curseur = suivant;
+    tours++;
+    Utilities.sleep(PAUSE_SIRENE_MS_);
+  }
+  return out;
+}
+
+/* Ce que l'annuaire a refusé pendant la mise à jour en cours. Sans ce compte,
+   un service qui répond « trop de requêtes » donnerait exactement le même
+   « 0 nouvelle entreprise » qu'un département déjà complet — c'est arrivé au
+   premier essai réel du 9 octobre, et il a fallu le deviner. */
+var incidentsMaj_ = {};
+
+function noterIncident_(cle) {
+  incidentsMaj_[cle] = (incidentsMaj_[cle] || 0) + 1;
+}
+
+/* L'annuaire public limite le débit par adresse IP, et les adresses de Google
+   sont partagées entre tous les scripts du monde : un 429 est normal, il faut
+   simplement respirer et redemander. */
+function recupererJson_(url, cle) {
+  var essais = 3, r, code, i;
+  for (i = 1; i <= essais; i++) {
+    try {
+      /* Un agent identifié : l'annuaire renvoyait 502 à l'agent par défaut d'Apps
+         Script (la même URL répondait 200 depuis un navigateur, le 9 octobre). */
+      var tetes = { 'Accept': 'application/json',
+                    'User-Agent': 'BreizhBrillance-prospection/1.0' };
+      if (cle) tetes['X-INSEE-Api-Key-Integration'] = cle;
+      r = UrlFetchApp.fetch(url, {
+        muteHttpExceptions: true,
+        followRedirects: true,
+        headers: tetes
+      });
+      code = r.getResponseCode();
+      if (code === 200) {
+        try { return JSON.parse(r.getContentText()); }
+        catch (eJson) { noterIncident_('reponse illisible'); return null; }
+      }
+      /* 404 = aucun résultat chez Sirene, pas une panne : silence. */
+      if (code === 404) return null;
+      if (code !== 429 && code < 500) { noterIncident_('HTTP ' + code); return null; }
+      noterIncident_('HTTP ' + code);
+    } catch (e) {
+      var quoi = String((e && e.message) || e);
+      /* Une autorisation manquante doit **remonter**. Apps Script ne propose son écran
+         de consentement que si l'exception sort de la fonction : attrapée ici, elle
+         donnait un « 0 établissement lu » silencieux, et la portée n'était jamais
+         redemandée. C'est ce qui a coûté deux tours à blanc le 9 octobre. */
+      if (/permission|autoris/i.test(quoi)) throw e;
+      noterIncident_(quoi.slice(0, 80));
+      return null;
+    }
+    if (i < essais) Utilities.sleep(1200 * i);
+  }
+  return null;
+}
+
+/* ---------------------- le déclencheur ----------------------
+   Lundi, mercredi et vendredi à 6 h : la base est fraîche quand les commerciaux
+   attaquent la journée. Chaque exécution avance d'autant de codes NAF qu'elle
+   peut en quatre minutes et retient où elle s'est arrêtée. */
+function activerMajProspects() {
+  arreterMajProspects_(true);
+  [ScriptApp.WeekDay.MONDAY, ScriptApp.WeekDay.WEDNESDAY, ScriptApp.WeekDay.FRIDAY]
+    .forEach(function (j) {
+      ScriptApp.newTrigger(MAJ_PROSPECTS_).timeBased().onWeekDay(j).atHour(6)
+        .inTimezone('Europe/Paris').create();
+    });
+  SpreadsheetApp.getUi().alert(
+    'Mise à jour de la base activée : lundi, mercredi et vendredi vers 6 h.\n\n' +
+    'Elle ajoute les entreprises nouvellement créées dans les secteurs de ton onglet LISTES.\n' +
+    'Elles arrivent sans numéro de téléphone : l\'annuaire officiel n\'en fournit pas.\n\n' +
+    'Pour l\'arrêter : « 17. Arrêter la mise à jour automatique ».');
+}
+function arreterMajProspects_(silencieux) {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === MAJ_PROSPECTS_) { ScriptApp.deleteTrigger(t); n++; }
+  });
+  if (!silencieux) SpreadsheetApp.getUi().alert(n ? 'Mise à jour arrêtée.' : 'Elle n\'était pas activée.');
+  return n;
+}
+function arreterMajProspects() { arreterMajProspects_(false); }
