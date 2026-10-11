@@ -127,19 +127,29 @@
   .dlg-h{position:sticky;top:0;background:#fff;padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px}
   .dlg-b{max-height:65vh;overflow:auto;padding:8px 16px 16px}
   .cat{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--mut);margin:14px 0 6px}
-  /* Le planning du salarié : une bande de couleur par nature de chantier.
-     La couleur ne porte jamais seule — la pastille écrit la nature, et une
-     nature inconnue laisse la carte grise plutôt que de lui en inventer une. */
-  .chC{position:relative;cursor:pointer;margin-bottom:10px;
-       padding-left:17px;border-left:5px solid var(--nT, var(--line))}
+  /* Le planning du salarié : toute la carte prend la teinte de sa nature,
+     avec une bande franche à gauche. La couleur ne porte jamais seule — la
+     pastille écrit la nature, et une nature inconnue laisse la carte blanche
+     plutôt que de lui en inventer une. */
+  .card.chC{position:relative;cursor:pointer;margin-bottom:10px;
+       padding-left:16px;border-left:6px solid var(--nT, var(--line));
+       background:var(--nF, var(--card));
+       border-top-color:var(--nT, var(--line));
+       border-right-color:var(--nT, var(--line));
+       border-bottom-color:var(--nT, var(--line))}
   .chTete{display:flex;gap:10px;align-items:baseline}
   .chTete b{flex:1;font-size:16px;line-height:1.25}
   .chSous{margin-top:3px;color:var(--mut);font-size:13px}
   .chH{font-size:17px;color:var(--nI, var(--txt));margin-right:7px;
        font-variant-numeric:tabular-nums}
+  /* La pastille repasse en blanc : sur une carte teintée, c'est elle qui
+     doit ressortir, et son liseré reprend la couleur de la nature. */
   .chNat{display:inline-block;margin-top:9px;padding:3px 10px;border-radius:999px;
-         background:var(--nF, #eef0f3);color:var(--nI, var(--mut));
+         background:#fff;color:var(--nI, var(--mut));
+         border:1px solid var(--nT, var(--line));
          font-size:11px;font-weight:700;letter-spacing:.3px}
+  /* « À FAIRE » est gris clair : sur une carte teintée il disparaîtrait. */
+  .chC .vb-a{background:#fff}
   #sigOverlay{position:fixed;inset:0;z-index:60;background:#fff;display:flex;flex-direction:column;
     padding:calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom))}
   #sigOverlay.hide{display:none}
@@ -1089,11 +1099,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=67"></script>
-<script src="jspdf.umd.min.js?v=67"></script>
-<script src="police.js?v=67"></script>
-<script src="logo.js?v=67"></script>
-<script src="pdf.js?v=67"></script>
-<script src="app.js?v=67"></script>
+<script src="config.js?v=68"></script>
+<script src="jspdf.umd.min.js?v=68"></script>
+<script src="police.js?v=68"></script>
+<script src="logo.js?v=68"></script>
+<script src="pdf.js?v=68"></script>
+<script src="app.js?v=68"></script>
 </body>
 </html>

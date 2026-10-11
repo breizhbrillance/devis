@@ -299,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v67';
+var VERSION_APP = 'v68';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4123,13 +4123,15 @@ function jourLisible(iso){
    chaque encre tient le contraste sur son fond. Surtout, la couleur ne dit
    jamais rien toute seule — la pastille écrit la nature en toutes lettres,
    parce qu'un planning se lit aussi en plein soleil sur un écran sale.
-   t : la bande ; f : le fond de la pastille ; i : l'encre. */
+   t : la bande et le liseré ; f : le fond de la carte ; i : l'encre.
+   Les cinq fonds sont assez clairs pour que le texte noir y tienne plus de
+   14 fois le contraste minimal, et l'encre de l'heure plus de 4,5. */
 var NATURES_VUE = {
-  ENTRETIEN: { nom: 'Entretien',       t: '#2a78d6', f: '#e9f1fb', i: '#1b5aa8' },
-  VITRERIE:  { nom: 'Vitrages',        t: '#1baf7a', f: '#e7f7f1', i: '#0d7a54' },
-  CHANTIER:  { nom: 'Fin de chantier', t: '#eb6834', f: '#fdeee8', i: '#b04a1d' },
-  REMISE:    { nom: 'Remise en état',  t: '#6250d6', f: '#eeecfb', i: '#4a3ab0' },
-  FACADE:    { nom: 'Façade',          t: '#eda100', f: '#fdf3e0', i: '#8a5e00' }
+  ENTRETIEN: { nom: 'Entretien',       t: '#2a78d6', f: '#dfeafa', i: '#1b5aa8' },
+  VITRERIE:  { nom: 'Vitrages',        t: '#1baf7a', f: '#d8f2e8', i: '#0a6d4a' },
+  CHANTIER:  { nom: 'Fin de chantier', t: '#eb6834', f: '#fce3d9', i: '#a44418' },
+  REMISE:    { nom: 'Remise en état',  t: '#6250d6', f: '#e6e2fb', i: '#4a3ab0' },
+  FACADE:    { nom: 'Façade',          t: '#eda100', f: '#fbecd1', i: '#8a5e00' }
 };
 /* Une nature inconnue ne reçoit pas de couleur au hasard : la carte reste
    grise, et l'absence se voit. */
