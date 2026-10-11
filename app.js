@@ -299,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v64';
+var VERSION_APP = 'v66';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -456,7 +456,7 @@ function repondreConf(oui){
 var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','ePro','eAg1','eAg2','eAd1','eAd2'];
 var ECRAN_VU = '';
 /* Les trois lieux de la barre du bas, et l'onglet qui s'allume sur chacun. */
-var ONGLET_ECRAN = { e1:'devis', e6:'liste', ePro:'phoning' };
+var ONGLET_ECRAN = { e1:'devis', e6:'liste', ePro:'phoning', eAg1:'planning' };
 /* Où en était le devis en cours quand on l'a quitté pour les devis faits ou
    pour le phoning : l'onglet « Devis » y ramène au lieu de tout reprendre. */
 var ETAPE_DEVIS = 1;
@@ -474,7 +474,10 @@ function montrer(id){
    Pendant la modification d'un devis elle disparaît aussi — on ne quitte pas
    une correction en cours d'un appui distrait. */
 function ongletsIci(){
-  if(!(CFG && CFG.prospection)) return false;
+  /* La barre n'a de sens que s'il y a un troisième lieu : la prospection, le
+     planning de celui qui fait aussi des chantiers, ou les deux. Sans cela,
+     deux onglets ne valent pas une barre. */
+  if(!(CFG && (CFG.prospection || CFG.planning))) return false;
   if(enModification()) return false;
   return !!ONGLET_ECRAN[ECRAN_VU];
 }
@@ -487,15 +490,23 @@ function majOnglets(){
   /* Sa hauteur dépend du dégagement du bas, qui varie d'un téléphone à
      l'autre : on la mesure une fois posée plutôt que de l'écrire en dur. */
   if(ici) document.documentElement.style.setProperty('--hOngl', b.offsetHeight + 'px');
+  /* Chaque lieu n'apparaît que pour qui y a droit : le classeur commande,
+     pas l'écran. */
+  $('ongP').classList.toggle('hide', !(CFG && CFG.prospection));
+  $('ongPl').classList.toggle('hide', !(CFG && CFG.planning));
   $('ongD').classList.toggle('on', ou === 'devis');
   $('ongL').classList.toggle('on', ou === 'liste');
   $('ongP').classList.toggle('on', ou === 'phoning');
+  $('ongPl').classList.toggle('on', ou === 'planning');
 }
 /* L'onglet « Devis » reprend le devis en cours là où il en était ; il n'en
    commence pas un neuf, qui effacerait la saisie entamée. */
 function ongletDevis(){
   etape(ETAPE_DEVIS >= 1 && ETAPE_DEVIS <= 4 ? ETAPE_DEVIS : 1);
 }
+/* Le planning du commercial qui pose lui-même des chantiers : le même écran
+   que celui du salarié, avec les seuls chantiers à son nom. */
+function ongletPlanning(){ ecranPlanning(); }
 /* La barre du bas ne garde que le bouton Retour sur les écrans hors parcours :
    « Mes devis » et les photos ne doivent jamais être une impasse. */
 function barreRetour(){

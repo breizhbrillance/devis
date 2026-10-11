@@ -67,8 +67,13 @@ var RESULTATS_APPEL_ = ['nrp', 'msg', 'rappel', 'interesse', 'rdv', 'refus', 'fa
 /* JOURS, PLAGES et HEURES_SEMAINE décrivent la disponibilité du salarié ; sans
    elles, le planning ne saurait pas quel jour poser quoi. Vides, on retombe sur
    du lundi au vendredi, 8h-12h / 14h-17h, 35 heures. */
+/* PLANIFIABLE : l'application a-t-elle le droit de lui poser du travail
+   d'elle-même, quand un devis est signé ? OUI par défaut, et NON pour
+   quelqu'un qui fait des chantiers sans être sur le planning tournant — le
+   gérant qui dépanne, le commercial qui pose lui-même ses vitrages. Celui-là
+   voit son planning sur son téléphone, mais rien ne s'y ajoute tout seul. */
 var ENTETES_PRESTATAIRES_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'TELEPHONE',
-                             'JOURS', 'PLAGES', 'HEURES_SEMAINE'];
+                             'JOURS', 'PLAGES', 'HEURES_SEMAINE', 'PLANIFIABLE'];
 /* Les comptes qui voient tout : les plannings de chacun, les devis de chacun,
    et les chiffres. Mêmes colonnes que les deux autres populations, pour que
    la façon d'ajouter ou de retirer quelqu'un ne change jamais. */
@@ -683,7 +688,10 @@ function config_(com) {
     /* Le module de prospection téléphonique s'affiche ou non. La liste des
        prospects, elle, ne voyage pas ici : elle est trop grosse pour être
        rechargée à chaque connexion, et se demande par l'action « prospects ». */
-    prospection: String(reg.prospection_active || 'OUI').toUpperCase() !== 'NON'
+    prospection: String(reg.prospection_active || 'OUI').toUpperCase() !== 'NON',
+    /* Ce commercial fait-il aussi des chantiers ? Si oui, l'application lui
+       ouvre son planning, en plus de ses devis. */
+    planning: aussiPrestataire_(com && com.nom)
   };
 }
 
@@ -722,6 +730,13 @@ function doPost(e) {
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
            'prospects', 'appel', 'historique'];
+    /* Le commercial qui fait aussi des chantiers lit son planning et pointe.
+       On ne lui ouvre que ces deux actions, et seulement s'il figure vraiment
+       parmi les prestataires : c'est la liste qui protège, pas l'écran. Et
+       « planning » ne rend jamais que les chantiers à son nom. */
+    if (!admin && !agent && aussiPrestataire_(com.nom)) {
+      permis = permis.concat(['planning', 'chantier']);
+    }
     if (permis.indexOf(d.action) < 0) {
       tracerServeur_(com.nom, 'ACTION REFUSEE', d.action, '', d.appareil || '');
       return reponse_({ ok: false, erreur: 'action non autorisée pour ce compte' });
@@ -1915,11 +1930,15 @@ function prestatairesPlanning_() {
   var iNom = en.indexOf('NOM'), iActif = en.indexOf('ACTIF');
   var iJours = en.indexOf('JOURS'), iPlages = en.indexOf('PLAGES');
   var iHeures = en.indexOf('HEURES_SEMAINE');
+  var iPlan = en.indexOf('PLANIFIABLE');
   if (iNom < 0) return [];
   return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
     .filter(function (r) {
       return String(r[iNom]).trim() &&
-             (iActif < 0 || String(r[iActif]).toUpperCase() !== 'NON');
+             (iActif < 0 || String(r[iActif]).toUpperCase() !== 'NON') &&
+             /* Vide vaut OUI : les fiches d'avant cette colonne gardent leur
+                place dans la répartition. */
+             (iPlan < 0 || String(r[iPlan]).toUpperCase().trim() !== 'NON');
     })
     .map(function (r) {
       var plages = plagesTravail_(iPlages >= 0 ? r[iPlages] : '');
@@ -3302,6 +3321,15 @@ function lirePrestataires_() {
       return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(),
                code: String(r[2] || '').trim(), role: 'PRESTATAIRE' };
     });
+}
+
+/* Un commercial peut faire des chantiers lui-même. Son rôle reste commercial —
+   il établit des devis — mais son planning doit lui parvenir. On le reconnaît
+   à sa présence parmi les prestataires actifs, sous le même nom. */
+function aussiPrestataire_(nom) {
+  var n = normNom_(nom), oui = false;
+  lirePrestataires_().forEach(function (p) { if (normNom_(p.nom) === n) oui = true; });
+  return oui;
 }
 
 /**
