@@ -29,7 +29,8 @@ const P = (o) => EN_P.map(h => o[h] !== undefined ? o[h] : '');
 
 const EN_C = ['ID', 'NUMERO', 'CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES', 'DATE', 'HEURE',
   'PRESTATAIRE', 'STATUT', 'ARRIVEE', 'DEPART', 'MINUTES', 'PRESTATIONS_FAITES',
-  'SIGNALEMENT', 'PHOTOS', 'NOTE', 'CREE_LE', 'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT'];
+  'SIGNALEMENT', 'PHOTOS', 'NOTE', 'CREE_LE', 'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT',
+  'NATURE'];
 const C = (o) => EN_C.map(h => o[h] !== undefined ? o[h] : '');
 
 function poser(prestataires) {
@@ -41,11 +42,20 @@ function poser(prestataires) {
   creer('CHANTIERS', [EN_C,
     C({ ID: 'CH-0001', CLIENT: 'MENGUY ARCHITECTES', ADRESSE: '1 Allée Jules Verne',
         CP: '56610', VILLE: 'Arradon', DATE: j(3), HEURE: '07:00',
-        PRESTATAIRE: 'SIMON LG', STATUT: 'PLANIFIE', NOTE: 'Locaux et vitrages' }),
+        PRESTATAIRE: 'SIMON LG', STATUT: 'PLANIFIE', NOTE: 'Locaux et vitrages',
+        NATURE: 'VITRERIE' }),
     C({ ID: 'CH-0002', CLIENT: 'LE LOCAL', ADRESSE: '14 Allée de Noyalo', CP: '56450',
         VILLE: 'Theix-Noyalo', DATE: j(2), HEURE: '08:00',
-        PRESTATAIRE: 'MAXIME', STATUT: 'PLANIFIE' })]);
-  creer('DEVIS', [['NUMERO', 'DATE', 'COMMERCIAL', 'CLIENT', 'TOTAL_HT', 'STATUT', 'SIGNE']]);
+        PRESTATAIRE: 'MAXIME', STATUT: 'PLANIFIE', NATURE: 'ENTRETIEN' }),
+    C({ ID: 'CH-0003', NUMERO: 'DEV-2026-SL-0009', CLIENT: 'ANCIEN CLIENT',
+        VILLE: 'Vannes', DATE: j(4), HEURE: '10:00',
+        PRESTATAIRE: 'SIMON LG', STATUT: 'PLANIFIE' }),
+    C({ ID: 'CH-0004', CLIENT: 'SANS RIEN', VILLE: 'Vannes', DATE: j(5), HEURE: '15:00',
+        PRESTATAIRE: 'SIMON LG', STATUT: 'PLANIFIE' })]);
+  /* Un devis ancien, dont le chantier a été posé avant la colonne NATURE :
+     sa couleur doit quand même arriver, reprise du devis. */
+  creer('DEVIS', [['NUMERO', 'DATE', 'COMMERCIAL', 'CLIENT', 'TOTAL_HT', 'STATUT', 'SIGNE', 'NATURE'],
+    ['DEV-2026-SL-0009', j(-10), 'SIMON LG', 'ANCIEN CLIENT', 900, 'SIGNE', 'OUI', 'REMISE']]);
   creer('LIGNES', [['NUMERO', 'ORDRE', 'CATEGORIE', 'REFERENCE', 'DESIGNATION', 'DETAIL',
     'QTE', 'UNITE', 'PU_HT', 'REMISE_PCT', 'TYPE', 'TVA', 'TOTAL_HT']]);
   creer('CATALOGUE', [['CATEGORIE', 'DESIGNATION', 'DETAIL', 'UNITE', 'PU_HT', 'TVA', 'TYPE',
@@ -90,11 +100,27 @@ T('il garde son catalogue de commercial', Array.isArray(r.config.catalogue), typ
 r = rep(g, { action: 'planning', nom: 'SIMON LG', code: 'ab1!' });
 T('l\'action planning passe', r.ok === true, r);
 T('elle ne rend que les chantiers à son nom',
-  r.chantiers.length === 1 && r.chantiers[0].client === 'MENGUY ARCHITECTES',
+  r.chantiers.length === 3 && r.chantiers.every(c => c.client !== 'LE LOCAL'),
   r.chantiers.map(c => c.client));
 T('avec l\'heure lisible', r.chantiers[0].heure === '07:00', r.chantiers[0].heure);
 T('celui de Maxime ne lui est pas servi',
   !r.chantiers.some(c => c.client === 'LE LOCAL'), r.chantiers.map(c => c.client));
+
+/* ---------- 2 bis. la nature voyage avec le chantier ---------- */
+const parId = {}; r.chantiers.forEach(c => { parId[c.id] = c; });
+T('le chantier porte sa nature', parId['CH-0001'].nature === 'VITRERIE',
+  parId['CH-0001'] && parId['CH-0001'].nature);
+T('un chantier pos\u00e9 avant la colonne la reprend de son devis',
+  parId['CH-0003'].nature === 'REMISE', parId['CH-0003'].nature);
+T('et sans devis ni colonne, elle reste vide plut\u00f4t que devin\u00e9e',
+  parId['CH-0004'].nature === '', parId['CH-0004'].nature);
+const tab = g.tableauAdmin_();
+const parIdA = {}; tab.chantiers.forEach(c => { parIdA[c.id] = c; });
+T('l\'\u00e9cran du g\u00e9rant re\u00e7oit la nature lui aussi',
+  parIdA['CH-0001'].nature === 'VITRERIE' && parIdA['CH-0002'].nature === 'ENTRETIEN',
+  [parIdA['CH-0001'].nature, parIdA['CH-0002'].nature]);
+T('avec le m\u00eame repli sur le devis',
+  parIdA['CH-0003'].nature === 'REMISE', parIdA['CH-0003'].nature);
 
 /* ---------- 3. il pointe comme un salarié ---------- */
 r = rep(g, { action: 'chantier', nom: 'SIMON LG', code: 'ab1!',

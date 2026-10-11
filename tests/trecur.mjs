@@ -38,12 +38,13 @@ const iso = (d) => {
 
 const EN_R = ['ID', 'CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES', 'FREQUENCE', 'JOUR',
   'JOUR_MOIS', 'HEURE', 'DUREE_MIN', 'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF',
-  'PRESTATIONS', 'NOTE'];
+  'NATURE', 'PRESTATIONS', 'NOTE'];
 const R = (o) => EN_R.map(h => o[h] !== undefined ? o[h] : '');
 
 const EN_C = ['ID', 'NUMERO', 'CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES', 'DATE', 'HEURE',
   'PRESTATAIRE', 'STATUT', 'ARRIVEE', 'DEPART', 'MINUTES', 'PRESTATIONS_FAITES',
-  'SIGNALEMENT', 'PHOTOS', 'NOTE', 'CREE_LE', 'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT'];
+  'SIGNALEMENT', 'PHOTOS', 'NOTE', 'CREE_LE', 'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT',
+  'NATURE'];
 const C = (o) => EN_C.map(h => o[h] !== undefined ? o[h] : '');
 
 function poser(series, chantiers) {
@@ -74,7 +75,7 @@ const HEBDO_JEUDI = {
   ID: 'R-001', CLIENT: 'LOCAUX QUAI OUEST', ADRESSE: '5 Rue Joseph Le Brix',
   CP: '56000', VILLE: 'Vannes', ACCES: 'Clé sous le pot',
   FREQUENCE: 'HEBDO', JOUR: 'JEUDI', HEURE: '11:30', DUREE_MIN: 60,
-  PRESTATAIRE: 'MAXIME', DEBUT: jour(2026, 8, 27), ACTIF: 'OUI',
+  PRESTATAIRE: 'MAXIME', DEBUT: jour(2026, 8, 27), ACTIF: 'OUI', NATURE: 'ENTRETIEN',
   PRESTATIONS: 'Sols, sanitaires, poubelles'
 };
 
@@ -110,6 +111,8 @@ T('la fiche de travail vient de la série',
   un.NOTE === 'Sols, sanitaires, poubelles', un.NOTE);
 T('la clé dit de quelle occurrence il vient',
   un.RECURRENT === 'R-001|2026-10-15', un.RECURRENT);
+T('la nature de la série descend sur le chantier',
+  un.NATURE === 'ENTRETIEN', un.NATURE);
 T('les identifiants se suivent', un.ID === 'CH-0001' && p[1].ID === 'CH-0002',
   [un.ID, p[1].ID]);
 
@@ -290,7 +293,25 @@ g = poser([{ ID: 'R-011', CLIENT: 'JOUR FAUX', FREQUENCE: 'HEBDO', JOUR: 'tous l
 b = g.genererRecurrents_();
 T('un jour qui ne veut rien dire ne pose rien', b.poses === 0, b);
 
-/* ---------- 16. l'heure reste une heure ---------- */
+/* ---------- 16. la nature, et son absence ---------- */
+/* Une série sans nature n'en invente pas une : « natureDevis_ » rendrait
+   « CHANTIER » pour une cellule vide, et tout le planning serait orange. */
+g = poser([Object.assign({}, HEBDO_JEUDI, { ID: 'R-020', NATURE: '' })]);
+g.genererRecurrents_();
+T('une série sans nature laisse le chantier sans nature',
+  poses().every(x => String(x.NATURE || '') === ''), poses()[0].NATURE);
+T('et le téléphone la reçoit vide, pas devinée',
+  g.planningDe_('MAXIME').every(c => c.nature === ''),
+  g.planningDe_('MAXIME')[0].nature);
+
+g = poser([Object.assign({}, HEBDO_JEUDI, { ID: 'R-021', NATURE: 'vitrages' })]);
+g.genererRecurrents_();
+T('une nature écrite à la main est normalisée',
+  poses()[0].NATURE === 'VITRERIE', poses()[0].NATURE);
+T('et elle arrive telle quelle sur le téléphone',
+  g.planningDe_('MAXIME')[0].nature === 'VITRERIE', g.planningDe_('MAXIME')[0].nature);
+
+/* ---------- 17. l'heure reste une heure ---------- */
 /* Le tableur range « 08:00 » comme une date du 30 décembre 1899. Recopiée
    telle quelle, elle arrivait sur l'écran du gérant sous la forme
    « Sat Dec 30 1899 08:00:00 GMT+0009 ». */
@@ -314,7 +335,7 @@ T('une heure tapée à la main dans le tableur se lit sur le téléphone',
 T('et sur l\'écran du gérant',
   g.tableauAdmin_().chantiers[0].heure === '09:00', g.tableauAdmin_().chantiers[0].heure);
 
-/* ---------- 17. la nuit avance l'horizon toute seule ---------- */
+/* ---------- 18. la nuit avance l'horizon toute seule ---------- */
 /* Sans cela l'horizon se viderait semaine après semaine et le salarié
    finirait par ne plus rien voir sur son téléphone. */
 g = poser([HEBDO_JEUDI]);
