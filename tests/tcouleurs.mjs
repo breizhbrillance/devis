@@ -6,11 +6,16 @@
    seule — la pastille écrit la nature, parce qu'un planning se lit en plein
    soleil, sur un écran sale, par quelqu'un qui distingue mal le vert du rouge.
 
+   Depuis la v68, c'est toute la carte qui est teintée et non plus la seule
+   bande : ce qui compte alors, c'est que le texte y reste lisible. Les
+   contrastes sont donc mesurés, pas regardés.
+
    Ce que ces essais gardent :
    — chaque nature reçoit sa couleur, et toujours la même ;
-   — deux natures n'ont jamais la même ;
-   — un chantier sans nature reste gris et sans pastille ;
-   — la pastille écrit la nature en toutes lettres ;
+   — deux natures n'ont jamais la même, ni en bande ni en fond de carte ;
+   — un chantier sans nature reste blanc et sans pastille ;
+   — la pastille écrit la nature en toutes lettres, sur fond blanc ;
+   — le texte garde 4,5 de contraste sur le fond teinté ;
    — l'heure reste visible, et la pastille d'état n'a pas disparu.
 */
 import { chromium } from 'playwright';
@@ -70,6 +75,12 @@ const cartes = () => p.evaluate(() =>
       client: (e.querySelector('.chTete b') || {}).textContent || '',
       bande: s.borderLeftColor,
       largeur: s.borderLeftWidth,
+      carte: s.backgroundColor,
+      bordure: s.borderTopColor,
+      encreTitre: getComputedStyle(e.querySelector('.chTete b')).color,
+      fondPastille: pastille ? getComputedStyle(pastille).backgroundColor : null,
+      liserePastille: pastille ? getComputedStyle(pastille).borderLeftColor : null,
+      etatFond: e.querySelector('.vb') ? getComputedStyle(e.querySelector('.vb')).backgroundColor : null,
       nature: pastille ? pastille.textContent.trim() : null,
       fond: pastille ? getComputedStyle(pastille).backgroundColor : null,
       heure: heure ? heure.textContent.trim() : null,
@@ -84,15 +95,15 @@ const par = {}; l.forEach(x => { par[x.client] = x; });
 /* ---------- 1. toutes les cartes sont là ---------- */
 T('les sept chantiers s\'affichent', l.length === 7, l.length);
 T('chacun avec une bande de couleur à gauche',
-  l.every(x => x.largeur === '5px'), l.map(x => x.largeur));
+  l.every(x => x.largeur === '6px'), l.map(x => x.largeur));
 
 /* ---------- 2. chaque nature a sa couleur, et sa pastille ---------- */
 const ATTENDU = {
-  'LE LOCAL':               ['rgb(42, 120, 214)', 'Entretien'],
-  'MENGUY ARCHITECTES':     ['rgb(27, 175, 122)', 'Vitrages'],
-  'MME GUYOT':              ['rgb(235, 104, 52)', 'Fin de chantier'],
-  'M. SARAZIN':             ['rgb(98, 80, 214)',  'Remise en état'],
-  'COPROPRIÉTÉ CABELLO':    ['rgb(237, 161, 0)',  'Façade']
+  'LE LOCAL':               ['rgb(42, 120, 214)', 'Entretien',       'rgb(223, 234, 250)'],
+  'MENGUY ARCHITECTES':     ['rgb(27, 175, 122)', 'Vitrages',        'rgb(216, 242, 232)'],
+  'MME GUYOT':              ['rgb(235, 104, 52)', 'Fin de chantier', 'rgb(252, 227, 217)'],
+  'M. SARAZIN':             ['rgb(98, 80, 214)',  'Remise en état',  'rgb(230, 226, 251)'],
+  'COPROPRIÉTÉ CABELLO':    ['rgb(237, 161, 0)',  'Façade',          'rgb(251, 236, 209)']
 };
 Object.keys(ATTENDU).forEach(function (cl) {
   const x = par[cl] || {};
@@ -100,13 +111,49 @@ Object.keys(ATTENDU).forEach(function (cl) {
     x.bande === ATTENDU[cl][0], { rendu: x.bande, attendu: ATTENDU[cl][0] });
   T(cl.toLowerCase() + ' : la pastille écrit la nature',
     x.nature === ATTENDU[cl][1], { rendu: x.nature, attendu: ATTENDU[cl][1] });
+  T(cl.toLowerCase() + ' : toute la carte est teintée',
+    x.carte === ATTENDU[cl][2], { rendu: x.carte, attendu: ATTENDU[cl][2] });
+  T(cl.toLowerCase() + ' : et son contour suit la même couleur',
+    x.bordure === ATTENDU[cl][0], { rendu: x.bordure, attendu: ATTENDU[cl][0] });
 });
+
+/* ---------- 2 bis. la carte teintée reste lisible ---------- */
+/* Le contraste se mesure. Une teinte « jolie » qui descend sous 4,5 rend le
+   planning illisible dehors, et personne ne s'en apercevrait à l'œil. */
+const lum = (c) => {
+  const [r, g, b] = c.match(/\d+/g).map(Number).map(v => {
+    v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contraste = (a, b) => {
+  const x = lum(a), y = lum(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+Object.keys(ATTENDU).forEach(function (cl) {
+  const x = par[cl] || {};
+  const cTitre = contraste(x.encreTitre, x.carte), cHeure = contraste(x.encre, x.carte);
+  T(cl.toLowerCase() + ' : le nom du client tient le contraste sur sa teinte',
+    cTitre >= 4.5, { contraste: Math.round(cTitre * 10) / 10 });
+  T(cl.toLowerCase() + ' : l\'heure aussi',
+    cHeure >= 4.5, { contraste: Math.round(cHeure * 10) / 10 });
+});
+
+/* ---------- 2 ter. la pastille ressort de la carte ---------- */
+T('la pastille est blanche, pas de la couleur du fond',
+  Object.keys(ATTENDU).every(cl => par[cl].fondPastille === 'rgb(255, 255, 255)'),
+  Object.keys(ATTENDU).map(cl => par[cl].fondPastille));
+T('et son liseré reprend la couleur de la nature',
+  Object.keys(ATTENDU).every(cl => par[cl].liserePastille === ATTENDU[cl][0]),
+  Object.keys(ATTENDU).map(cl => par[cl].liserePastille));
+T('la pastille « À FAIRE » ne se fond pas dans la teinte',
+  par['LE LOCAL'].etatFond === 'rgb(255, 255, 255)', par['LE LOCAL'].etatFond);
 
 /* ---------- 3. deux natures ne partagent jamais une couleur ---------- */
 const bandes = Object.keys(ATTENDU).map(cl => par[cl].bande);
 T('les cinq couleurs sont distinctes', new Set(bandes).size === 5, bandes);
-const pastilles = Object.keys(ATTENDU).map(cl => par[cl].fond);
-T('les cinq fonds de pastille aussi', new Set(pastilles).size === 5, pastilles);
+const teintes = Object.keys(ATTENDU).map(cl => par[cl].carte);
+T('les cinq teintes de carte aussi', new Set(teintes).size === 5, teintes);
 
 /* ---------- 4. l'inconnu reste gris ---------- */
 const sans = par['AIRBNB STÉPHANE'];
@@ -115,6 +162,8 @@ T('et sa bande ne prend aucune des cinq couleurs',
   bandes.indexOf(sans.bande) < 0, sans.bande);
 T('elle reste celle des traits de l\'application',
   sans.bande === 'rgb(226, 229, 234)', sans.bande);
+T('et sa carte reste blanche',
+  sans.carte === 'rgb(255, 255, 255)', sans.carte);
 
 /* ---------- 5. ce qu'on ne voulait pas perdre ---------- */
 T('l\'heure est toujours là', par['LE LOCAL'].heure === '08:00', par['LE LOCAL'].heure);
@@ -143,7 +192,7 @@ T('la carte reste un bouton', !(await p.evaluate(() =>
 T('aucune erreur JavaScript', err.length === 0, err);
 T('aucun bouton attendu ne manquait', rate.length === 0, rate);
 
-console.log('\n=== LE PLANNING EN COULEURS (v67) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
+console.log('\n=== LE PLANNING EN COULEURS (v67-v68) : ' + ok.length + ' au vert, ' + ko.length + ' au rouge ===');
 ok.forEach(x => console.log('  ✓ ' + x));
 ko.forEach(x => console.log('  ✗ ' + x));
 await b.close();
