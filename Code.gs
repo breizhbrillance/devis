@@ -100,7 +100,10 @@ var ENTETES_CHANTIERS_ = [
      deux fois, et elle seule : la date et le client ne suffiraient pas, un
      client pouvant avoir deux passages le même jour. Vide sur un chantier
      né d'un devis. */
-  'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT'
+  /* NATURE : entretien, vitrages, fin de chantier, remise en état, façade.
+     Elle vivait sur le devis seul ; un chantier récurrent n'en avait donc
+     aucune. Recopiée ici à la création, elle sert à colorer le planning. */
+  'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT', 'NATURE'
 ];
 
 /* La série récurrente. JOUR vaut LUNDI..DIMANCHE pour les fréquences
@@ -111,7 +114,7 @@ var ENTETES_CHANTIERS_ = [
 var ENTETES_RECURRENTS_ = [
   'ID', 'CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES',
   'FREQUENCE', 'JOUR', 'JOUR_MOIS', 'HEURE', 'DUREE_MIN',
-  'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF', 'PRESTATIONS', 'NOTE'
+  'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF', 'NATURE', 'PRESTATIONS', 'NOTE'
 ];
 
 /* A PLANIFIER : le devis est signé, personne ni date encore posés.
@@ -1629,6 +1632,7 @@ function tableauAdmin_() {
 
   var hier = new Date(); hier.setDate(hier.getDate() - 30); hier.setHours(0, 0, 0, 0);
   var loin = new Date(); loin.setDate(loin.getDate() + 90);
+  var natures = naturesParDevis_();
   var chantiers = [];
   objetsDe_(SH.CHANTIERS).forEach(function (o) {
     if (!String(o.ID || '').trim()) return;
@@ -1650,7 +1654,8 @@ function tableauAdmin_() {
       statut: String(o.STATUT || 'A PLANIFIER'),
       arrivee: Number(o.ARRIVEE) || 0, depart: Number(o.DEPART) || 0,
       minutes: Number(o.MINUTES) || 0,
-      signalement: String(o.SIGNALEMENT || ''), note: String(o.NOTE || '')
+      signalement: String(o.SIGNALEMENT || ''), note: String(o.NOTE || ''),
+      nature: natureChantier_(o, natures)
     });
   });
   chantiers.sort(function (a, b) {
@@ -2621,6 +2626,13 @@ function natureDevis_(v) {
   return 'CHANTIER';
 }
 
+/* La nature telle qu'on la range dans une colonne : vide reste vide. Sans
+   cette précaution, « natureDevis_ » rendrait « CHANTIER » pour une cellule
+   non renseignée, et tout le planning serait orange. */
+function natureOuVide_(v) {
+  return String(v || '').trim() ? natureDevis_(v) : '';
+}
+
 /** Le nom que le devis et les messages donnent à une nature. */
 function natureLisible_(v) {
   var n = natureDevis_(v);
@@ -2779,7 +2791,8 @@ function genererChantiers_(numero) {
         ARRIVEE: '', DEPART: '', MINUTES: '',
         PRESTATIONS_FAITES: '', SIGNALEMENT: '', PHOTOS: 0, NOTE: '',
         CREE_LE: maintenant,
-        DUREE_PREVUE_MIN: lots[p].minutes, LOT: lots[p].lot
+        DUREE_PREVUE_MIN: lots[p].minutes, LOT: lots[p].lot,
+        NATURE: natureOuVide_(devis.NATURE)
       };
       rows.push(en.map(function (h) { return v.hasOwnProperty(h) ? v[h] : ''; }));
       rang++;
@@ -2947,7 +2960,7 @@ function genererRecurrents_() {
         NOTE: String(r.PRESTATIONS || r.NOTE || ''),
         CREE_LE: maintenant,
         DUREE_PREVUE_MIN: Math.round(Number(r.DUREE_MIN) || 0) || '',
-        LOT: '', RECURRENT: cle
+        LOT: '', RECURRENT: cle, NATURE: natureOuVide_(r.NATURE)
       };
       rows.push(en.map(function (h) { return v2.hasOwnProperty(h) ? v2[h] : ''; }));
       rang++;
@@ -3010,6 +3023,27 @@ function genererRecurrents() {
     'un salarié changé à la main le restent.');
 }
 
+/* La nature d'un chantier. La colonne d'abord ; à défaut celle de son devis,
+   pour que les chantiers posés avant cette colonne gardent leur couleur. Un
+   chantier sans devis et sans nature n'en a aucune, et c'est une réponse. */
+function natureChantier_(o, parNumero) {
+  var n = natureOuVide_(o.NATURE);
+  if (n) return n;
+  var num = String(o.NUMERO || '').trim();
+  if (!num || !parNumero) return '';
+  return natureOuVide_(parNumero[num]);
+}
+
+/* Les natures des devis, par numéro : une seule lecture pour tout l'écran. */
+function naturesParDevis_() {
+  var out = {};
+  lireDevis_().forEach(function (d) {
+    var n = String(d.NUMERO || '').trim();
+    if (n) out[n] = d.NATURE;
+  });
+  return out;
+}
+
 /** Les chantiers d'un agent : ceux à venir, et les trente derniers jours. */
 function planningDe_(nom) {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
@@ -3022,6 +3056,7 @@ function planningDe_(nom) {
   var loin = new Date(); loin.setDate(loin.getDate() + 60);
 
   var parDevis = lignesParDevis_();
+  var parNature = naturesParDevis_();
   var out = [];
   for (var i = 1; i < v.length; i++) {
     var o = {};
@@ -3061,6 +3096,7 @@ function planningDe_(nom) {
       faites: String(o.PRESTATIONS_FAITES || '').split('|').filter(function (x) { return x; }),
       signalement: String(o.SIGNALEMENT || ''),
       note: String(o.NOTE || ''),
+      nature: natureChantier_(o, parNature),
       taches: taches
     });
   }

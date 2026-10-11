@@ -299,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v66';
+var VERSION_APP = 'v67';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4118,6 +4118,25 @@ function jourLisible(iso){
   return txt.charAt(0).toUpperCase() + txt.slice(1);
 }
 
+/* Les cinq natures et leurs couleurs. La palette a été vérifiée : écart
+   suffisant entre deux natures voisines, y compris pour un œil daltonien, et
+   chaque encre tient le contraste sur son fond. Surtout, la couleur ne dit
+   jamais rien toute seule — la pastille écrit la nature en toutes lettres,
+   parce qu'un planning se lit aussi en plein soleil sur un écran sale.
+   t : la bande ; f : le fond de la pastille ; i : l'encre. */
+var NATURES_VUE = {
+  ENTRETIEN: { nom: 'Entretien',       t: '#2a78d6', f: '#e9f1fb', i: '#1b5aa8' },
+  VITRERIE:  { nom: 'Vitrages',        t: '#1baf7a', f: '#e7f7f1', i: '#0d7a54' },
+  CHANTIER:  { nom: 'Fin de chantier', t: '#eb6834', f: '#fdeee8', i: '#b04a1d' },
+  REMISE:    { nom: 'Remise en état',  t: '#6250d6', f: '#eeecfb', i: '#4a3ab0' },
+  FACADE:    { nom: 'Façade',          t: '#eda100', f: '#fdf3e0', i: '#8a5e00' }
+};
+/* Une nature inconnue ne reçoit pas de couleur au hasard : la carte reste
+   grise, et l'absence se voit. */
+function natureVue(v){
+  return NATURES_VUE[String(v == null ? '' : v).toUpperCase().trim()] || null;
+}
+
 function peindrePlanning(){
   DB.cTous().then(function(l){
     l = l || [];
@@ -4143,17 +4162,21 @@ function peindrePlanning(){
                   .sort(function(a,b){ return a.date > b.date ? -1 : (a.date < b.date ? 1 : 0); });
 
     function carte(x){
-      return '<div class="card" style="cursor:pointer;margin-bottom:10px" onclick="ouvrirChantier(\'' +
-               ech(x.id) + '\')">' +
-               '<div style="display:flex;gap:10px;align-items:baseline">' +
-                 '<b style="flex:1;font-size:16px">' + ech(x.client || 'Chantier') + '</b>' +
+      var n = natureVue(x.nature);
+      return '<div class="card chC" ' +
+               (n ? 'style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '"' : '') +
+               ' onclick="ouvrirChantier(\'' + ech(x.id) + '\')">' +
+               '<div class="chTete">' +
+                 '<b>' + ech(x.client || 'Chantier') + '</b>' +
                  badgeChantier(x) +
                '</div>' +
-               '<div class="mini" style="margin-top:4px">' +
-                 (x.heure ? ech(x.heure) + ' · ' : '') + ech(x.ville || '') +
+               '<div class="chSous">' +
+                 (x.heure ? '<b class="chH">' + ech(x.heure) + '</b>' : '') +
+                 ech(x.ville || '') +
                '</div>' +
+               (n ? '<span class="chNat">' + ech(n.nom) + '</span>' : '') +
                (x.aEnvoyer && Object.keys(x.aEnvoyer).length
-                 ? '<div class="mini" style="color:var(--warn);margin-top:4px">' +
+                 ? '<div class="mini" style="color:var(--warn);margin-top:6px">' +
                    'Pointage en attente d\'envoi</div>' : '') +
              '</div>';
     }
