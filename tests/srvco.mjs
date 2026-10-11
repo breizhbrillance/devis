@@ -28,6 +28,9 @@ export const modeHisto={ v:'ok', complet:true };
 /* ok | refus : de quoi éprouver ce que fait l'application quand le bureau
    n'accepte pas ses résultats. */
 export const modeAppel={ v:'ok' };
+/* Les chantiers rendus à l'action « planning » : un commercial qui pose aussi
+   des vitrages a son planning, comme un salarié. */
+export const planningServi=[];
 const MIME={'.html':'text/html','.js':'application/javascript','.json':'application/json',
             '.webmanifest':'application/manifest+json','.png':'image/png'};
 const CFG={ maj:Date.now(),
@@ -59,6 +62,9 @@ export function lancer(port){
         if(modeAppel.v==='refus') return rep({ok:false, erreur:'refus'});
         (d.appels||[]).forEach(a=>appelsRecus.push(a));
         return rep({ok:true, recus:(d.appels||[]).length, refuses:[]});
+      }
+      if(d.action==='planning'){
+        return rep({ok:true, chantiers:planningServi.map(x=>({...x}))});
       }
       if(d.action==='historique'){
         if(modeHisto.v==='refus') return rep({ok:false, erreur:'refus'});

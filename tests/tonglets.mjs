@@ -18,7 +18,7 @@
      ni le bas du contenu.
 */
 import { chromium } from 'playwright';
-import { lancer, prospects, configSup } from './srvco.mjs';
+import { lancer, prospects, configSup, planningServi } from './srvco.mjs';
 import { CHROME } from './chemins.mjs';
 
 const ok = [], ko = [];
@@ -35,6 +35,17 @@ prospects.push(
     statut:'', note:'', rappel:'', dernier:'', appels:0, par:'', maj:'' }
 );
 configSup.prospection = true;
+/* Le commercial qui pose aussi des chantiers : le bureau le dit dans sa
+   configuration, et lui sert un planning. */
+configSup.planning = true;
+const DANS = (n) => {
+  const d = new Date(); d.setDate(d.getDate() + n);
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+};
+planningServi.push({ id:'CH-0101', client:'MENGUY ARCHITECTES', adresse:'1 Allée Jules Verne',
+  cp:'56610', ville:'Arradon', acces:'', date:DANS(3), heure:'07:00', statut:'PLANIFIE',
+  arrivee:0, depart:0, minutes:0, faites:[], signalement:'', note:'Locaux et vitrages',
+  taches:[] });
 
 const PORT = 8390; await lancer(PORT);
 const b = await chromium.launch({ executablePath: CHROME });
@@ -66,11 +77,11 @@ if (await p.isVisible('#eAccord')) { await clic('#bAccord'); await p.waitForTime
 
 /* ---------- 1. elle est là dès l'accueil ---------- */
 T('la barre apparaît dès le premier écran', await visible('#ongl'));
-T('elle porte trois lieux', await p.evaluate(() =>
-  document.querySelectorAll('#ongl button').length) === 3);
-T('nommés Devis, Mes devis et Phoning', await p.evaluate(() =>
-  [...document.querySelectorAll('#ongl button span')].map(e => e.textContent.trim()).join('|')
-) === 'Devis|Mes devis|Phoning');
+const nomsOnglets = () => p.evaluate(() =>
+  [...document.querySelectorAll('#ongl button')].filter(b => !b.classList.contains('hide'))
+    .map(b => b.querySelector('span').textContent.trim()).join('|'));
+T('elle porte quatre lieux pour qui prospecte et pose des chantiers',
+  (await nomsOnglets()) === 'Devis|Mes devis|Planning|Phoning', await nomsOnglets());
 T('l\'onglet du devis est allumé', await allume('#ongD'));
 T('les deux autres ne le sont pas', !(await allume('#ongL')) && !(await allume('#ongP')));
 T('le corps réserve la place de la barre', await p.evaluate(() =>
@@ -190,7 +201,7 @@ await p.evaluate(() => { MODIF = null; nouveauDevis(); }); await p.waitForTimeou
 T('la modification abandonnée, la barre revient', await visible('#ongl'));
 
 /* ---------- 8. sans la prospection, rien ne change ---------- */
-await p.evaluate(() => { CFG.prospection = false; ouvrirHistorique(); });
+await p.evaluate(() => { CFG.prospection = false; CFG.planning = false; ouvrirHistorique(); });
 await p.waitForTimeout(400);
 T('sans la prospection, pas de barre du tout', !(await visible('#ongl')));
 T('et le bouton Retour est là comme avant', await visible('#bar'));
@@ -198,16 +209,60 @@ await p.evaluate(() => { etape(1); }); await p.waitForTimeout(300);
 T('le premier écran non plus n\'a rien de nouveau', !(await visible('#ongl')));
 T('et le corps ne réserve pas de place pour rien', !(await p.evaluate(() =>
   document.body.classList.contains('avecOnglets'))));
-await p.evaluate(() => { CFG.prospection = true; etape(1); }); await p.waitForTimeout(300);
+await p.evaluate(() => { CFG.prospection = true; CFG.planning = true; etape(1); });
+await p.waitForTimeout(300);
 T('la prospection rendue, la barre revient', await visible('#ongl'));
 
-/* ---------- 9. les photos et les écrans des autres métiers ---------- */
+/* ---------- 9. le planning du commercial qui pose des chantiers ---------- */
+await p.evaluate(() => { CFG.prospection = true; CFG.planning = true; etape(1); });
+await p.waitForTimeout(300);
+T('l\'onglet Planning est là', await visible('#ongPl'));
+await clic('#ongPl'); await p.waitForTimeout(900);
+T('un appui ouvre le planning', (await ecran()).join() === 'eAg1', await ecran());
+T('et l\'onglet Planning s\'allume', await allume('#ongPl'));
+T('celui du devis s\'éteint', !(await allume('#ongD')));
+T('le titre le dit', (await p.evaluate(() =>
+  document.getElementById('hTitre').textContent.trim())) === 'Mon planning');
+T('le chantier servi par le bureau s\'affiche',
+  /MENGUY/.test(await p.evaluate(() => document.getElementById('eAg1').textContent)),
+  (await p.evaluate(() => document.getElementById('eAg1').textContent)).slice(0, 120));
+await clic('#ongD'); await p.waitForTimeout(500);
+T('on revient au devis par la barre', (await ecran()).join() === 'e1', await ecran());
+
+/* Sans le droit, l'onglet disparaît — c'est le classeur qui commande. */
+await p.evaluate(() => { CFG.planning = false; etape(1); }); await p.waitForTimeout(300);
+T('sans chantiers à son nom, pas d\'onglet Planning', !(await visible('#ongPl')));
+T('et la barre reprend ses trois lieux',
+  (await nomsOnglets()) === 'Devis|Mes devis|Phoning', await nomsOnglets());
+
+/* Et l'inverse : un commercial qui pose des chantiers sans prospecter. */
+await p.evaluate(() => { CFG.prospection = false; CFG.planning = true; etape(1); });
+await p.waitForTimeout(300);
+T('la barre existe pour le seul planning', await visible('#ongl'));
+T('avec Devis, Mes devis et Planning',
+  (await nomsOnglets()) === 'Devis|Mes devis|Planning', await nomsOnglets());
+await p.evaluate(() => { CFG.prospection = false; CFG.planning = false; etape(1); });
+await p.waitForTimeout(300);
+T('ni l\'un ni l\'autre : plus de barre du tout', !(await visible('#ongl')));
+await p.evaluate(() => { CFG.prospection = true; CFG.planning = true; etape(1); });
+await p.waitForTimeout(300);
+
+/* ---------- 10. les photos et les écrans des autres métiers ---------- */
 await p.evaluate(() => { montrer('e7'); }); await p.waitForTimeout(200);
 T('l\'écran des photos n\'a pas la barre', !(await visible('#ongl')));
 await p.evaluate(() => { montrer('eAd1'); }); await p.waitForTimeout(200);
 T('l\'écran du gérant non plus', !(await visible('#ongl')));
-await p.evaluate(() => { montrer('eAg1'); }); await p.waitForTimeout(200);
-T('celui du prestataire non plus', !(await visible('#ongl')));
+await p.evaluate(() => { montrer('eAg2'); }); await p.waitForTimeout(200);
+T('la fiche d\'un chantier non plus : on en sort par Retour', !(await visible('#ongl')));
+/* L'écran du planning porte la barre pour le commercial qui y a droit, mais
+   pour un salarié — qui n'a ni prospection ni planning dans sa configuration
+   — il n'y a rien à afficher. */
+await p.evaluate(() => { const g = CFG.prospection, h = CFG.planning;
+  CFG.prospection = false; CFG.planning = false; montrer('eAg1');
+  window.__rendre = () => { CFG.prospection = g; CFG.planning = h; }; });
+await p.waitForTimeout(200);
+T('l\'écran du planning d\'un salarié n\'a pas de barre', !(await visible('#ongl')));
+await p.evaluate(() => window.__rendre());
 
 T('aucune erreur JavaScript', err.length === 0, err);
 T('aucun bouton attendu ne manquait', rate.length === 0, rate);
