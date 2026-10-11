@@ -95,9 +95,19 @@ T('« J\'ai terminé » ne l\'est pas encore', !(await visible(p,'bAgFini')));
 await p.click('#bAgArrive'); await p.waitForTimeout(700);
 T('après l\'arrivée, le bouton disparaît', !(await visible(p,'bAgArrive')));
 T('et « J\'ai terminé » apparaît', await visible(p,'bAgFini'));
-T('l\'heure d\'arrivée est affichée',
-  /Arrivé à \d{2}h\d{2}/.test(await p.textContent('#agPointInfo')),
+/* Le salarié ne voit pas ses heures (v69). Mais il doit voir que son appui a
+   été pris : sans retour, il rappuie, et un deuxième appui écrase la
+   première heure. La confirmation est donc aussi importante que le secret. */
+T('l\'arrivée est confirmée',
+  /enregistr/i.test(await p.textContent('#agPointInfo')),
   await p.textContent('#agPointInfo'));
+T('mais sans dire l\'heure',
+  !/\d{1,2}\s?h\s?\d{2}/.test(await p.textContent('#agPointInfo')),
+  await p.textContent('#agPointInfo'));
+/* La confirmation doit se distinguer de la consigne d'avant, sinon le salarié
+   ne sait pas si quelque chose a changé à l'écran. */
+T('et la confirmation se voit comme telle',
+  await p.evaluate(() => document.getElementById('agPointInfo').classList.contains('ok')));
 T('l\'arrivée est partie au bureau',
   recu.some(x=>x.action==='chantier' && x.arrivee && x.id==='CH-0001'),
   recu.filter(x=>x.action==='chantier').map(x=>Object.keys(x)));
@@ -111,7 +121,23 @@ T('une prestation cochée remonte',
 /* ---------- 8. le départ ---------- */
 await p.click('#bAgFini'); await p.waitForTimeout(700);
 T('le chantier est terminé', !(await visible(p,'bAgFini')));
-T('la durée s\'affiche', await visible(p,'agDuree'), await p.textContent('#agDuree'));
+T('le pointage est confirmé',
+  /enregistr/i.test(await p.textContent('#agPointInfo')),
+  await p.textContent('#agPointInfo'));
+T('la durée sur place ne s\'affiche pas', !(await visible(p,'agDuree')),
+  await p.textContent('#agDuree'));
+
+/* Rien dans tout l'encadré du pointage ne doit trahir une heure ou une durée :
+   ni le texte, ni la durée, ni un reste d'affichage d'avant. */
+const encadre = await p.evaluate(() => {
+  const e = document.getElementById('agPointInfo');
+  return e ? (e.closest('.card') || e).innerText : '';
+});
+T('aucune heure sur l\'encadré du pointage',
+  !/\d{1,2}\s?h\s?\d{2}/.test(encadre) && !/\d{1,2}:\d{2}/.test(encadre), encadre);
+T('et aucune durée', !/dur[ée]e/i.test(encadre), encadre);
+T('le bureau, lui, a bien reçu les minutes',
+  recu.some(x=>x.action==='chantier' && x.depart), 'aucun départ reçu');
 T('le départ est parti au bureau',
   recu.some(x=>x.action==='chantier' && x.depart), 'aucun départ reçu');
 T('le bureau a marqué le chantier FAIT',
@@ -127,8 +153,11 @@ const avant = recu.length;
 await p.evaluate(()=>{ CHANTIER.arrivee = 0; CHANTIER.depart = 0; CHANTIER.statut='PLANIFIE'; peindreChantier(); });
 await p.waitForTimeout(300);
 await p.click('#bAgArrive'); await p.waitForTimeout(700);
-T('hors réseau, l\'heure d\'arrivée est prise quand même',
-  /Arrivé à \d{2}h\d{2}/.test(await p.textContent('#agPointInfo')),
+T('hors réseau, l\'arrivée est prise quand même',
+  /enregistr/i.test(await p.textContent('#agPointInfo')),
+  await p.textContent('#agPointInfo'));
+T('et toujours sans l\'heure',
+  !/\d{1,2}\s?h\s?\d{2}/.test(await p.textContent('#agPointInfo')),
   await p.textContent('#agPointInfo'));
 T('rien n\'est parti, forcément', recu.length === avant, recu.length - avant);
 T('le pointage est gardé sur l\'appareil',

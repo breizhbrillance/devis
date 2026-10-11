@@ -128,6 +128,20 @@ T('ceux à planifier sont annoncés en tête',
   /1 chantier à planifier/.test(liste), liste.slice(0,150));
 T('un chantier sans date le dit', /Sans date/.test(liste), liste.slice(0,300));
 T('un problème signalé se voit dans la liste', /Problème signalé/.test(liste), liste.slice(0,400));
+
+/* Le salarié ne voit plus ses heures de pointage depuis la v69. Le gérant,
+   lui, doit continuer à les voir : c'est sur elles qu'il facture et qu'il
+   corrige une durée. L'essai le garde des deux côtés. */
+await p.click('#adFiltres .puce:has-text("YANN P")'); await p.waitForTimeout(400);
+await p.click('#adListe .card:has-text("EHPAD")'); await p.waitForTimeout(600);
+const fPointe = await p.innerText('#adFiche');
+T('le gérant voit l\'heure d\'arrivée du salarié',
+  /Arrivé à \d{1,2}h\d{2}/.test(fPointe), fPointe.slice(0, 300));
+T('et son heure de départ', /parti à \d{1,2}h\d{2}/.test(fPointe), fPointe.slice(0, 300));
+T('et la durée pointée', /1 h 15|75 min/.test(fPointe), fPointe.slice(0, 300));
+await p.click('#adFiche button:has-text("Retour au tableau")'); await p.waitForTimeout(600);
+await p.click('#adFiltres .puce:has-text("YANN P")'); await p.waitForTimeout(400);
+
 await p.click('#adFiltres .puce:has-text("MARIE K")'); await p.waitForTimeout(400);
 liste = await p.innerText('#adListe');
 T('le filtre par prestataire fonctionne',
