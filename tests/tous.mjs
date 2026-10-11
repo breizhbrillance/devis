@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const ICI = path.dirname(fileURLToPath(import.meta.url));
 
-const CLASSEUR = ['tgs', 'tsigne', 'ttarif', 'tpresta', 'tadmin', 'tdate', 'tcontrat', 'tplan', 'tplan47', 'tmaj', 'tmail', 'tnum', 'tkm', 'tvit', 'tfacade', 'thisto', 'trevis', 'tphone', 'tmajbase'];
+const CLASSEUR = ['tgs', 'tsigne', 'ttarif', 'tpresta', 'tadmin', 'tdate', 'tcontrat', 'tplan', 'tplan47', 'tmaj', 'tmail', 'tnum', 'tkm', 'tvit', 'tfacade', 'thisto', 'trevis', 'tphone', 'tmajbase', 'trecur'];
 const APPLI = ['tco', 'tchamps', 'tv', 'tnote', 'verif24', 'tplafond', 'tprix',
                'tclavier', 'tagent', 'tsign', 'tsign2', 'tvue', 'tadmapp',
                'tliste', 'tpdf39', 'tnature', 'tcatnat', 'tetat', 'tnumapp', 'tkmapp', 'tvitapp', 'tforfait', 'tretra', 'tremise', 'tphoneapp', 'tlibre', 'tfacapp', 'thistoapp', 'tmodif', 'tonglets'];
