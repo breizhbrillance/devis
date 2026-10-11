@@ -299,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v68';
+var VERSION_APP = 'v69';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4244,20 +4244,22 @@ function peindreChantier(){
   var arr = Number(c.arrivee) || 0, dep = Number(c.depart) || 0;
   $('bAgArrive').classList.toggle('hide', !!arr);
   $('bAgFini').classList.toggle('hide', !arr || !!dep);
-  var info = $('agPointInfo');
-  if(!arr) info.textContent = 'Appuie en arrivant, puis en partant.';
-  else if(!dep) info.textContent = 'Arrivé à ' + heureLisible(arr) + '.';
-  else info.textContent = 'Arrivé à ' + heureLisible(arr) + ', parti à ' + heureLisible(dep) + '.';
 
-  // La durée s'affiche dès que le départ est pointé, même si elle est courte :
-  // un écran vide après « J'ai terminé » ferait croire que rien n'a marché.
+  /* Le salarié ne voit ni ses heures de pointage ni sa durée sur place
+     (décision de Simon, 11 octobre 2026) : elles partent au classeur et
+     s'affichent sur l'écran du gérant, pas sur le sien.
+     Il voit en revanche que son appui a été pris : sans retour, on rappuie,
+     et un deuxième appui pose une deuxième heure. */
+  var info = $('agPointInfo');
+  info.classList.toggle('ok', !!arr);
+  info.classList.toggle('mini', !arr);
+  if(!arr) info.textContent = 'Appuie en arrivant, puis en partant.';
+  else if(!dep) info.textContent = 'Arrivée enregistrée. Appuie en partant.';
+  else info.textContent = 'Pointage enregistré.';
+
   var d = $('agDuree');
-  d.classList.toggle('hide', !(arr && dep));
-  if(arr && dep){
-    var mn = Number(c.minutes);
-    if(!isFinite(mn) || mn < 0) mn = Math.round((dep - arr)/60000);
-    d.textContent = 'Durée sur place : ' + dureeLisible(mn);
-  }
+  d.classList.add('hide');
+  d.textContent = '';
 
   // tâches
   var faites = c.faites || [];
