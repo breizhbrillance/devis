@@ -710,7 +710,11 @@ function doPost(e) {
       return reponse_({ ok: false, refus: true, erreur: 'Trop d\'essais. Réessaie dans un quart d\'heure.' });
     }
     var com = trouverPersonne_(d.nom);
-    if (!com || (com.code && String(d.code || '') !== com.code)) {
+    /* Une fiche sans code laissait entrer avec n'importe quel code : la
+       condition ne se déclenchait que si un code était inscrit. Une ligne
+       ajoutée en vitesse, un code effacé par erreur, et le compte s'ouvrait à
+       qui connaissait le nom. Sans code, on refuse. */
+    if (!com || !com.code || String(d.code || '') !== com.code) {
       noterEchec_(d.nom);
       // On ne journalise que les noms qui existent : sinon, n'importe qui
       // pourrait remplir le journal en essayant des noms au hasard.
