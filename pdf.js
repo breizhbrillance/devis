@@ -280,10 +280,11 @@ var PDF = (function () {
 
         var yl = y + 4.6;
         police('normal', 8.2, [55, 65, 81]);
-        /* La référence d'une ligne libre est une étiquette interne (LIBRE-1) :
-           elle sert au bureau, pas au client. On ne l'imprime pas. */
+        /* Une étiquette interne ne s'imprime pas : elle sert au bureau, pas au
+           client. LIBRE-1 pour une ligne libre, MAJ-ETAT pour la majoration
+           d'état des lieux — celle-ci s'imprimait encore, par oubli. */
         var refL = txt(l.reference).trim();
-        if (refL && refL.indexOf('LIBRE-') !== 0) {
+        if (refL && refL.indexOf('LIBRE-') !== 0 && refL !== 'MAJ-ETAT') {
           doc.text(couper(refL, COL.ref.l)[0], COL.ref.g, yl);
         }
 

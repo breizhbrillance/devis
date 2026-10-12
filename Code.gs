@@ -567,23 +567,26 @@ var CATALOGUE_DEFAUT_ = [
   ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage robinetteries et faïences', '', 'pièce(s)', 15, 10, 'PONCTUEL', 'OUI', 'REF-0012', 'CHANTIER,REMISE'],
   ['Nettoyage des sanitaires et pièces d\'eau', 'Nettoyage parois vitrées', '', 'pièce(s)', 30, 10, 'PONCTUEL', 'OUI', 'REF-0013', 'CHANTIER,REMISE'],
   ['Finitions générales et livraison', 'Contrôle qualité et reprises générales', '', 'forfait', 10, 10, 'PONCTUEL', 'OUI', 'REF-0014', 'CHANTIER,REMISE'],
-  ['Bureaux et espaces de travail', 'Nettoyage et désinfection des bureaux, tables, chaises et points de contact', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0016', 'ENTRETIEN'],
-  ['Bureaux et espaces de travail', 'Dépoussiérage et suppression des traces sur matériel informatique, casiers et étagères', '', 'forfait', 4, 20, 'PONCTUEL', 'OUI', 'REF-0017', 'ENTRETIEN'],
+  ['Bureaux et espaces de travail', 'Nettoyage et désinfection des bureaux, tables, chaises et points de contact', '', 'bureau(x)', 2, 20, 'PONCTUEL', 'OUI', 'REF-0016', 'ENTRETIEN'],
+  ['Bureaux et espaces de travail', 'Dépoussiérage et suppression des traces sur matériel informatique, casiers et étagères', '', 'bureau(x)', 1, 20, 'PONCTUEL', 'OUI', 'REF-0017', 'ENTRETIEN'],
   ['Bureaux et espaces de travail', 'Dépoussiérage des lustres et luminaires', '', 'forfait', 6.20, 20, 'PONCTUEL', 'OUI', 'REF-0018', 'ENTRETIEN'],
+  ['Cuisine et espace repas', 'Nettoyage et désinfection des surfaces extérieures', '', 'forfait', 4, 20, 'PONCTUEL', 'OUI', 'REF-0041', 'ENTRETIEN'],
   ['Cuisine et espace repas', 'Désinfection des ustensiles de cuisine et du plan de travail', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0020', 'ENTRETIEN'],
   ['Cuisine et espace repas', 'Nettoyage des micro-ondes : points de contact extérieurs et intérieur', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0021', 'ENTRETIEN'],
   ['Cuisine et espace repas', 'Nettoyage de l\'armoire réfrigérée : points de contact extérieurs et étages intérieurs', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0022', 'ENTRETIEN'],
-  ['Sanitaires', 'Vérification et désinfection des robinets et bondes', '', 'forfait', 3.50, 20, 'PONCTUEL', 'OUI', 'REF-0023', 'ENTRETIEN'],
-  ['Sanitaires', 'Nettoyage et désinfection des cuvettes et abattants de toilettes', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0024', 'ENTRETIEN'],
-  ['Sanitaires', 'Désinfection complète des lavabos, miroirs et plans de travail', '', 'forfait', 7, 20, 'PONCTUEL', 'OUI', 'REF-0025', 'ENTRETIEN'],
-  ['Sols et surfaces', 'Dépoussiérage et détachage des plinthes, murs, plafonds et rebords de fenêtre', '', 'forfait', 5, 20, 'PONCTUEL', 'OUI', 'REF-0026', 'ENTRETIEN'],
+  ['Sanitaires', 'Vérification et désinfection des robinets et bondes', '', 'forfait', 2, 20, 'PONCTUEL', 'OUI', 'REF-0023', 'ENTRETIEN'],
+  ['Sanitaires', 'Nettoyage et désinfection des cuvettes et abattants de toilettes', '', 'pièce(s)', 4, 20, 'PONCTUEL', 'OUI', 'REF-0024', 'ENTRETIEN'],
+  ['Sanitaires', 'Désinfection complète des lavabos, miroirs et plans de travail', '', 'pièce(s)', 4, 20, 'PONCTUEL', 'OUI', 'REF-0025', 'ENTRETIEN'],
+  ['Sanitaires', 'Nettoyage et désinfection de la douche', '', 'pièce(s)', 4, 20, 'PONCTUEL', 'OUI', 'REF-0040', 'ENTRETIEN'],
   /* Les sols se mesurent, ils ne se cochent pas : un plateau de bureaux de
-     300 m² et un cabinet de 40 m² ne demandent pas le même temps. Prix repris
-     de la fin de chantier (REF-0002 et REF-0004), décision de Simon. */
-  ['Sols et surfaces', 'Aspiration des sols', '', 'm2', 0.40, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
-  ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'm2', 0.45, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
-  /* La seule prestation d'entretien qui se compte : les autres sont au forfait,
-     prix par passage, celle-ci se multiplie par le nombre de poubelles. */
+     300 m² et un cabinet de 40 m² ne demandent pas le même temps. Les prix
+     sont ceux du devis type d'entretien de Simon (DEVIS-I-26-09-2) : l'entretien
+     passe sur un sol déjà propre, il ne coûte pas une fin de chantier. */
+  ['Sols et surfaces', 'Dépoussiérage et détachage des plinthes, murs, plafonds et rebords de fenêtre', '', 'm2', 0.15, 20, 'PONCTUEL', 'OUI', 'REF-0026', 'ENTRETIEN'],
+  ['Sols et surfaces', 'Aspiration des sols', '', 'm2', 0.15, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
+  ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'm2', 0.20, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
+  /* Elle se multiplie par le nombre de poubelles. Sur le devis type elle était
+     offerte : c'était un geste commercial, pas un tarif — Simon la facture. */
   ['Déchets', 'Rotation des poubelles', '', 'pièce(s)', 0.50, 20, 'PONCTUEL', 'OUI', 'REF-0039', 'ENTRETIEN'],
   ['Contrôle', 'Contrôle visuel et hygiénique après chaque intervention', '', 'forfait', 1, 20, 'PONCTUEL', 'OUI', 'REF-0029', 'ENTRETIEN'],
   /* Vitrages et menuiseries : un devis à part, jamais mêlé à un entretien —
@@ -1728,18 +1731,23 @@ function planifierChantier_(d, com) {
   /* Annuler plutôt qu'effacer. La ligne reste : on sait ce qui a été
      décommandé, et un passage de contrat récurrent annulé ne revient pas à la
      génération suivante — alors qu'une ligne supprimée, si.
-     Un chantier déjà commencé ne s'annule pas : son pointage est du temps de
-     travail, et il part en facturation. */
+     Un chantier déjà pointé s'annule aussi depuis le 12 octobre 2026 (demande
+     de Simon : « il faut qu'on puisse supprimer des prestations marquées
+     comme faites »). **Ses heures ne sont pas effacées** : ARRIVEE, DEPART et
+     MINUTES restent dans la ligne, parce que c'est sur elles qu'on paie le
+     salarié et qu'on facture le client. Seul le statut change, et le journal
+     le dit en toutes lettres, pour que personne ne découvre la disparition
+     d'un chantier facturable sans savoir d'où elle vient. */
   if (d.annuler) {
-    if (avant.ARRIVEE && String(avant.ARRIVEE).trim()) {
-      return { ok: false, erreur: 'ce chantier a déjà été pointé : il ne peut plus être annulé' };
-    }
+    var pointe = !!(avant.ARRIVEE && String(avant.ARRIVEE).trim());
     majChantier_(id, { STATUT: 'ANNULE' });
     tracerServeur_(com ? com.nom : '', 'CHANTIER ANNULE',
                    String(avant.CLIENT || '') + ' \u00b7 ' +
-                   (avant.DATE ? Utilities.formatDate(new Date(avant.DATE), 'Europe/Paris', 'dd/MM/yyyy') : 'sans date'),
+                   (avant.DATE ? Utilities.formatDate(new Date(avant.DATE), 'Europe/Paris', 'dd/MM/yyyy') : 'sans date') +
+                   (pointe ? ' \u00b7 D\u00c9J\u00c0 POINT\u00c9, heures conserv\u00e9es (' +
+                             (Number(avant.MINUTES) || 0) + ' min)' : ''),
                    String(avant.NUMERO || ''), d.appareil || '');
-    return { ok: true, id: id, statut: 'ANNULE' };
+    return { ok: true, id: id, statut: 'ANNULE', pointe: pointe };
   }
   /* Rétabli, il reprend le statut que sa date et son salarié lui donnent. */
   if (d.retablir) {

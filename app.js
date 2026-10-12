@@ -299,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v71';
+var VERSION_APP = 'v72';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -3674,6 +3674,7 @@ var AD_FICHE = null;          // la fiche ouverte
 var AD_PRESTA = '';           // le prestataire choisi dans la planification
 var AD_SEL = false;           // mode « choisir plusieurs chantiers »
 var AD_CHOIX = {};            // les ids cochés, en mode sélection
+var AD_PASSE = false;         // le gérant a-t-il demandé à voir les chantiers passés
 var AD_LOT_PRESTA = null;     // le prestataire du déplacement en lot (null = ne pas y toucher)
 var AD_NATURE = '';           // la nature choisie sur la fiche ouverte
 
@@ -3744,6 +3745,7 @@ function badgeDevis(st){
 function ongletAdmin(quoi){
   AD_ONGLET = quoi;
   AD_QUI = '';
+  AD_PASSE = false;             // chaque retour sur l'onglet repart du travail à venir
   peindreTableau();
 }
 function filtreAdmin(nom){ AD_QUI = nom; peindreTableau(); }
@@ -3815,17 +3817,34 @@ function listeDevisAdmin(t){
 
 function estAnnule(c){ return String(c.statut||'').toUpperCase() === 'ANNULE'; }
 
+/* Un chantier sans date n'est pas du passé : c'est justement celui qu'il faut
+   planifier. Et la journée en cours reste entière, même ce qui y est déjà
+   fait — on la relit encore à 17 h pour savoir ce qui a été fait le matin. */
+function estPasse(c){ return !!c.date && c.date < isoJour(); }
+
+function voirPasse(v){ AD_PASSE = !!v; peindreTableau(); }
+
 function listeChantiersAdmin(t){
   /* Les annulés ne se mêlent pas aux autres : ils ne sont plus du travail à
      faire. On les retrouve derrière leur propre pastille, pour les rétablir. */
-  var l = (t.chantiers||[]).filter(function(c){
+  var tous = (t.chantiers||[]).filter(function(c){
     if(AD_QUI === '(annulés)') return estAnnule(c);
     if(estAnnule(c)) return false;
     if(!AD_QUI) return true;
     if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
     return c.prestataire === AD_QUI;
   });
-  if(!l.length) return '<div class="card"><div class="empty">Aucun chantier.</div></div>';
+  /* Par défaut on ne montre que ce qui vient : un planning est un outil de
+     travail, pas une archive. Le passé reste à un appui. */
+  var nPasses = tous.filter(estPasse).length;
+  var l = AD_PASSE ? tous : tous.filter(function(c){ return !estPasse(c); });
+  var pied = nPasses
+    ? '<button class="btn sec" style="margin-top:4px" onclick="voirPasse(' + (AD_PASSE?'false':'true') + ')">' +
+      (AD_PASSE ? 'Masquer les chantiers passés'
+                : 'Voir le passé (' + nPasses + ' chantier' + (nPasses>1?'s':'') + ')') +
+      '</button>'
+    : '';
+  if(!l.length) return '<div class="card"><div class="empty">Aucun chantier à venir.</div></div>' + pied;
   var aFaire = l.filter(function(c){ return !estAnnule(c) && (!c.date || !c.prestataire); }).length;
   var tete = aFaire
     ? '<div class="card" style="border-color:var(--warn)"><b>' + aFaire + ' chantier' +
@@ -3850,7 +3869,7 @@ function listeChantiersAdmin(t){
       (manque ? '<div class="mini" style="color:var(--warn)">À planifier</div>' : '') +
       (c.signalement ? '<div class="mini" style="color:var(--rouge,#991b1b)">Problème signalé</div>' : '') +
     '</div>';
-  }).join('');
+  }).join('') + pied;
 }
 
 /* ---- agir sur plusieurs chantiers d'un coup ----
@@ -4107,9 +4126,16 @@ function annulerChantierAd(annuler, btn){
   /* La confirmation de l'application, jamais celle du navigateur : installée
      sur l'écran d'accueil, confirm() peut répondre « non » tout seul. */
   if(!annuler) return poserAnnulation(false, btn);
+  /* Un chantier pointé mérite un avertissement différent : on ne lui retire
+     pas ses heures, et il faut le dire avant plutôt que de le faire découvrir. */
+  var ch = ((TABLEAU||{}).chantiers||[]).filter(function(x){ return x.id === f.cle; })[0] || {};
+  var pointe = !!ch.arrivee;
   demander('Annuler ce chantier ?',
-           'Il disparaîtra des téléphones. La ligne reste au classeur, et tu pourras ' +
-           'le rétablir.', 'Annuler le chantier').then(function(oui){
+           pointe
+             ? 'Il a été pointé. Il disparaîtra des téléphones et du planning, mais ses heures ' +
+               'restent au classeur pour la paie et la facturation. Tu pourras le rétablir.'
+             : 'Il disparaîtra des téléphones. La ligne reste au classeur, et tu pourras ' +
+               'le rétablir.', 'Annuler le chantier').then(function(oui){
     if(oui) poserAnnulation(true, btn);
   });
 }
@@ -4219,14 +4245,15 @@ function peindreFicheChantier(c, neuf){
           ? '<div class="mini" style="margin-top:0">Rétabli, il reprendra sa place dans le planning.</div>' +
             '<button class="btn sec" style="margin-top:10px" onclick="annulerChantierAd(false, this)">' +
             'Rétablir ce chantier</button>'
-          : (pointe
-              ? '<div class="mini" style="margin-top:0">Ce chantier a été pointé : son temps part en ' +
-                'facturation, il ne peut plus être annulé.</div>'
-              : '<div class="mini" style="margin-top:0">Annulé, il disparaît des téléphones et de ce ' +
-                'tableau. La ligne reste au classeur, et un passage de contrat ne reviendra pas.</div>' +
-                '<button class="btn sec" style="margin-top:10px;border-color:var(--rouge,#991b1b);' +
-                'color:var(--rouge,#991b1b)" onclick="annulerChantierAd(true, this)">' +
-                'Annuler ce chantier</button>')) +
+          : '<div class="mini" style="margin-top:0">' +
+            (pointe
+              ? 'Annulé, il disparaît des téléphones et de ce tableau. <b>Les heures pointées ' +
+                'restent au classeur</b> : la paie et la facturation ne bougent pas.'
+              : 'Annulé, il disparaît des téléphones et de ce tableau. La ligne reste au classeur, ' +
+                'et un passage de contrat ne reviendra pas.') + '</div>' +
+            '<button class="btn sec" style="margin-top:10px;border-color:var(--rouge,#991b1b);' +
+            'color:var(--rouge,#991b1b)" onclick="annulerChantierAd(true, this)">' +
+            'Annuler ce chantier</button>') +
       '</div>') +
 
     '<button class="btn sec" onclick="retourTableau()">Retour au tableau</button>';
@@ -4304,6 +4331,7 @@ function estAgent(){
 
 function ecranPlanning(){
   ETAPE = 0;
+  AG_PASSE = false;             // on revient toujours sur ce qui vient
   fermerDialogues();
   montrer('eAg1');
   $('steps').classList.add('hide');
@@ -4404,6 +4432,12 @@ function natureVue(v){
   return NATURES_VUE[String(v == null ? '' : v).toUpperCase().trim()] || null;
 }
 
+/* Le salarié ouvre son planning pour savoir où il va, pas pour relire le mois
+   dernier. Le passé reste à un appui, et le choix ne survit pas à la sortie de
+   l'écran : on repart toujours sur ce qui vient. */
+var AG_PASSE = false;
+function agVoirPasse(v){ AG_PASSE = !!v; peindrePlanning(); }
+
 function peindrePlanning(){
   DB.cTous().then(function(l){
     l = l || [];
@@ -4459,9 +4493,15 @@ function peindrePlanning(){
       return h;
     }
 
-    var h = bloc(futurs);
+    var h = futurs.length ? bloc(futurs)
+      : '<div class="card"><div class="empty">Rien à venir pour le moment.</div></div>';
     if(passes.length){
-      h += '<div class="cat" style="margin-top:18px;opacity:.7">Déjà passés</div>' + bloc(passes);
+      h += AG_PASSE
+        ? '<button class="btn sec" style="margin-top:18px" onclick="agVoirPasse(false)">' +
+          'Masquer les chantiers passés</button>' +
+          '<div class="cat" style="margin-top:18px;opacity:.7">Déjà passés</div>' + bloc(passes)
+        : '<button class="btn sec" style="margin-top:18px" onclick="agVoirPasse(true)">' +
+          'Voir le passé (' + passes.length + ' chantier' + (passes.length>1?'s':'') + ')</button>';
     }
     c.innerHTML = h;
   });
