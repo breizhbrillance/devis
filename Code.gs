@@ -579,12 +579,13 @@ var CATALOGUE_DEFAUT_ = [
   ['Sanitaires', 'Désinfection complète des lavabos, miroirs et plans de travail', '', 'pièce(s)', 4, 20, 'PONCTUEL', 'OUI', 'REF-0025', 'ENTRETIEN'],
   ['Sanitaires', 'Nettoyage et désinfection de la douche', '', 'pièce(s)', 4, 20, 'PONCTUEL', 'OUI', 'REF-0040', 'ENTRETIEN'],
   /* Les sols se mesurent, ils ne se cochent pas : un plateau de bureaux de
-     300 m² et un cabinet de 40 m² ne demandent pas le même temps. Les prix
-     sont ceux du devis type d'entretien de Simon (DEVIS-I-26-09-2) : l'entretien
-     passe sur un sol déjà propre, il ne coûte pas une fin de chantier. */
-  ['Sols et surfaces', 'Dépoussiérage et détachage des plinthes, murs, plafonds et rebords de fenêtre', '', 'm2', 0.15, 20, 'PONCTUEL', 'OUI', 'REF-0026', 'ENTRETIEN'],
-  ['Sols et surfaces', 'Aspiration des sols', '', 'm2', 0.15, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
-  ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'm2', 0.20, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
+     300 m² et un cabinet de 40 m² ne demandent pas le même temps. L'unité et
+     la forme viennent du devis type d'entretien (DEVIS-I-26-09-2) ; les prix
+     ont été abaissés par Simon le 12 octobre 2026 au soir, en dessous de ceux
+     de ce devis — c'est sa décision commerciale, pas un relevé. */
+  ['Sols et surfaces', 'Dépoussiérage et détachage des plinthes, murs, plafonds et rebords de fenêtre', '', 'm2', 0.10, 20, 'PONCTUEL', 'OUI', 'REF-0026', 'ENTRETIEN'],
+  ['Sols et surfaces', 'Aspiration des sols', '', 'm2', 0.10, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
+  ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'm2', 0.15, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
   /* Elle se multiplie par le nombre de poubelles. Sur le devis type elle était
      offerte : c'était un geste commercial, pas un tarif — Simon la facture. */
   ['Déchets', 'Rotation des poubelles', '', 'pièce(s)', 0.50, 20, 'PONCTUEL', 'OUI', 'REF-0039', 'ENTRETIEN'],
