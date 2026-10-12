@@ -570,7 +570,6 @@ var CATALOGUE_DEFAUT_ = [
   ['Bureaux et espaces de travail', 'Nettoyage et désinfection des bureaux, tables, chaises et points de contact', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0016', 'ENTRETIEN'],
   ['Bureaux et espaces de travail', 'Dépoussiérage et suppression des traces sur matériel informatique, casiers et étagères', '', 'forfait', 4, 20, 'PONCTUEL', 'OUI', 'REF-0017', 'ENTRETIEN'],
   ['Bureaux et espaces de travail', 'Dépoussiérage des lustres et luminaires', '', 'forfait', 6.20, 20, 'PONCTUEL', 'OUI', 'REF-0018', 'ENTRETIEN'],
-  ['Bureaux et espaces de travail', 'Nettoyage et désinfection des tablettes de commande', '', 'forfait', 2, 20, 'PONCTUEL', 'OUI', 'REF-0019', 'ENTRETIEN'],
   ['Cuisine et espace repas', 'Désinfection des ustensiles de cuisine et du plan de travail', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0020', 'ENTRETIEN'],
   ['Cuisine et espace repas', 'Nettoyage des micro-ondes : points de contact extérieurs et intérieur', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0021', 'ENTRETIEN'],
   ['Cuisine et espace repas', 'Nettoyage de l\'armoire réfrigérée : points de contact extérieurs et étages intérieurs', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0022', 'ENTRETIEN'],
@@ -580,6 +579,9 @@ var CATALOGUE_DEFAUT_ = [
   ['Sols et surfaces', 'Dépoussiérage et détachage des plinthes, murs, plafonds et rebords de fenêtre', '', 'forfait', 5, 20, 'PONCTUEL', 'OUI', 'REF-0026', 'ENTRETIEN'],
   ['Sols et surfaces', 'Aspiration des sols', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
   ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'forfait', 13, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
+  /* La seule prestation d'entretien qui se compte : les autres sont au forfait,
+     prix par passage, celle-ci se multiplie par le nombre de poubelles. */
+  ['Déchets', 'Rotation des poubelles', '', 'pièce(s)', 0.50, 20, 'PONCTUEL', 'OUI', 'REF-0039', 'ENTRETIEN'],
   ['Contrôle', 'Contrôle visuel et hygiénique après chaque intervention', '', 'forfait', 1, 20, 'PONCTUEL', 'OUI', 'REF-0029', 'ENTRETIEN'],
   /* Vitrages et menuiseries : un devis à part, jamais mêlé à un entretien —
      les vitres ne passent pas à la même fréquence que les sols. La grille est
