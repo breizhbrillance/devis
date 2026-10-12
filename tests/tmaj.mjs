@@ -121,8 +121,30 @@ const G = g.CATALOGUE_DEFAUT_;
 T('la grille par défaut compte 38 prestations', G.length === 38, G.length);
 T('de dix colonnes chacune', G.every(l => l.length === 10), G.filter(l => l.length !== 10));
 const refs = G.map(l => l[8]);
-T('aux références uniques, de REF-0001 à REF-0038',
-  new Set(refs).size === 38 && refs.slice().sort().join() === Array.from({length:38},(_, i)=>'REF-00'+('0'+(i+1)).slice(-2)).join(), refs);
+T('aux références uniques', new Set(refs).size === 38, refs.length - new Set(refs).size);
+/* La suite des références n'est plus continue depuis que REF-0019 (les
+   tablettes de commande, un devis particulier pour un restaurant) a été
+   retirée. C'est voulu : **un numéro retiré ne se réattribue jamais**. Une
+   ligne de devis déjà établie porte sa référence ; la réemployer pour une
+   autre prestation changerait le sens d'un devis signé. La rotation des
+   poubelles a donc pris REF-0039, pas la place laissée vide. */
+T('REF-0019 a été retirée et n\'a pas été réattribuée',
+  refs.indexOf('REF-0019') < 0, refs.filter(r => r === 'REF-0019'));
+T('et le trou n\'est pas comblé : la dernière est REF-0039',
+  refs.indexOf('REF-0039') >= 0 && Math.max(...refs.map(r => +r.slice(4))) === 39,
+  refs.slice(-3));
+T('aucune référence hors de la plage connue',
+  refs.every(r => /^REF-00(0[1-9]|[1-3][0-9])$/.test(r)), refs.filter(r => !/^REF-00(0[1-9]|[1-3][0-9])$/.test(r)));
+
+/* La rotation des poubelles (12 octobre 2026) : la seule prestation
+   d'entretien qui se compte. Les autres sont au forfait, prix par passage. */
+const pou = G.find(l => l[8] === 'REF-0039');
+T('la rotation des poubelles est au catalogue', !!pou, pou);
+T('à 0,50 € l\'unité', pou && pou[4] === 0.50, pou && pou[4]);
+T('comptée à la pièce, et non au forfait', pou && pou[3] === 'pièce(s)', pou && pou[3]);
+T('vendue en entretien, et là seulement', pou && pou[9] === 'ENTRETIEN', pou && pou[9]);
+T('et les tablettes de commande ne se vendent plus',
+  !G.some(l => /tablettes de commande/i.test(l[1])), G.filter(l => /tablette/i.test(l[1])));
 /* Les six dernières sont celles de la vitrerie (v53), reprises du modèle
    duplicable « Devis nettoyage vitrages et menuiseries ». */
 const vit = G.filter(l => l[9] === 'VITRERIE');
@@ -157,8 +179,18 @@ T('et le nettoyage porte le détail des cinq étapes',
   G.find(l => l[8] === 'REF-0036')[2]);
 T('aucune prestation ne se vend plus dans les trois natures', G.every(l => String(l[9]).trim() !== ''), G.filter(l=>!l[9]));
 const ent = G.filter(l => l[9] === 'ENTRETIEN');
-T('quatorze tâches d\'entretien, toutes à cocher', ent.length === 14 && ent.every(l => l[3] === 'forfait'), ent.length);
-T('pour 73,20 € par passage', Math.round(ent.reduce((s,l)=>s+l[4],0)*100)/100 === 73.2, ent.reduce((s,l)=>s+l[4],0));
+/* Treize tâches à cocher, et une seule qui se compte : la rotation des
+   poubelles. Le total de référence ne retient que les forfaits — celui qui se
+   compte dépend du nombre de poubelles, il n'a pas de prix « par passage ». */
+const entForfait = ent.filter(l => l[3] === 'forfait');
+T('quatorze prestations d\'entretien', ent.length === 14, ent.length);
+T('dont treize à cocher', entForfait.length === 13, entForfait.map(l => l[8]));
+T('et une seule qui se compte, la rotation des poubelles',
+  ent.filter(l => l[3] !== 'forfait').map(l => l[8]).join() === 'REF-0039',
+  ent.filter(l => l[3] !== 'forfait').map(l => l[8]));
+T('tout coché, 71,20 € par passage',
+  Math.round(entForfait.reduce((s,l)=>s+l[4],0)*100)/100 === 71.2,
+  entForfait.reduce((s,l)=>s+l[4],0));
 T('le nettoyage vapeur est placé juste avant le lavage humide',
   refs.indexOf('REF-0015') + 1 === refs.indexOf('REF-0004'), refs.slice(0, 6));
 T('et juste après le décapage', refs.indexOf('REF-0003') + 1 === refs.indexOf('REF-0015'), refs.slice(0, 6));
