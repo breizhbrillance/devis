@@ -439,25 +439,17 @@ await p.evaluate(() => prSetSecteur('')); await p.waitForTimeout(400);
    des horaires bâtis autour de l'heure réelle du banc, pour que l'essai dise la
    même chose à 9 h du matin qu'à 23 h. */
 await reinit();
-const AUJ = ['dim','lun','mar','mer','jeu','ven','sam'][new Date().getDay()];
-const horaires = (deb, fin) => {
-  const h = {};
-  ['lun','mar','mer','jeu','ven','sam','dim'].forEach(j => { h[j] = 'Fermé'; });
-  h[AUJ] = deb + '-' + fin;
-  return h;
-};
-/* Les plages restent dans la journée en cours : une heure avant minuit,
-   « maintenant + 1 h » retombait sur 00:25 et la plage 22:25-00:25 n'avait
-   plus de sens — l'essai rougissait entre 23 h et 1 h du matin, et seulement
-   là. On raisonne donc en minutes depuis minuit, bornées à la journée. */
-const hm = (m) => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
-const MTN = (() => { const d = new Date(); return d.getHours()*60 + d.getMinutes(); })();
-const OUVERT = horaires(hm(Math.max(0, MTN - 60)), hm(Math.min(1439, MTN + 60)));
-/* Fermé : une heure qui n'englobe pas l'instant présent. Avant 3 h du matin,
-   il n'y a pas de place avant — on la prend après, ce qui ferme tout autant. */
-const FERME = MTN >= 180
-  ? horaires(hm(MTN - 180), hm(MTN - 120))
-  : horaires(hm(Math.min(1380, MTN + 120)), hm(Math.min(1439, MTN + 180)));
+/* Ni l'heure ni le jour n'entrent dans ces horaires d'essai.
+   Deux versions s'y sont cassé les dents : d'abord des plages bâties autour de
+   « maintenant ± 1 h », qui débordaient de la journée avant minuit ; puis les
+   mêmes, bornées à la journée, mais posées sur le seul jour courant — et une
+   suite qui démarre à 23 h 59 interroge l'application le lendemain, où ce
+   jour-là est « Fermé ». Les deux ne rougissaient qu'à ces heures-là.
+   Un établissement ouvert jour et nuit est ouvert à n'importe quelle heure de
+   n'importe quel jour ; un fermé tous les jours est fermé de même. Il n'y a
+   plus d'heure du tout dans cet essai, donc plus d'heure qui fâche. */
+const OUVERT = TOUJOURS;   // ouvert 00:00-23:59, les sept jours
+const FERME = JAMAIS;      // « Fermé » les sept jours
 
 /* Playwright ne passe qu'un seul argument à la fonction évaluée : les deux
    grilles d'horaires voyagent donc dans un tableau. */

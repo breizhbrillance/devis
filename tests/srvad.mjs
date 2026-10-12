@@ -78,7 +78,8 @@ export function lancer(port){
       if(!g || g.code !== d.code) return rep({ok:false,refus:true,erreur:'Nom ou code incorrect'});
 
       const permis = g.role === 'ADMIN'
-        ? ['connexion','config','journal','tableau','planifier','statut']
+        ? ['connexion','config','journal','tableau','planifier','statut',
+           'chantierNeuf','lotChantiers']
         : g.role === 'PRESTATAIRE'
           ? ['connexion','config','photo','journal','planning','chantier']
           : ['connexion','config','sync','photo','journal','statut'];
@@ -91,16 +92,54 @@ export function lancer(port){
         if(mode.tableau==='erreur'){ r.writeHead(500); return r.end('boom'); }
         return rep(JSON.parse(JSON.stringify(Object.assign({}, tableau, {maj:Date.now()}))));
       }
-      if(d.action==='planifier'){
+      /* Le vrai serveur a les mêmes garde-fous, éprouvés par tgestion : ici on
+         les reproduit pour que l'écran soit mis à l'épreuve des refus. */
+      const planifierUn = (d) => {
         const c = tableau.chantiers.find(x=>x.id===d.id);
-        if(!c) return rep({ok:false,erreur:'chantier introuvable'});
+        if(!c) return {ok:false,erreur:'chantier introuvable'};
+        if(d.annuler){
+          if(c.arrivee) return {ok:false,erreur:'ce chantier a déjà été pointé : il ne peut plus être annulé'};
+          c.statut='ANNULE'; return {ok:true,id:c.id,statut:'ANNULE'};
+        }
+        if(d.retablir){
+          c.statut = (c.date && c.prestataire) ? 'PLANIFIE' : 'A PLANIFIER';
+          return {ok:true,id:c.id,statut:c.statut};
+        }
         if(d.prestataire && tableau.prestataires.indexOf(d.prestataire)<0)
-          return rep({ok:false,erreur:"ce prestataire n'est pas dans la liste"});
+          return {ok:false,erreur:"ce prestataire n'est pas dans la liste"};
+        ['client','adresse','cp','ville','acces','note','nature'].forEach(k=>{
+          if(d[k]!==undefined) c[k]=d[k];
+        });
         if(d.date!==undefined) c.date=d.date;
         if(d.heure!==undefined) c.heure=d.heure;
         if(d.prestataire!==undefined) c.prestataire=d.prestataire;
         c.statut = (c.date && c.prestataire) ? 'PLANIFIE' : 'A PLANIFIER';
-        return rep({ok:true, id:c.id, statut:c.statut});
+        return {ok:true, id:c.id, statut:c.statut};
+      };
+      if(d.action==='planifier') return rep(planifierUn(d));
+      if(d.action==='chantierNeuf'){
+        if(!String(d.client||'').trim()) return rep({ok:false,erreur:'il faut au moins un nom de client'});
+        if(d.prestataire && tableau.prestataires.indexOf(d.prestataire)<0)
+          return rep({ok:false,erreur:"ce prestataire n'est pas dans la liste"});
+        let max=0; tableau.chantiers.forEach(c=>{ const m=/^CH-(\d+)$/.exec(c.id); if(m&&+m[1]>max) max=+m[1]; });
+        const id='CH-'+('000'+(max+1)).slice(-4);
+        tableau.chantiers.push({id, numero:'', client:d.client, adresse:d.adresse||'',
+          cp:d.cp||'', ville:d.ville||'', acces:d.acces||'', date:d.date||'', heure:d.heure||'',
+          prestataire:d.prestataire||'', statut:(d.date&&d.prestataire)?'PLANIFIE':'A PLANIFIER',
+          arrivee:0, depart:0, minutes:0, signalement:'', note:d.note||'', nature:d.nature||''});
+        return rep({ok:true, id, statut:(d.date&&d.prestataire)?'PLANIFIE':'A PLANIFIER'});
+      }
+      if(d.action==='lotChantiers'){
+        const ids=(d.ids||[]).filter(x=>x);
+        if(!ids.length) return rep({ok:false,erreur:'aucun chantier choisi'});
+        let faits=0; const refus=[];
+        ids.forEach(id=>{
+          const un={id}; ['date','heure','prestataire'].forEach(k=>{ if(d[k]!==undefined) un[k]=d[k]; });
+          if(d.annuler) un.annuler=true;
+          const res=planifierUn(un);
+          if(res.ok) faits++; else refus.push(id+' : '+res.erreur);
+        });
+        return rep({ok:faits>0, faits, refus, erreur:faits?'':(refus[0]||'')});
       }
       if(d.action==='statut'){
         const dv = tableau.devis.find(x=>x.numero===d.numero);

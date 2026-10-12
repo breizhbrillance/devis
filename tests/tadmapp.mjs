@@ -21,6 +21,19 @@ async function connecter(p, nom, code){
   await p.click('#bCo'); await p.waitForTimeout(1400);
   if(await p.isVisible('#eAccord')){ await p.click('#bAccord'); await p.waitForTimeout(900); }
 }
+/* Un clic sur un bouton absent doit faire ROUGIR la suite, pas la faire
+   planter : c'est l'essai porteur de la règle qui doit parler. */
+const rate = [];
+async function cliquer(p, sel){
+  try { await p.click(sel, { timeout: 5000 }); return true; }
+  catch(e){ rate.push(sel); return false; }
+}
+async function ecrire(p, sel, v){
+  try { await p.fill(sel, v, { timeout: 5000 }); return true; }
+  catch(e){ rate.push(sel); return false; }
+}
+const lire = async (p, sel) => { try { return await p.inputValue(sel, { timeout: 5000 }); }
+  catch(e){ rate.push(sel); return ''; } };
 const vis=(p,id)=>p.evaluate(x=>{const e=document.getElementById(x);return !!e && !e.classList.contains('hide');},id);
 
 /* ---------- 1. chacun chez soi ---------- */
@@ -155,7 +168,10 @@ T('le filtre « non affectés » isole ce qui reste à faire',
 await p.click('#adListe .card:has-text("MAIRIE DE PLOEREN")'); await p.waitForTimeout(500);
 const fc = await p.innerText('#adFiche');
 T('la fiche du chantier s\'ouvre', await vis(p,'eAd2'));
-T('l\'accès au site est mis en évidence', /Code portail 1975/.test(fc), fc.slice(0,300));
+/* Depuis la v70 l'accès est un champ, pas un encadré : le gérant le corrige
+   au lieu de seulement le lire. Il doit donc s'y retrouver tel quel. */
+T('l\'accès au site est là, et modifiable',
+  (await p.inputValue('#adAcces')) === 'Code portail 1975', await p.inputValue('#adAcces'));
 T('les prestataires sont proposés',
   (await p.$$('#adFiche .puce')).length >= 3, (await p.$$('#adFiche .puce')).length);
 await p.fill('#adDate','2026-10-12');
@@ -210,6 +226,166 @@ const avantH = recu.length;
 await p.waitForTimeout(400);
 T('et rien n\'est parti', recu.length === avantH, recu.length - avantH);
 await c.setOffline(false);
+await p.evaluate(()=>Object.defineProperty(navigator,'onLine',{get:()=>true, configurable:true}));
+await p.click('#adFiche button:has-text("Retour au tableau")'); await p.waitForTimeout(600);
+await p.click('#eAd1 button:has-text("Actualiser")'); await p.waitForTimeout(1500);
+
+/* ---------- 10. corriger un chantier (v70) ----------
+   Une adresse fausse envoie l'équipe au mauvais endroit, et jusqu'ici elle ne
+   se réparait que dans le classeur. */
+await cliquer(p, '#bOngChantiers'); await p.waitForTimeout(500);
+await cliquer(p, '#adListe .card:has-text("MAIRIE DE PLOEREN")'); await p.waitForTimeout(600);
+T('le client est modifiable', await p.isVisible('#adClient'));
+T('l\'adresse aussi', await p.isVisible('#adAdresse'));
+T('l\'accès aussi', await p.isVisible('#adAcces'));
+T('et le champ porte ce que le bureau avait envoyé',
+  (await lire(p, '#adAcces')) === 'Code portail 1975', await lire(p, '#adAcces'));
+await ecrire(p, '#adAdresse', '2 place de la Mairie');
+await ecrire(p, '#adAcces', 'Nouveau code 2026');
+await ecrire(p, '#adNote', 'Prevoir l escabeau');
+await cliquer(p, '#adFiche .puce:has-text("Vitrages")'); await p.waitForTimeout(300);
+await cliquer(p, '#adFiche button:has-text("Enregistrer")'); await p.waitForTimeout(1500);
+const envC = recu.filter(x=>x.action==='planifier').pop() || {};
+T('la correction part au bureau', envC.adresse === '2 place de la Mairie', envC.adresse);
+T('avec l\'accès', envC.acces === 'Nouveau code 2026', envC.acces);
+T('avec la note', envC.note === 'Prevoir l escabeau', envC.note);
+T('et la nature choisie', envC.nature === 'VITRERIE', envC.nature);
+T('le bureau l\'a bien prise',
+  tableau.chantiers.find(c=>c.id==='CH-0001').adresse === '2 place de la Mairie',
+  tableau.chantiers.find(c=>c.id==='CH-0001').adresse);
+T('un chantier sans client est retenu sur l\'écran', await (async ()=>{
+  await cliquer(p, '#adListe .card:has-text("MAIRIE")'); await p.waitForTimeout(500);
+  await ecrire(p, '#adClient', '  ');
+  await cliquer(p, '#adFiche button:has-text("Enregistrer")'); await p.waitForTimeout(600);
+  const msg = await p.textContent('#erreur');
+  await cliquer(p, '#adFiche button:has-text("Retour au tableau")'); await p.waitForTimeout(500);
+  return /client/.test(msg);
+})());
+
+/* ---------- 11. annuler un chantier ---------- */
+await cliquer(p, '#adListe .card:has-text("EHPAD LES PINS")'); await p.waitForTimeout(600);
+T('le bouton d\'annulation est là',
+  await p.isVisible('#adFiche button:has-text("Annuler ce chantier")'));
+await cliquer(p, '#adFiche button:has-text("Annuler ce chantier")'); await p.waitForTimeout(500);
+/* La confirmation est celle de l'application : dans une PWA installée, celle
+   du navigateur peut répondre « non » toute seule. */
+const conf = () => p.evaluate(()=>{ const d=document.getElementById('dlgConf'); return !!(d && d.open); });
+T('une confirmation est demandée, et c\'est celle de l\'application', await conf());
+T('elle dit ce qui va se passer',
+  /téléphones/.test(await p.textContent('#confTexte')), await p.textContent('#confTexte'));
+await cliquer(p, '#confOui'); await p.waitForTimeout(1500);
+const envA = recu.filter(x=>x.action==='planifier' && x.annuler).pop();
+T('l\'annulation part au bureau', !!envA, recu.filter(x=>x.annuler));
+T('le bureau l\'a annulé',
+  tableau.chantiers.find(c=>c.id==='CH-0002').statut === 'ANNULE',
+  tableau.chantiers.find(c=>c.id==='CH-0002').statut);
+await p.waitForTimeout(600);
+/* Un chantier annulé ne se mêle pas aux autres : il n'est plus du travail à
+   faire, et le voir dans la liste ferait croire qu'il tient encore. Deux
+   chantiers portent le nom de l'EHPAD : on compte les cartes, un simple
+   « le nom a disparu » serait faux. */
+const cartesEhpad = () => p.evaluate(() =>
+  [...document.querySelectorAll('#adListe .card')].filter(e => /EHPAD/.test(e.textContent)).length);
+T('il quitte la liste des chantiers', (await cartesEhpad()) === 1, await cartesEhpad());
+await cliquer(p, '#adFiltres .puce:has-text("annulés")'); await p.waitForTimeout(500);
+T('mais on le retrouve derrière sa pastille',
+  (await cartesEhpad()) === 1 && /EHPAD LES PINS/.test(await p.innerText('#adListe')),
+  (await p.innerText('#adListe')).slice(0,200));
+await cliquer(p, '#adListe .card:has-text("EHPAD")'); await p.waitForTimeout(600);
+T('sa fiche propose de le rétablir',
+  await p.isVisible('#adFiche button:has-text("Rétablir")'));
+await cliquer(p, '#adFiche button:has-text("Rétablir")'); await p.waitForTimeout(1500);
+T('le rétablissement ne demande rien, il ne casse rien', !(await conf()));
+T('et le bureau l\'a repris',
+  tableau.chantiers.find(c=>c.id==='CH-0002').statut === 'PLANIFIE',
+  tableau.chantiers.find(c=>c.id==='CH-0002').statut);
+
+/* Un chantier déjà pointé ne s'annule pas : son temps part en facturation. */
+await cliquer(p, '#adFiltres .puce:has-text("Tout le monde")'); await p.waitForTimeout(400);
+await cliquer(p, '#adListe .card:has-text("EHPAD")'); await p.waitForTimeout(600);
+const fPointee = await p.innerText('#adFiche');
+if(/pointé/.test(fPointee)){
+  T('un chantier pointé dit pourquoi il ne s\'annule pas',
+    !(await p.isVisible('#adFiche button:has-text("Annuler ce chantier")')), fPointee.slice(0,200));
+}
+await cliquer(p, '#adFiche button:has-text("Retour au tableau")'); await p.waitForTimeout(500);
+
+/* ---------- 12. créer un chantier à la main ---------- */
+const avantN = tableau.chantiers.length;
+await cliquer(p, '#eAd1 button:has-text("+ Nouveau chantier")'); await p.waitForTimeout(600);
+T('l\'écran de création s\'ouvre', await vis(p,'eAd2'));
+T('il n\'y a pas de pointage à montrer sur un chantier qui n\'existe pas',
+  !/Arrivé à/.test(await p.innerText('#adFiche')));
+const avantEnvoi = recu.filter(x=>x.action==='chantierNeuf').length;
+await cliquer(p, '#adFiche button:has-text("Créer le chantier")'); await p.waitForTimeout(700);
+T('sans client, la création est retenue sur l\'écran',
+  /client/.test(await p.textContent('#erreur')), await p.textContent('#erreur'));
+/* Retenue SUR L'ÉCRAN : rien ne doit partir au bureau. Un envoi que le serveur
+   refuse donnerait le même message, et masquerait une garde disparue. */
+T('et rien n\'est même parti au bureau',
+  recu.filter(x=>x.action==='chantierNeuf').length === avantEnvoi,
+  recu.filter(x=>x.action==='chantierNeuf').length - avantEnvoi);
+T('aucun chantier créé', tableau.chantiers.length === avantN, tableau.chantiers.length);
+await ecrire(p, '#adClient', 'M. HERON');
+await ecrire(p, '#adAdresse', '3 rue des Lilas');
+await ecrire(p, '#adVille', 'Vannes');
+await ecrire(p, '#adNote', 'Debarras du garage');
+await ecrire(p, '#adDate', '2026-10-20');
+await ecrire(p, '#adHeure', '14:00');
+await cliquer(p, '#adFiche .puce:has-text("YANN P")'); await p.waitForTimeout(300);
+await cliquer(p, '#adFiche .puce:has-text("Remise en état")'); await p.waitForTimeout(300);
+await cliquer(p, '#adFiche button:has-text("Créer le chantier")'); await p.waitForTimeout(1800);
+T('le chantier est créé', tableau.chantiers.length === avantN + 1, tableau.chantiers.length);
+const neuf = tableau.chantiers[tableau.chantiers.length-1];
+T('avec son client', neuf.client === 'M. HERON', neuf.client);
+T('sa personne et sa date', neuf.prestataire === 'YANN P' && neuf.date === '2026-10-20', neuf);
+T('sa nature', neuf.nature === 'REMISE', neuf.nature);
+T('et il est planifié', neuf.statut === 'PLANIFIE', neuf.statut);
+T('on revient au tableau', await vis(p,'eAd1'));
+await p.waitForTimeout(1200);
+T('il apparaît dans la liste', /M. HERON/.test(await p.innerText('#adListe')),
+  (await p.innerText('#adListe')).slice(0,200));
+
+/* ---------- 13. déplacer plusieurs chantiers d'un coup ---------- */
+await cliquer(p, '#bAdSel'); await p.waitForTimeout(500);
+T('le mode sélection s\'annonce',
+  /Appuie sur les chantiers/.test(await p.innerText('#adLot')), await p.innerText('#adLot'));
+await cliquer(p, '#adListe .card:has-text("MAIRIE DE PLOEREN")'); await p.waitForTimeout(400);
+T('un appui coche au lieu d\'ouvrir la fiche', await vis(p,'eAd1'));
+/* Lu sur l'écran rendu, pas sur la classe : une règle CSS renommée laisserait
+   la classe en place et la carte grise. */
+const prises = () => p.evaluate(() => {
+  const fond = [...document.querySelectorAll('#adListe .card')]
+    .map(e => getComputedStyle(e).backgroundColor);
+  const ordinaire = fond.filter(c => c === 'rgb(255, 255, 255)').length;
+  return { total: fond.length, teintees: fond.length - ordinaire };
+});
+T('et la carte le montre, teintée', (await prises()).teintees === 1, await prises());
+await cliquer(p, '#adListe .card:has-text("M. HERON")'); await p.waitForTimeout(400);
+T('deux chantiers choisis', /2 chantiers choisis/.test(await p.innerText('#adLot')),
+  await p.innerText('#adLot'));
+await cliquer(p, '#adListe .card:has-text("M. HERON")'); await p.waitForTimeout(400);
+T('un deuxième appui le retire', /1 chantier choisi/.test(await p.innerText('#adLot')),
+  await p.innerText('#adLot'));
+await cliquer(p, '#adListe .card:has-text("M. HERON")'); await p.waitForTimeout(400);
+await cliquer(p, '#adLot button:has-text("Appliquer")'); await p.waitForTimeout(600);
+T('sans rien choisir, le déplacement est retenu',
+  /au moins une date/.test(await p.textContent('#erreur')), await p.textContent('#erreur'));
+await ecrire(p, '#adLotDate', '2026-11-03');
+await cliquer(p, '#adLot .puce:has-text("MARIE K")'); await p.waitForTimeout(300);
+await cliquer(p, '#adLot button:has-text("Appliquer")'); await p.waitForTimeout(1800);
+const envL = recu.filter(x=>x.action==='lotChantiers').pop() || {};
+T('le lot part au bureau', (envL.ids||[]).length === 2, envL.ids);
+T('avec la date', envL.date === '2026-11-03', envL.date);
+T('avec le prestataire', envL.prestataire === 'MARIE K', envL.prestataire);
+T('l\'heure n\'y est pas, elle n\'a pas été choisie', envL.heure === undefined, envL.heure);
+T('les deux chantiers ont bougé',
+  tableau.chantiers.filter(c=>c.date==='2026-11-03' && c.prestataire==='MARIE K').length === 2,
+  tableau.chantiers.filter(c=>c.date==='2026-11-03').map(c=>c.client));
+T('le mode sélection se referme tout seul',
+  (await p.textContent('#bAdSel')) === 'Sélectionner', await p.textContent('#bAdSel'));
+
+T('aucun bouton attendu ne manquait', rate.length === 0, rate);
 
 await b.close();
 console.log('\n=== ESPACE ADMIN (téléphone) : '+ok.length+' au vert, '+ko.length+' au rouge ===');

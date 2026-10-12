@@ -325,8 +325,14 @@ T('son salarié aussi', !f[0].qui, f[0].qui);
 T('la note garde le rendez-vous qu\'il faut décommander',
   /était prévu le 06\/10\/2026 avec MAXIME/.test(f[0].note), f[0].note);
 T('Maxime ne le voit plus', g.planningDe_('MAXIME').length === 0, g.planningDe_('MAXIME'));
-T('l\'écran d\'administration non plus',
-  !g.tableauAdmin_().chantiers.some(c => c.numero === 'X1'), g.tableauAdmin_().chantiers.map(c=>c.numero));
+/* Jusqu'à la v70, l'écran du gérant ne recevait pas les chantiers annulés.
+   Il les reçoit maintenant, avec leur statut, pour qu'il puisse rétablir une
+   annulation faite par erreur ; c'est l'écran qui les range à part, derrière
+   leur propre pastille, hors du travail à faire. La règle n'a pas changé :
+   un chantier annulé ne se mêle pas aux autres. */
+const vuX1 = g.tableauAdmin_().chantiers.filter(c => c.numero === 'X1')[0];
+T('l\'écran d\'administration le reçoit, mais marqué annulé',
+  !!vuX1 && vuX1.statut === 'ANNULE', vuX1);
 T('le journal en garde trace', actions().includes('CHANTIERS ANNULES'), actions());
 T('le gérant est prévenu, avec la date et le nom',
   courriers().some(m => /X1 annulé/.test(m.subject || '') && /06\/10\/2026 — MAXIME/.test(m.body || '')),
