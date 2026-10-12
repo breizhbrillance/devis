@@ -705,6 +705,7 @@ function doPost(e) {
     var d = JSON.parse(e.postData.contents);
     var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
                    'planning', 'chantier', 'tableau', 'planifier',
+                   'chantierNeuf', 'lotChantiers',
                    'prospects', 'appel', 'historique'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
@@ -732,6 +733,7 @@ function doPost(e) {
     var admin = com.role === 'ADMIN';
     var permis = admin
       ? ['connexion', 'config', 'journal', 'tableau', 'planifier', 'statut',
+         'chantierNeuf', 'lotChantiers',
          'prospects', 'appel', 'historique']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
@@ -771,6 +773,8 @@ function doPost(e) {
     }
     if (d.action === 'tableau') return reponse_(tableauAdmin_());
     if (d.action === 'planifier') return reponse_(planifierChantier_(d, com));
+    if (d.action === 'chantierNeuf') return reponse_(creerChantier_(d, com));
+    if (d.action === 'lotChantiers') return reponse_(lotChantiers_(d, com));
     if (d.action === 'photo') return reponse_(enregistrerPhoto_(d));
     if (d.action === 'statut') return reponse_(enregistrerStatut_(d, com));
     if (d.action === 'prospects') return reponse_(listeProspects_(d));
@@ -1636,9 +1640,10 @@ function tableauAdmin_() {
   var chantiers = [];
   objetsDe_(SH.CHANTIERS).forEach(function (o) {
     if (!String(o.ID || '').trim()) return;
-    /* Une fiche annulée n'est plus à planifier : elle ne doit pas remonter en
-       tête de l'écran comme un chantier sans date. */
-    if (String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') return;
+    /* Une fiche annulée part quand même au gérant, avec son statut : l'écran
+       la range derrière sa propre pastille, hors du travail à faire, et c'est
+       de là qu'il peut la rétablir. Sans cela, une annulation par erreur ne se
+       réparerait que dans le classeur. */
     var d = o.DATE ? new Date(o.DATE) : null;
     var plan = !!(d && !isNaN(d.getTime()));
     // Un chantier sans date est justement celui qu'il faut planifier : il doit
@@ -1691,6 +1696,18 @@ function planifierChantier_(d, com) {
   if (d.date !== undefined) v.DATE = String(d.date || '') ? new Date(String(d.date) + 'T12:00:00') : '';
   if (d.heure !== undefined) v.HEURE = String(d.heure || '');
   if (d.prestataire !== undefined) v.PRESTATAIRE = String(d.prestataire || '');
+  /* Ce que le gérant corrige à la main : une adresse fausse envoie l'équipe
+     au mauvais endroit, et il n'avait jusqu'ici que le classeur pour la
+     réparer. Un champ absent de l'envoi n'est pas touché — c'est ce qui
+     permet au déplacement en lot de ne poser que la date. */
+  champsIdentiteChantier_().forEach(function (f) {
+    if (d[f.env] !== undefined) v[f.col] = String(d[f.env] || '');
+  });
+  if (d.duree !== undefined) {
+    var mn = Math.round(Number(d.duree) || 0);
+    v.DUREE_PREVUE_MIN = mn > 0 ? mn : '';
+  }
+  if (d.nature !== undefined) v.NATURE = natureChoisie_(d.nature);
 
   // Le nom doit exister, sinon le chantier n'apparaîtrait sur aucun téléphone.
   if (v.PRESTATAIRE) {
@@ -1702,6 +1719,31 @@ function planifierChantier_(d, com) {
   var avant = null;
   objetsDe_(SH.CHANTIERS).forEach(function (o) { if (String(o.ID).trim() === id) avant = o; });
   if (!avant) return { ok: false, erreur: 'chantier introuvable' };
+
+  /* Annuler plutôt qu'effacer. La ligne reste : on sait ce qui a été
+     décommandé, et un passage de contrat récurrent annulé ne revient pas à la
+     génération suivante — alors qu'une ligne supprimée, si.
+     Un chantier déjà commencé ne s'annule pas : son pointage est du temps de
+     travail, et il part en facturation. */
+  if (d.annuler) {
+    if (avant.ARRIVEE && String(avant.ARRIVEE).trim()) {
+      return { ok: false, erreur: 'ce chantier a déjà été pointé : il ne peut plus être annulé' };
+    }
+    majChantier_(id, { STATUT: 'ANNULE' });
+    tracerServeur_(com ? com.nom : '', 'CHANTIER ANNULE',
+                   String(avant.CLIENT || '') + ' \u00b7 ' +
+                   (avant.DATE ? Utilities.formatDate(new Date(avant.DATE), 'Europe/Paris', 'dd/MM/yyyy') : 'sans date'),
+                   String(avant.NUMERO || ''), d.appareil || '');
+    return { ok: true, id: id, statut: 'ANNULE' };
+  }
+  /* Rétabli, il reprend le statut que sa date et son salarié lui donnent. */
+  if (d.retablir) {
+    var st = (avant.DATE && String(avant.PRESTATAIRE || '').trim()) ? 'PLANIFIE' : 'A PLANIFIER';
+    majChantier_(id, { STATUT: st });
+    tracerServeur_(com ? com.nom : '', 'CHANTIER RETABLI', String(avant.CLIENT || ''),
+                   String(avant.NUMERO || ''), d.appareil || '');
+    return { ok: true, id: id, statut: st };
+  }
 
   var dateFinale = v.DATE !== undefined ? v.DATE : avant.DATE;
   var quiFinal = v.PRESTATAIRE !== undefined ? v.PRESTATAIRE : avant.PRESTATAIRE;
@@ -1722,6 +1764,103 @@ function planifierChantier_(d, com) {
                  String(avant.NUMERO || ''), d.appareil || '');
 
   return { ok: true, id: id, statut: v.STATUT || avant.STATUT };
+}
+
+/* Les champs d'identité d'un chantier que le gérant peut corriger, et le nom
+   qu'ils portent dans l'envoi. Une seule liste, lue par la correction comme
+   par la création : deux listes finiraient par diverger. */
+function champsIdentiteChantier_() {
+  return [
+    { env: 'client',  col: 'CLIENT' },
+    { env: 'adresse', col: 'ADRESSE' },
+    { env: 'cp',      col: 'CP' },
+    { env: 'ville',   col: 'VILLE' },
+    { env: 'acces',   col: 'ACCES' },
+    { env: 'note',    col: 'NOTE' }
+  ];
+}
+
+/**
+ * Un chantier posé à la main, sans devis derrière : un dépannage, un petit
+ * travail, un rattrapage. Il ressemble en tout point à un chantier né d'un
+ * devis, NUMERO mis à part — ce qui le fait vivre, c'est son ID.
+ */
+function creerChantier_(d, com) {
+  var client = String(d.client || '').trim();
+  if (!client) return { ok: false, erreur: 'il faut au moins un nom de client' };
+
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh) return { ok: false, erreur: 'onglet des chantiers absent' };
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cId = en.indexOf('ID');
+  if (cId < 0) return { ok: false, erreur: 'colonnes absentes — lancer « Mettre à jour la structure »' };
+
+  var qui = String(d.prestataire || '').trim();
+  if (qui) {
+    var connu = false, n = normNom_(qui);
+    lirePrestataires_().forEach(function (p) { if (normNom_(p.nom) === n) { connu = true; qui = p.nom; } });
+    if (!connu) return { ok: false, erreur: 'ce prestataire n\'est pas dans la liste' };
+  }
+
+  var date = String(d.date || '').trim() ? new Date(String(d.date) + 'T12:00:00') : '';
+  if (date && isNaN(date.getTime())) return { ok: false, erreur: 'date illisible' };
+  var mn = Math.round(Number(d.duree) || 0);
+
+  var id = 'CH-' + ('000' + prochainNumChantier_(sh, cId)).slice(-4);
+  var v = {
+    ID: id, NUMERO: '',
+    CLIENT: client,
+    ADRESSE: String(d.adresse || ''), CP: String(d.cp || ''), VILLE: String(d.ville || ''),
+    ACCES: String(d.acces || ''),
+    DATE: date, HEURE: String(d.heure || ''),
+    PRESTATAIRE: qui,
+    STATUT: (date && qui) ? 'PLANIFIE' : 'A PLANIFIER',
+    ARRIVEE: '', DEPART: '', MINUTES: '',
+    PRESTATIONS_FAITES: '', SIGNALEMENT: '', PHOTOS: 0,
+    /* Sans devis derrière, la fiche de travail du salarié serait vide : la
+       note est tout ce qu'il aura sous les yeux en arrivant. */
+    NOTE: String(d.note || ''),
+    CREE_LE: new Date(),
+    DUREE_PREVUE_MIN: mn > 0 ? mn : '',
+    LOT: '', RECURRENT: '', NATURE: natureChoisie_(d.nature)
+  };
+  sh.appendRow(en.map(function (h) { return v.hasOwnProperty(h) ? v[h] : ''; }));
+
+  tracerServeur_(com ? com.nom : '', 'CHANTIER CREE',
+                 client + ' \u00b7 ' + (date ? isoJour_(date) : 'sans date') +
+                 (qui ? ' \u00b7 ' + qui : ''), '', d.appareil || '');
+  return { ok: true, id: id, statut: v.STATUT };
+}
+
+/**
+ * Le même geste sur plusieurs chantiers : tout reporter au lendemain, tout
+ * passer à quelqu'un d'autre, tout annuler. Chaque ligne passe par
+ * planifierChantier_ : une seule logique, donc les mêmes garde-fous — un
+ * chantier déjà pointé reste intouchable, un prestataire inconnu est refusé.
+ */
+function lotChantiers_(d, com) {
+  var ids = (d.ids || []).map(function (x) { return String(x || '').trim(); })
+    .filter(function (x) { return x; });
+  if (!ids.length) return { ok: false, erreur: 'aucun chantier choisi' };
+  if (ids.length > 60) return { ok: false, erreur: 'trop de chantiers d\'un coup (60 au plus)' };
+
+  var faits = 0, refus = [];
+  ids.forEach(function (id) {
+    var un = { id: id, appareil: d.appareil || '' };
+    if (d.date !== undefined) un.date = d.date;
+    if (d.heure !== undefined) un.heure = d.heure;
+    if (d.prestataire !== undefined) un.prestataire = d.prestataire;
+    if (d.annuler) un.annuler = true;
+    var r = planifierChantier_(un, com);
+    if (r && r.ok) faits++;
+    else refus.push(id + ' : ' + ((r && r.erreur) || 'refusé'));
+  });
+
+  /* On dit ce qui n'est pas passé plutôt que d'annoncer un succès global :
+     sur un lot, l'échec d'une seule ligne est invisible autrement. */
+  return { ok: faits > 0, faits: faits, refus: refus,
+           erreur: faits ? '' : (refus[0] || 'rien n\'a pu être modifié') };
 }
 
 /* Un seul endroit décide de ce que chaque métier reçoit à la connexion. */
@@ -2631,6 +2770,17 @@ function natureDevis_(v) {
    non renseignée, et tout le planning serait orange. */
 function natureOuVide_(v) {
   return String(v || '').trim() ? natureDevis_(v) : '';
+}
+
+/* La nature telle que le gérant la choisit à l'écran. Ici on ne devine pas :
+   « natureDevis_ » rend CHANTIER pour tout ce qu'elle ne reconnaît pas, ce qui
+   est juste pour un devis — la nature y est toujours l'une des cinq — mais
+   faux pour une valeur saisie. Une faute de frappe laisserait un chantier en
+   orange sans que personne ne l'ait demandé : elle ne laisse rien. */
+function natureChoisie_(v) {
+  var n = String(v || '').toUpperCase().trim();
+  if (!n) return '';
+  return ['ENTRETIEN', 'VITRERIE', 'CHANTIER', 'REMISE', 'FACADE'].indexOf(n) >= 0 ? n : '';
 }
 
 /** Le nom que le devis et les messages donnent à une nature. */

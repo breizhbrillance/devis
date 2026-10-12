@@ -299,7 +299,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v69';
+var VERSION_APP = 'v70';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -3672,6 +3672,10 @@ var AD_ONGLET = 'devis';
 var AD_QUI = '';              // filtre : un nom, ou vide pour tout le monde
 var AD_FICHE = null;          // la fiche ouverte
 var AD_PRESTA = '';           // le prestataire choisi dans la planification
+var AD_SEL = false;           // mode « choisir plusieurs chantiers »
+var AD_CHOIX = {};            // les ids cochés, en mode sélection
+var AD_LOT_PRESTA = null;     // le prestataire du déplacement en lot (null = ne pas y toucher)
+var AD_NATURE = '';           // la nature choisie sur la fiche ouverte
 
 function estAdmin(){ var m = session(); return !!(m && m.role === 'ADMIN'); }
 
@@ -3751,6 +3755,9 @@ function peindreTableau(){
     : 'Jamais rafraîchi sur cet appareil.';
   $('bOngDevis').classList.toggle('on', AD_ONGLET === 'devis');
   $('bOngChantiers').classList.toggle('on', AD_ONGLET === 'chantiers');
+  $('adActions').classList.toggle('hide', AD_ONGLET !== 'chantiers');
+  $('bAdSel').textContent = AD_SEL ? 'Terminer' : 'Sélectionner';
+  peindreLot();
 
   if(!t){
     $('adChiffres').innerHTML = '<div class="empty">Appuie sur « Actualiser » pour aller chercher ' +
@@ -3771,7 +3778,7 @@ function peindreTableau(){
     '<div class="mini" style="margin-top:6px">Sur les ' + (t.fenetre||90) + ' derniers jours.</div>';
 
   var noms = (AD_ONGLET === 'devis' ? (t.commerciaux||[]) : (t.prestataires||[])).slice();
-  if(AD_ONGLET === 'chantiers') noms.unshift('(non affectés)');
+  if(AD_ONGLET === 'chantiers') { noms.unshift('(non affectés)'); noms.push('(annulés)'); }
   $('adFiltres').innerHTML = ['<span class="puce' + (AD_QUI===''?' on':'') +
       '" onclick="filtreAdmin(\'\')">Tout le monde</span>']
     .concat(noms.map(function(n){
@@ -3806,14 +3813,20 @@ function listeDevisAdmin(t){
   }).join('');
 }
 
+function estAnnule(c){ return String(c.statut||'').toUpperCase() === 'ANNULE'; }
+
 function listeChantiersAdmin(t){
+  /* Les annulés ne se mêlent pas aux autres : ils ne sont plus du travail à
+     faire. On les retrouve derrière leur propre pastille, pour les rétablir. */
   var l = (t.chantiers||[]).filter(function(c){
+    if(AD_QUI === '(annulés)') return estAnnule(c);
+    if(estAnnule(c)) return false;
     if(!AD_QUI) return true;
     if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
     return c.prestataire === AD_QUI;
   });
   if(!l.length) return '<div class="card"><div class="empty">Aucun chantier.</div></div>';
-  var aFaire = l.filter(function(c){ return !c.date || !c.prestataire; }).length;
+  var aFaire = l.filter(function(c){ return !estAnnule(c) && (!c.date || !c.prestataire); }).length;
   var tete = aFaire
     ? '<div class="card" style="border-color:var(--warn)"><b>' + aFaire + ' chantier' +
       (aFaire>1?'s':'') + ' à planifier</b><div class="mini">Sans date ou sans personne, ' +
@@ -3821,9 +3834,12 @@ function listeChantiersAdmin(t){
     : '';
   return tete + l.map(function(c){
     var manque = !c.date || !c.prestataire;
-    return '<div class="card" style="cursor:pointer;margin-bottom:10px" onclick="ficheChantier(\'' +
-      ech(c.id) + '\')">' +
+    var pris = !!AD_CHOIX[c.id];
+    return '<div class="card' + (pris ? ' adPris' : '') +
+      '" style="cursor:pointer;margin-bottom:10px" onclick="' +
+      (AD_SEL ? 'choisirChantier(\'' + ech(c.id) + '\')' : 'ficheChantier(\'' + ech(c.id) + '\')') + '">' +
       '<div style="display:flex;gap:10px;align-items:baseline">' +
+        (AD_SEL ? '<span class="adCoche">' + (pris ? '\u2713' : '') + '</span>' : '') +
         '<b style="flex:1;font-size:15.5px">' + ech(c.client||'Chantier') + '</b>' +
         badgeChantier(c) +
       '</div>' +
@@ -3835,6 +3851,109 @@ function listeChantiersAdmin(t){
       (c.signalement ? '<div class="mini" style="color:var(--rouge,#991b1b)">Problème signalé</div>' : '') +
     '</div>';
   }).join('');
+}
+
+/* ---- agir sur plusieurs chantiers d'un coup ----
+   Reporter une journée entière au lendemain, ou la passer à quelqu'un
+   d'autre, se faisait chantier par chantier. En mode sélection, l'appui sur
+   une carte la coche au lieu de l'ouvrir : c'est le seul geste qui change. */
+
+function basculerSelection(){
+  AD_SEL = !AD_SEL;
+  AD_CHOIX = {};
+  AD_LOT_PRESTA = null;
+  peindreTableau();
+}
+
+function choisirChantier(id){
+  if(AD_CHOIX[id]) delete AD_CHOIX[id]; else AD_CHOIX[id] = true;
+  peindreTableau();
+}
+
+function nbChoisis(){
+  var n = 0; for(var k in AD_CHOIX) if(AD_CHOIX.hasOwnProperty(k)) n++;
+  return n;
+}
+
+function choisirPrestaLot(nom){
+  AD_LOT_PRESTA = nom;
+  Array.prototype.forEach.call($('adLot').querySelectorAll('.puce'), function(e){
+    e.classList.toggle('on', e.textContent.trim() === (nom === '' ? 'Personne' : nom));
+  });
+}
+
+function peindreLot(){
+  var boite = $('adLot');
+  var n = AD_SEL ? nbChoisis() : 0;
+  boite.classList.toggle('hide', !AD_SEL);
+  if(!AD_SEL) { boite.innerHTML = ''; return; }
+  if(!n){
+    boite.innerHTML = '<div class="mini" style="margin-top:0">Appuie sur les chantiers à déplacer. ' +
+      'Un deuxième appui les retire.</div>';
+    return;
+  }
+  var gens = ((TABLEAU||{}).prestataires||[]);
+  boite.innerHTML =
+    '<b>' + n + ' chantier' + (n>1?'s':'') + ' choisi' + (n>1?'s':'') + '</b>' +
+    '<div class="mini">Ce qui reste vide n\'est pas touché.</div>' +
+    '<label>Nouvelle date</label>' +
+    '<input id="adLotDate" type="date">' +
+    '<label>Nouvelle heure</label>' +
+    '<input id="adLotHeure" type="time">' +
+    '<label>Prestataire</label>' +
+    '<div class="row" style="flex-wrap:wrap;gap:6px">' +
+      gens.map(function(x){
+        return '<span class="puce' + (AD_LOT_PRESTA===x?' on':'') + '" onclick="choisirPrestaLot(\'' +
+               ech(x).replace(/'/g,'&#39;') + '\')">' + ech(x) + '</span>';
+      }).join('') +
+      '<span class="puce' + (AD_LOT_PRESTA===''?' on':'') + '" onclick="choisirPrestaLot(\'\')">Personne</span>' +
+    '</div>' +
+    '<button class="btn" style="margin-top:12px" onclick="appliquerLot(false, this)">Appliquer</button>' +
+    '<button class="btn sec" style="margin-top:8px;border-color:var(--rouge,#991b1b);' +
+      'color:var(--rouge,#991b1b)" onclick="appliquerLot(true, this)">Annuler ces chantiers</button>';
+}
+
+function appliquerLot(annuler, btn){
+  var ids = []; for(var k in AD_CHOIX) if(AD_CHOIX.hasOwnProperty(k)) ids.push(k);
+  if(!ids.length) return;
+  if(!navigator.onLine) return erreur('Hors connexion : cette action a besoin du réseau.');
+  var date = val('adLotDate'), heure = val('adLotHeure');
+  if(!annuler && !date && !heure && AD_LOT_PRESTA === null){
+    return erreur('Choisis au moins une date, une heure ou un prestataire.');
+  }
+  if(annuler){
+    return demander('Annuler ' + ids.length + ' chantier' + (ids.length>1?'s':'') + ' ?',
+                    'Ils disparaîtront des téléphones. Les lignes restent au classeur.',
+                    'Les annuler').then(function(oui){
+      if(oui) poserLot(true, btn, ids, date, heure);
+    });
+  }
+  poserLot(false, btn, ids, date, heure);
+}
+
+function poserLot(annuler, btn, ids, date, heure){
+  var moi = session();
+  erreur('');
+  if(btn) occuper(btn, 'En cours…');
+  var env = {action:'lotChantiers', nom:moi.nom, code:moi.code, appareil:APPAREIL, ids:ids};
+  if(annuler) env.annuler = true;
+  else {
+    if(date) env.date = date;
+    if(heure) env.heure = heure;
+    if(AD_LOT_PRESTA !== null) env.prestataire = AD_LOT_PRESTA;
+  }
+  poster(env).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    /* Sur un lot, l'échec d'une seule ligne passerait inaperçu : on le dit. */
+    if(r.refus && r.refus.length){
+      erreur(r.faits + ' modifié' + (r.faits>1?'s':'') + ', ' + r.refus.length +
+             ' refusé' + (r.refus.length>1?'s':'') + ' — ' + r.refus[0]);
+    }
+    tracer(annuler ? 'CHANTIERS ANNULES' : 'CHANTIERS DEPLACES', ids.length + ' chantier(s)', '');
+    AD_SEL = false; AD_CHOIX = {}; AD_LOT_PRESTA = null;
+    chargerTableau();
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
 }
 
 /* ---- la fiche d'un devis ---- */
@@ -3924,30 +4043,151 @@ function ficheChantier(id){
   if(!c) return;
   AD_FICHE = {type:'chantier', cle:id};
   AD_PRESTA = c.prestataire || '';
+  AD_NATURE = String(c.nature || '').toUpperCase();
   montrer('eAd2');
   $('hTitre').textContent = 'Chantier';
   erreur(''); window.scrollTo(0,0);
-  peindreFicheChantier(c);
+  peindreFicheChantier(c, false);
 }
 
-function peindreFicheChantier(c){
+/* Un chantier posé à la main : un dépannage, un rattrapage, un petit travail
+   qui n'est jamais passé par un devis. */
+function nouveauChantier(){
+  AD_FICHE = {type:'chantierNeuf', cle:''};
+  AD_PRESTA = ''; AD_NATURE = '';
+  montrer('eAd2');
+  $('hTitre').textContent = 'Nouveau chantier';
+  erreur(''); window.scrollTo(0,0);
+  peindreFicheChantier({}, true);
+}
+
+function choisirNatureAd(v){
+  AD_NATURE = v;
+  var noms = {}; NATURES_CHOIX.forEach(function(x){ noms[x.n] = x.v; });
+  Array.prototype.forEach.call($('adFiche').querySelectorAll('.puce'), function(e){
+    var lib = e.textContent.trim();
+    if(!(lib in noms) && lib !== 'Aucune') return;     // les pastilles des prestataires
+    e.classList.toggle('on', (noms[lib] || '') === v);
+  });
+}
+
+/* Ce que la fiche envoie : les champs d'identité, toujours tous, pour qu'un
+   champ vidé exprès le reste. */
+function champsFicheChantier(){
+  return { client: val('adClient'), adresse: val('adAdresse'), cp: val('adCp'),
+           ville: val('adVille'), acces: val('adAcces'), note: val('adNote'),
+           nature: AD_NATURE, date: val('adDate'), heure: val('adHeure'),
+           prestataire: AD_PRESTA };
+}
+
+function creerLeChantier(btn){
+  if(!navigator.onLine) return erreur('Hors connexion : créer un chantier a besoin du réseau.');
+  var c = champsFicheChantier();
+  if(!String(c.client || '').trim()) return erreur('Il faut au moins un nom de client.');
+  var moi = session();
+  erreur('');
+  if(btn) occuper(btn, 'Création…');
+  var env = {action:'chantierNeuf', nom:moi.nom, code:moi.code, appareil:APPAREIL};
+  for(var k in c) if(c.hasOwnProperty(k)) env[k] = c[k];
+  poster(env).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    tracer('CHANTIER CREE', c.client + ' ' + (c.date||'sans date'), r.id || '');
+    retourTableau();
+    chargerTableau();
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+
+/* Annuler, ou rétablir. Une annulation se confirme : c'est un rendez-vous
+   chez un client, et l'appui est à portée de pouce. */
+function annulerChantierAd(annuler, btn){
+  var f = AD_FICHE;
+  if(!f || f.type !== 'chantier') return;
+  if(!navigator.onLine) return erreur('Hors connexion : cette action a besoin du réseau.');
+  /* La confirmation de l'application, jamais celle du navigateur : installée
+     sur l'écran d'accueil, confirm() peut répondre « non » tout seul. */
+  if(!annuler) return poserAnnulation(false, btn);
+  demander('Annuler ce chantier ?',
+           'Il disparaîtra des téléphones. La ligne reste au classeur, et tu pourras ' +
+           'le rétablir.', 'Annuler le chantier').then(function(oui){
+    if(oui) poserAnnulation(true, btn);
+  });
+}
+
+function poserAnnulation(annuler, btn){
+  var f = AD_FICHE;
+  if(!f || f.type !== 'chantier') return;
+  var moi = session();
+  erreur('');
+  if(btn) occuper(btn, annuler ? 'Annulation…' : 'Rétablissement…');
+  var env = {action:'planifier', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:f.cle};
+  if(annuler) env.annuler = true; else env.retablir = true;
+  poster(env).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    tracer(annuler ? 'CHANTIER ANNULE' : 'CHANTIER RETABLI', '', f.cle);
+    retourTableau();
+    chargerTableau();
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+
+/* Les cinq natures, proposées à l'écran du gérant comme au devis. */
+var NATURES_CHOIX = [
+  {v:'ENTRETIEN', n:'Entretien'}, {v:'VITRERIE', n:'Vitrages'},
+  {v:'CHANTIER', n:'Fin de chantier'}, {v:'REMISE', n:'Remise en état'},
+  {v:'FACADE', n:'Façade'}
+];
+
+/* La fiche d'un chantier, qu'il existe déjà ou qu'on soit en train de le
+   créer. Le même formulaire sert aux deux : un chantier posé à la main n'est
+   pas d'une autre espèce, il n'a simplement pas de devis derrière lui. */
+function peindreFicheChantier(c, neuf){
   var gens = ((TABLEAU||{}).prestataires||[]);
+  var annule = String(c.statut||'').toUpperCase() === 'ANNULE';
+  var pointe = !!c.arrivee;
+  var champ = function(id, lib, val, type){
+    return '<label>' + lib + '</label><input id="' + id + '" type="' + (type||'text') +
+           '" value="' + ech(val||'') + '">';
+  };
+
   $('adFiche').innerHTML =
+    (neuf ? '' :
+      '<div class="card">' +
+        '<div style="display:flex;gap:10px;align-items:baseline">' +
+          '<b style="flex:1;font-size:17px">' + ech(c.client||'Chantier') + '</b>' + badgeChantier(c) +
+        '</div>' +
+        (c.numero ? '<div class="mini" style="margin-top:6px">' + ech(c.numero) + '</div>' : '') +
+        (c.arrivee ? '<div class="mini" style="margin-top:8px">Arrivé à ' + heureLisible(c.arrivee) +
+          (c.depart ? ', parti à ' + heureLisible(c.depart) + ' · ' + dureeLisible(c.minutes) : '') +
+          '</div>' : '') +
+        (c.signalement ? '<div class="err" style="margin-top:10px">Problème signalé : ' +
+          ech(c.signalement) + '</div>' : '') +
+        (annule ? '<div class="err" style="margin-top:10px">Ce chantier est annulé. ' +
+          'Il n\'apparaît sur aucun téléphone.</div>' : '') +
+      '</div>') +
+
     '<div class="card">' +
-      '<div style="display:flex;gap:10px;align-items:baseline">' +
-        '<b style="flex:1;font-size:17px">' + ech(c.client||'Chantier') + '</b>' + badgeChantier(c) +
+      '<h2>' + (neuf ? 'Le nouveau chantier' : 'Le chantier') + '</h2>' +
+      champ('adClient', 'Client', c.client) +
+      champ('adAdresse', 'Adresse', c.adresse) +
+      '<div class="row" style="gap:8px">' +
+        '<div style="width:110px">' + champ('adCp', 'Code postal', c.cp) + '</div>' +
+        '<div style="flex:1">' + champ('adVille', 'Ville', c.ville) + '</div>' +
       '</div>' +
-      (c.numero ? '<div class="mini" style="margin-top:6px">' + ech(c.numero) + '</div>' : '') +
-      '<div style="margin-top:8px">' + ech(c.adresse||'') +
-        ((c.cp||c.ville) ? '<br>' + ech((c.cp||'') + ' ' + (c.ville||'')) : '') + '</div>' +
-      (c.acces ? '<div class="ok" style="text-align:left;margin-top:10px"><b>Accès au site</b><br>' +
-        ech(c.acces) + '</div>' : '') +
-      (c.arrivee ? '<div class="mini" style="margin-top:10px">Arrivé à ' + heureLisible(c.arrivee) +
-        (c.depart ? ', parti à ' + heureLisible(c.depart) + ' · ' + dureeLisible(c.minutes) : '') +
-        '</div>' : '') +
-      (c.signalement ? '<div class="err" style="margin-top:10px">Problème signalé : ' +
-        ech(c.signalement) + '</div>' : '') +
-      (c.note ? '<div class="mini" style="margin-top:8px">Mot du prestataire : ' + ech(c.note) + '</div>' : '') +
+      '<label>Accès au site</label>' +
+      '<input id="adAcces" type="text" value="' + ech(c.acces||'') + '" ' +
+        'placeholder="Code portail, où est la clé…">' +
+      '<label>Ce qu\'il y a à faire</label>' +
+      '<textarea id="adNote" rows="3" placeholder="Ce que le salarié verra en arrivant">' +
+        ech(c.note||'') + '</textarea>' +
+      '<label>Nature</label>' +
+      '<div class="row" style="flex-wrap:wrap;gap:6px">' +
+        NATURES_CHOIX.map(function(x){
+          return '<span class="puce' + (AD_NATURE===x.v?' on':'') + '" onclick="choisirNatureAd(\'' +
+                 x.v + '\')">' + ech(x.n) + '</span>';
+        }).join('') +
+        '<span class="puce' + (AD_NATURE===''?' on':'') + '" onclick="choisirNatureAd(\'\')">Aucune</span>' +
+      '</div>' +
     '</div>' +
 
     '<div class="card">' +
@@ -3966,8 +4206,28 @@ function peindreFicheChantier(c){
         }).join('') +
         '<span class="puce' + (AD_PRESTA===''?' on':'') + '" onclick="choisirPresta(\'\')">Personne</span>' +
       '</div>' +
-      '<button class="btn" style="margin-top:14px" onclick="enregistrerPlanif(this)">Enregistrer</button>' +
+      '<button class="btn" style="margin-top:14px" id="bAdEnr" ' +
+        'onclick="' + (neuf ? 'creerLeChantier(this)' : 'enregistrerPlanif(this)') + '">' +
+        (neuf ? 'Créer le chantier' : 'Enregistrer') + '</button>' +
     '</div>' +
+
+    /* Annuler plutôt que supprimer : la ligne reste au classeur, et un passage
+       de contrat récurrent annulé ne revient pas à la génération suivante. */
+    (neuf ? '' :
+      '<div class="card">' +
+        (annule
+          ? '<div class="mini" style="margin-top:0">Rétabli, il reprendra sa place dans le planning.</div>' +
+            '<button class="btn sec" style="margin-top:10px" onclick="annulerChantierAd(false, this)">' +
+            'Rétablir ce chantier</button>'
+          : (pointe
+              ? '<div class="mini" style="margin-top:0">Ce chantier a été pointé : son temps part en ' +
+                'facturation, il ne peut plus être annulé.</div>'
+              : '<div class="mini" style="margin-top:0">Annulé, il disparaît des téléphones et de ce ' +
+                'tableau. La ligne reste au classeur, et un passage de contrat ne reviendra pas.</div>' +
+                '<button class="btn sec" style="margin-top:10px;border-color:var(--rouge,#991b1b);' +
+                'color:var(--rouge,#991b1b)" onclick="annulerChantierAd(true, this)">' +
+                'Annuler ce chantier</button>')) +
+      '</div>') +
 
     '<button class="btn sec" onclick="retourTableau()">Retour au tableau</button>';
 }
@@ -3988,14 +4248,19 @@ function enregistrerPlanif(btn){
   var moi = session();
   erreur('');
   if(btn) occuper(btn, 'Enregistrement…');
-  poster({action:'planifier', nom:moi.nom, code:moi.code, appareil:APPAREIL,
-          id:f.cle, date:val('adDate'), heure:val('adHeure'), prestataire:AD_PRESTA}).then(function(r){
+  var c = champsFicheChantier();
+  if(!String(c.client || '').trim()) { if(btn) libere(btn); return erreur('Il faut au moins un nom de client.'); }
+  var env = {action:'planifier', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:f.cle};
+  for(var k in c) if(c.hasOwnProperty(k)) env[k] = c[k];
+  poster(env).then(function(r){
     if(btn) libere(btn);
     if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
     tracer('CHANTIER PLANIFIE', AD_PRESTA + ' ' + val('adDate'), f.cle);
     ((TABLEAU||{}).chantiers||[]).forEach(function(x){
       if(x.id !== f.cle) return;
-      x.date = val('adDate'); x.heure = val('adHeure'); x.prestataire = AD_PRESTA;
+      x.date = c.date; x.heure = c.heure; x.prestataire = AD_PRESTA;
+      x.client = c.client; x.adresse = c.adresse; x.cp = c.cp; x.ville = c.ville;
+      x.acces = c.acces; x.note = c.note; x.nature = c.nature;
       x.statut = r.statut || x.statut;
     });
     try{ lsj('tableau', TABLEAU); }catch(e){}

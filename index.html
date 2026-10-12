@@ -234,6 +234,13 @@
   #dlgConf .conf{padding:20px}
   #dlgConf h2{margin:0 0 8px;font-size:17px}
   #dlgConf .mini{margin-top:0}
+  /* La sélection multiple de l'écran du gérant : une carte prise se voit du
+     premier coup d'œil, sinon on ne sait plus ce qu'on va déplacer. */
+  .adCoche{display:inline-flex;align-items:center;justify-content:center;
+           width:22px;height:22px;flex:0 0 22px;border:2px solid var(--line);
+           border-radius:6px;font-size:14px;font-weight:700;color:var(--acc-t)}
+  .card.adPris{border-color:var(--acc-b);background:var(--acc-f)}
+  .card.adPris .adCoche{border-color:var(--acc-b)}
   .vb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.3px;border-radius:5px;
       padding:2px 6px;margin-right:6px;vertical-align:1px}
   .vb-s{background:#E3F4E8;color:#14612F}
@@ -977,6 +984,13 @@
       <button class="btn sec sm" style="flex:1" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
       <button class="btn sec sm" style="flex:1" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Chantiers</button>
     </div>
+    <!-- Poser un chantier à la main, et agir sur plusieurs d'un coup. Les deux
+         ne concernent que l'onglet des chantiers. -->
+    <div class="row hide" id="adActions" style="margin-top:10px;gap:8px">
+      <button class="btn sec sm" style="flex:1" onclick="nouveauChantier()">+ Nouveau chantier</button>
+      <button class="btn sec sm" style="flex:1" id="bAdSel" onclick="basculerSelection()">Sélectionner</button>
+    </div>
+    <div id="adLot" class="card hide" style="margin-top:10px;border-color:var(--acc-b)"></div>
     <div id="adFiltres" class="row" style="flex-wrap:wrap;gap:6px;margin-top:10px"></div>
     <div id="adListe" style="margin-top:10px"></div>
   </section>
@@ -1099,11 +1113,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=69"></script>
-<script src="jspdf.umd.min.js?v=69"></script>
-<script src="police.js?v=69"></script>
-<script src="logo.js?v=69"></script>
-<script src="pdf.js?v=69"></script>
-<script src="app.js?v=69"></script>
+<script src="config.js?v=70"></script>
+<script src="jspdf.umd.min.js?v=70"></script>
+<script src="police.js?v=70"></script>
+<script src="logo.js?v=70"></script>
+<script src="pdf.js?v=70"></script>
+<script src="app.js?v=70"></script>
 </body>
 </html>
