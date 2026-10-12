@@ -577,8 +577,11 @@ var CATALOGUE_DEFAUT_ = [
   ['Sanitaires', 'Nettoyage et désinfection des cuvettes et abattants de toilettes', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0024', 'ENTRETIEN'],
   ['Sanitaires', 'Désinfection complète des lavabos, miroirs et plans de travail', '', 'forfait', 7, 20, 'PONCTUEL', 'OUI', 'REF-0025', 'ENTRETIEN'],
   ['Sols et surfaces', 'Dépoussiérage et détachage des plinthes, murs, plafonds et rebords de fenêtre', '', 'forfait', 5, 20, 'PONCTUEL', 'OUI', 'REF-0026', 'ENTRETIEN'],
-  ['Sols et surfaces', 'Aspiration des sols', '', 'forfait', 9, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
-  ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'forfait', 13, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
+  /* Les sols se mesurent, ils ne se cochent pas : un plateau de bureaux de
+     300 m² et un cabinet de 40 m² ne demandent pas le même temps. Prix repris
+     de la fin de chantier (REF-0002 et REF-0004), décision de Simon. */
+  ['Sols et surfaces', 'Aspiration des sols', '', 'm2', 0.40, 20, 'PONCTUEL', 'OUI', 'REF-0027', 'ENTRETIEN'],
+  ['Sols et surfaces', 'Lavage humide des sols avec désinfection', '', 'm2', 0.45, 20, 'PONCTUEL', 'OUI', 'REF-0028', 'ENTRETIEN'],
   /* La seule prestation d'entretien qui se compte : les autres sont au forfait,
      prix par passage, celle-ci se multiplie par le nombre de poubelles. */
   ['Déchets', 'Rotation des poubelles', '', 'pièce(s)', 0.50, 20, 'PONCTUEL', 'OUI', 'REF-0039', 'ENTRETIEN'],
