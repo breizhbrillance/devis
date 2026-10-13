@@ -148,7 +148,8 @@ var DB = (function(){
     jSuppr: function(id){ return tx('journal','readwrite', function(st){ return st.delete(id); }); },
     cPut:  function(o){  return tx('chantiers','readwrite', function(st){ return st.put(o); }); },
     cTous: function(){   return tx('chantiers','readonly',  function(st){ return st.getAll(); }); },
-    cGet:  function(id){ return tx('chantiers','readonly',  function(st){ return st.get(id); }); }
+    cGet:  function(id){ return tx('chantiers','readonly',  function(st){ return st.get(id); }); },
+    cSuppr:function(id){ return tx('chantiers','readwrite', function(st){ return st.delete(id); }); }
   };
 })();
 
@@ -299,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v72';
+var VERSION_APP = 'v73';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -453,7 +454,7 @@ function repondreConf(oui){
 }
 
 /* ====================== NAVIGATION ====================== */
-var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','ePro','eAg1','eAg2','eAd1','eAd2'];
+var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','ePro','eAg1','eAg2','eAg3','eAd1','eAd2'];
 var ECRAN_VU = '';
 /* Les trois lieux de la barre du bas, et l'onglet qui s'allume sur chacun. */
 var ONGLET_ECRAN = { e1:'devis', e6:'liste', ePro:'phoning', eAg1:'planning' };
@@ -4332,6 +4333,12 @@ function estAgent(){
 function ecranPlanning(){
   ETAPE = 0;
   AG_PASSE = false;             // on revient toujours sur ce qui vient
+  /* Le bouton n'existe que pour le commercial qui a aussi un planning :
+     CFG.planning ne vient que de config_(), jamais de configPrestataire_().
+     C'est le classeur qui décide, pas cet écran — et le serveur refuse
+     l'action à qui n'y a pas droit, même si le bouton était forcé. */
+  var br = $('bAgRdv');
+  if(br) br.classList.toggle('hide', !(CFG && CFG.planning));
   fermerDialogues();
   montrer('eAg1');
   $('steps').classList.add('hide');
@@ -4378,7 +4385,21 @@ function chargerPlanning(btn){
             });
         }
         return p.then(function(){ return DB.cPut(c); });
-      }, Promise.resolve());
+      }, Promise.resolve()).then(function(){
+        /* Ce que le bureau ne renvoie plus a quitté ce planning : annulé,
+           réaffecté à quelqu'un d'autre, ou retiré par le commercial. Sans
+           cette purge il restait sur l'appareil pour toujours, et le salarié
+           partait sur un chantier décommandé.
+           On garde ce qui n'est pas encore remonté : un pointage fait en zone
+           blanche ne doit pas disparaître parce que le bureau l'ignore
+           encore. */
+        var servis = {};
+        (d.chantiers || []).forEach(function(c){ servis[c.id] = true; });
+        return (locaux || []).reduce(function(p, c){
+          if(servis[c.id] || (c.aEnvoyer && Object.keys(c.aEnvoyer).length)) return p;
+          return p.then(function(){ return DB.cSuppr(c.id); });
+        }, Promise.resolve());
+      });
     }).then(function(){
       erreur('');
       peindrePlanning();
@@ -4424,8 +4445,17 @@ var NATURES_VUE = {
   VITRERIE:  { nom: 'Vitrages',        t: '#1baf7a', f: '#d8f2e8', i: '#0a6d4a' },
   CHANTIER:  { nom: 'Fin de chantier', t: '#eb6834', f: '#fce3d9', i: '#a44418' },
   REMISE:    { nom: 'Remise en état',  t: '#6250d6', f: '#e6e2fb', i: '#4a3ab0' },
-  FACADE:    { nom: 'Façade',          t: '#eda100', f: '#fbecd1', i: '#8a5e00' }
+  FACADE:    { nom: 'Façade',          t: '#eda100', f: '#fbecd1', i: '#8a5e00' },
+  /* Le rendez-vous du commercial n'est pas une prestation : il se distingue
+     des cinq natures vendues par un gris franc, qui ne concurrence aucune
+     couleur de métier. Le validateur de palette le signale comme « lit
+     gris » — c'est exactement l'intention, et la pastille écrit « Rendez-vous »
+     à côté, de sorte que la couleur ne porte jamais l'information seule.
+     Contrastes mesurés : encre 8,6 et trait 5,2 sur son fond. */
+  RDV:       { nom: 'Rendez-vous',     t: '#5b6472', f: '#eceef1', i: '#3c434d' }
 };
+var NATURE_RDV = 'RDV';
+function estRdv(c){ return String((c||{}).nature || '').toUpperCase().trim() === NATURE_RDV; }
 /* Une nature inconnue ne reçoit pas de couleur au hasard : la carte reste
    grise, et l'absence se voit. */
 function natureVue(v){
@@ -4507,6 +4537,79 @@ function peindrePlanning(){
   });
 }
 
+/* ---- un rendez-vous sur son propre planning (13 octobre 2026) ----
+   Demande de Simon : « j'aimerais que les commerciaux puissent ajouter et
+   supprimer des tâches sur leur emploi du temps ». Ce qu'il ajoute n'est pas
+   un chantier de nettoyage mais un rendez-vous : une visite, un relevé, un
+   déplacement. Le serveur impose son nom et la nature RDV, quoi que le
+   téléphone envoie. */
+
+function nouveauRdv(){
+  if(!(CFG && CFG.planning)) return;
+  montrer('eAg3');
+  $('hTitre').textContent = 'Un rendez-vous';
+  erreur('');
+  ['rdvQuoi','rdvAdresse','rdvCp','rdvVille','rdvNote'].forEach(function(k){ $(k).value = ''; });
+  /* Aujourd'hui par défaut : c'est le jour qu'on pose le plus souvent, et une
+     date vide ferait refuser l'envoi par le classeur. */
+  $('rdvDate').value = isoJour();
+  $('rdvHeure').value = '';
+  $('rdvDuree').value = 60;
+  window.scrollTo(0,0);
+}
+
+function creerLeRdv(btn){
+  if(!navigator.onLine) return erreur('Hors connexion : ajouter un rendez-vous demande le réseau.');
+  var quoi = ($('rdvQuoi').value || '').trim();
+  var date = $('rdvDate').value || '';
+  /* On retient le commercial sur l'écran plutôt que d'envoyer un rendez-vous
+     que personne ne saurait lire sur le planning. */
+  if(!quoi) return erreur('Dis au moins de quoi il s\'agit.');
+  if(!date) return erreur('Un rendez-vous sans date n\'apparaît nulle part.');
+  var moi = session();
+  erreur('');
+  if(btn) occuper(btn, 'Ajout…');
+  poster({action:'rdvNeuf', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+          client:quoi, date:date, heure:$('rdvHeure').value || '',
+          duree:Number($('rdvDuree').value) || 0,
+          adresse:($('rdvAdresse').value||'').trim(), cp:($('rdvCp').value||'').trim(),
+          ville:($('rdvVille').value||'').trim(), note:($('rdvNote').value||'').trim()
+  }).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    tracer('RDV POSE', quoi + ' · ' + date, r.id || '');
+    ecranPlanning();
+    chargerPlanning();
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+
+function retirerDeMonPlanning(btn){
+  var c = CHANTIER;
+  if(!c) return;
+  if(!navigator.onLine) return erreur('Hors connexion : cette action demande le réseau.');
+  /* La confirmation de l'application, jamais celle du navigateur : installée
+     sur l'écran d'accueil, confirm() peut répondre « non » tout seul. */
+  demander(estRdv(c) ? 'Retirer ce rendez-vous ?' : 'Retirer ce chantier de ton planning ?',
+           estRdv(c)
+             ? 'Il disparaîtra de ton planning. Tu peux le reposer ensuite.'
+             : 'Il quittera ton planning et le bureau sera prévenu que tu l\'as décommandé.',
+           'Retirer').then(function(oui){
+    if(!oui) return;
+    var moi = session();
+    if(btn) occuper(btn, 'Retrait…');
+    poster({action:'monChantier', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+            id:c.id, annuler:true}).then(function(r){
+      if(btn) libere(btn);
+      if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+      tracer('CHANTIER RETIRE DU PLANNING', c.client || '', c.id);
+      /* La copie gardée sur l'appareil doit partir aussi : sans cela la carte
+         resterait sur le planning jusqu'à la prochaine synchronisation. */
+      DB.cSuppr(c.id).then(function(){ ecranPlanning(); chargerPlanning(); },
+                          function(){ ecranPlanning(); chargerPlanning(); });
+    }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+  });
+}
+
 /* Mêmes pastilles que côté commercial : un seul vocabulaire visuel dans l'outil. */
 function badgeChantier(x){
   var s = String(x.statut || 'PLANIFIE');
@@ -4570,7 +4673,11 @@ function peindreChantier(){
   var faites = c.faites || [];
   var t = $('agTaches');
   if(!(c.taches || []).length){
-    t.innerHTML = '<div class="empty">Aucun détail transmis pour ce chantier.</div>';
+    /* Un rendez-vous n'a pas de prestations vendues : sa note EST son contenu.
+       « Aucun détail transmis » laisserait croire à un oubli du bureau. */
+    t.innerHTML = '<div class="empty">' +
+      (estRdv(c) ? 'Un rendez-vous, pas un chantier : ce que tu as noté plus bas en tient lieu.'
+                 : 'Aucun détail transmis pour ce chantier.') + '</div>';
   } else {
     t.innerHTML = c.taches.map(function(x, i){
       var cle = x.ref || ('i' + i);
@@ -4588,6 +4695,23 @@ function peindreChantier(){
                    nb(x.qte) + ' ' + ech(x.unite || '') + '</span>' +
                '</span></label>';
     }).join('');
+  }
+
+  /* Retirer de son planning (13 octobre 2026). Deux textes, parce que ce ne
+     sont pas deux fois la même chose : son propre rendez-vous ne regarde que
+     lui, un chantier affecté par le bureau est une nouvelle pour le bureau. */
+  var ret = $('agRetrait');
+  if(ret){
+    var droit = !!(CFG && CFG.planning);
+    ret.classList.toggle('hide', !droit);
+    if(droit){
+      $('agRetraitMot').textContent = estRdv(c)
+        ? 'Tu peux retirer ce rendez-vous : c\'est le tien.'
+        : 'Ce chantier vient du bureau. Si tu le retires, il quittera ton planning ' +
+          'et le bureau en sera informé.';
+      $('bAgRetirer').textContent = estRdv(c) ? 'Retirer ce rendez-vous'
+                                              : 'Retirer de mon planning';
+    }
   }
 
   $('agNote').value = c.note || '';

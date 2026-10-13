@@ -126,6 +126,15 @@ var ENTETES_RECURRENTS_ = [
    fiche reste dans la feuille pour mémoire, mais ne compte plus nulle part. */
 var STATUTS_CHANTIER_ = ['A PLANIFIER', 'PLANIFIE', 'EN COURS', 'FAIT', 'PROBLEME', 'ANNULE'];
 
+/* RDV est une nature de CHANTIER, jamais une nature de DEVIS : on ne vend pas
+   un rendez-vous. Elle n'entre donc ni dans « naturesCatalogue_ » ni dans
+   « natureDevis_ », et un devis ne peut pas la porter. Elle existe pour que le
+   commercial pose sur son planning ce qui l'occupe vraiment — une visite, un
+   relevé — sans que cela ressemble à du ménage à faire.
+   Un rendez-vous n'entre pas davantage dans « À FACTURER », qui se construit
+   depuis les devis signés et ignore CHANTIERS. */
+var NATURE_RDV_ = 'RDV';
+
 var ENTETES_JOURNAL_ = [
   'HORODATAGE', 'MOMENT', 'COMMERCIAL', 'ACTION', 'DETAIL', 'NUMERO', 'APPAREIL', 'SOURCE'
 ];
@@ -715,6 +724,7 @@ function doPost(e) {
     var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
                    'planning', 'chantier', 'tableau', 'planifier',
                    'chantierNeuf', 'lotChantiers',
+                   'rdvNeuf', 'monChantier',
                    'prospects', 'appel', 'historique'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
@@ -753,7 +763,7 @@ function doPost(e) {
        parmi les prestataires : c'est la liste qui protège, pas l'écran. Et
        « planning » ne rend jamais que les chantiers à son nom. */
     if (!admin && !agent && aussiPrestataire_(com.nom)) {
-      permis = permis.concat(['planning', 'chantier']);
+      permis = permis.concat(['planning', 'chantier', 'rdvNeuf', 'monChantier']);
     }
     if (permis.indexOf(d.action) < 0) {
       tracerServeur_(com.nom, 'ACTION REFUSEE', d.action, '', d.appareil || '');
@@ -784,6 +794,8 @@ function doPost(e) {
     if (d.action === 'planifier') return reponse_(planifierChantier_(d, com));
     if (d.action === 'chantierNeuf') return reponse_(creerChantier_(d, com));
     if (d.action === 'lotChantiers') return reponse_(lotChantiers_(d, com));
+    if (d.action === 'rdvNeuf') return reponse_(rdvCommercial_(d, com));
+    if (d.action === 'monChantier') return reponse_(monChantier_(d, com));
     if (d.action === 'photo') return reponse_(enregistrerPhoto_(d));
     if (d.action === 'statut') return reponse_(enregistrerStatut_(d, com));
     if (d.action === 'prospects') return reponse_(listeProspects_(d));
@@ -1853,6 +1865,77 @@ function creerChantier_(d, com) {
  * planifierChantier_ : une seule logique, donc les mêmes garde-fous — un
  * chantier déjà pointé reste intouchable, un prestataire inconnu est refusé.
  */
+/**
+ * Le rendez-vous qu'un commercial pose sur SON emploi du temps (13 octobre
+ * 2026). Une visite de prospect, un relevé chez un client, un déplacement :
+ * du temps occupé qui n'est pas du ménage, et que personne ne voyait.
+ *
+ * Deux garde-fous, et ils sont ici plutôt qu'à l'écran :
+ * — le prestataire est TOUJOURS celui qui envoie. Ce que le téléphone dit du
+ *   nom est ignoré : sans cela, un commercial pourrait poser du travail dans
+ *   la journée d'un collègue depuis une requête fabriquée.
+ * — la nature est TOUJOURS RDV, et un rendez-vous n'a pas de NUMERO de devis :
+ *   il ne doit jamais ressembler à une prestation vendue.
+ */
+function rdvCommercial_(d, com) {
+  if (!com || !com.nom) return { ok: false, erreur: 'compte inconnu' };
+  if (!String(d.date || '').trim()) {
+    return { ok: false, erreur: 'il faut une date : sans elle, le rendez-vous n\'apparaît nulle part' };
+  }
+  var e = {
+    client: d.client, adresse: d.adresse, cp: d.cp, ville: d.ville,
+    note: d.note, date: d.date, heure: d.heure, duree: d.duree,
+    appareil: d.appareil,
+    prestataire: com.nom,            // imposé, jamais lu de l'envoi
+    nature: NATURE_RDV_,             // imposée, jamais lue de l'envoi
+    acces: ''
+  };
+  var r = creerChantier_(e, com);
+  if (r && r.ok) {
+    tracerServeur_(com.nom, 'RDV POSE',
+                   String(d.client || '') + ' \u00b7 ' + String(d.date || '') +
+                   (d.heure ? ' ' + d.heure : ''), '', d.appareil || '');
+  }
+  return r;
+}
+
+/**
+ * Annuler ou rétablir un chantier de SON propre planning (13 octobre 2026).
+ *
+ * Simon a tranché : le commercial peut retirer tout ce qui est sur son
+ * planning, y compris un chantier que le bureau lui a affecté — il sait
+ * mieux que l'écran ce qu'il peut tenir. Ce qui n'est pas négociable, c'est
+ * que ce soit SON planning : la ligne est relue au classeur et le nom comparé
+ * avant toute écriture. Et comme une annulation d'un chantier affecté est une
+ * nouvelle qui concerne le bureau, le journal la nomme pour ce qu'elle est.
+ */
+function monChantier_(d, com) {
+  var id = String(d.id || '').trim();
+  if (!id) return { ok: false, erreur: 'chantier inconnu' };
+  if (!d.annuler && !d.retablir) return { ok: false, erreur: 'rien à faire sur ce chantier' };
+
+  var avant = null;
+  objetsDe_(SH.CHANTIERS).forEach(function (o) { if (String(o.ID).trim() === id) avant = o; });
+  if (!avant) return { ok: false, erreur: 'chantier introuvable' };
+  if (normNom_(avant.PRESTATAIRE || '') !== normNom_(com.nom)) {
+    tracerServeur_(com.nom, 'ACTION REFUSEE', 'monChantier sur ' + id, '', d.appareil || '');
+    return { ok: false, erreur: 'ce chantier n\'est pas sur ton planning' };
+  }
+
+  var r = planifierChantier_({ id: id, annuler: d.annuler, retablir: d.retablir,
+                               appareil: d.appareil }, com);
+  /* Un rendez-vous que le commercial a posé lui-même et qu'il retire, c'est son
+     affaire. Un chantier venu du bureau qu'il décommande, c'est une nouvelle :
+     le journal doit la distinguer, sinon elle se perd dans la masse. */
+  if (r && r.ok && d.annuler && natureOuVide_(avant.NATURE) !== NATURE_RDV_) {
+    tracerServeur_(com.nom, 'CHANTIER DECOMMANDE PAR LE COMMERCIAL',
+                   String(avant.CLIENT || '') + ' \u00b7 ' +
+                   (avant.DATE ? Utilities.formatDate(new Date(avant.DATE), 'Europe/Paris', 'dd/MM/yyyy') : 'sans date'),
+                   String(avant.NUMERO || ''), d.appareil || '');
+  }
+  return r;
+}
+
 function lotChantiers_(d, com) {
   var ids = (d.ids || []).map(function (x) { return String(x || '').trim(); })
     .filter(function (x) { return x; });
@@ -2783,7 +2866,13 @@ function natureDevis_(v) {
    cette précaution, « natureDevis_ » rendrait « CHANTIER » pour une cellule
    non renseignée, et tout le planning serait orange. */
 function natureOuVide_(v) {
-  return String(v || '').trim() ? natureDevis_(v) : '';
+  var n = String(v || '').trim();
+  if (!n) return '';
+  /* RDV n'est pas une nature de devis : « natureDevis_ » rendrait CHANTIER
+     pour elle, et le rendez-vous du commercial passerait pour une fin de
+     chantier à faire, en orange sur le planning. Elle se lit donc avant. */
+  if (n.toUpperCase() === NATURE_RDV_) return NATURE_RDV_;
+  return natureDevis_(n);
 }
 
 /* La nature telle que le gérant la choisit à l'écran. Ici on ne devine pas :
@@ -2794,8 +2883,9 @@ function natureOuVide_(v) {
 function natureChoisie_(v) {
   var n = String(v || '').toUpperCase().trim();
   if (!n) return '';
-  return ['ENTRETIEN', 'VITRERIE', 'CHANTIER', 'REMISE', 'FACADE'].indexOf(n) >= 0 ? n : '';
+  return ['ENTRETIEN', 'VITRERIE', 'CHANTIER', 'REMISE', 'FACADE', NATURE_RDV_].indexOf(n) >= 0 ? n : '';
 }
+
 
 /** Le nom que le devis et les messages donnent à une nature. */
 function natureLisible_(v) {

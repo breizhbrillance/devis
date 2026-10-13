@@ -1010,8 +1010,50 @@
       <div class="mini" id="agQuand">—</div>
       <button class="btn sec sm" style="margin-top:12px" id="bAgMaj"
               onclick="chargerPlanning(this)">Actualiser</button>
+      <!-- Réservé au commercial qui a aussi un planning : un salarié ne se
+           pose pas de rendez-vous à lui-même. C'est le classeur qui décide,
+           par CFG.planning, pas cet écran. -->
+      <button class="btn sec sm hide" style="margin-top:10px" id="bAgRdv"
+              onclick="nouveauRdv()">+ Ajouter un rendez-vous</button>
     </div>
     <div id="agListe"></div>
+  </section>
+
+  <!-- UN RENDEZ-VOUS SUR SON PROPRE PLANNING (13 octobre 2026)
+       Une visite de prospect, un relevé, un déplacement : du temps occupé qui
+       n'est pas du ménage. Il va sur le planning comme le reste, mais il ne
+       porte aucun devis et n'entre jamais en facturation. -->
+  <section id="eAg3" class="hide">
+    <div class="card">
+      <h2>Un rendez-vous</h2>
+      <div class="mini" style="margin-top:0">Il apparaîtra sur ton planning, et le bureau
+        verra que ce créneau est pris.</div>
+      <label>Quoi ?</label>
+      <input id="rdvQuoi" type="text" placeholder="Visite chez M. Dupont, relevé, livraison…">
+      <label>Date</label>
+      <input id="rdvDate" type="date">
+      <div class="row" style="gap:8px">
+        <div style="flex:1"><label>Heure</label><input id="rdvHeure" type="time"></div>
+        <div style="width:120px"><label>Durée (min)</label>
+          <input id="rdvDuree" type="number" inputmode="numeric" min="0" step="15" value="60"></div>
+      </div>
+      <label>Adresse</label>
+      <input id="rdvAdresse" type="text" placeholder="Facultatif">
+      <div class="row" style="gap:8px">
+        <div style="width:110px"><label>Code postal</label><input id="rdvCp" type="text"></div>
+        <div style="flex:1"><label>Ville</label><input id="rdvVille" type="text"></div>
+      </div>
+      <label>Note</label>
+      <textarea id="rdvNote" rows="3" placeholder="Ce qu'il faut emporter, qui rencontrer…"></textarea>
+      <button class="btn" style="margin-top:14px" id="bRdvOk"
+              onclick="creerLeRdv(this)">Ajouter à mon planning</button>
+    </div>
+    <div class="card">
+      <!-- « Abandonner » et non « Retour au planning » : le même libellé sur
+           deux écrans rendait le bouton impossible à viser, à l'essai comme
+           au doigt. Et sur un formulaire, abandonner est le mot juste. -->
+      <button class="btn sec" onclick="ecranPlanning()">Abandonner</button>
+    </div>
   </section>
 
   <section id="eAg2" class="hide">
@@ -1051,6 +1093,16 @@
       <button class="btn sec sm" style="margin-top:14px;color:var(--danger);border-color:var(--danger)"
               onclick="ouvrirSignalement()">Signaler un problème</button>
       <div id="agSignal" class="err hide" style="margin-top:10px"></div>
+    </div>
+
+    <!-- Retirer de son planning. Le commercial seul y a droit (CFG.planning),
+         et le texte change selon qu'il retire son propre rendez-vous ou un
+         chantier que le bureau lui a affecté : la seconde est une nouvelle
+         pour le bureau, et il doit le savoir avant d'appuyer. -->
+    <div class="card hide" id="agRetrait">
+      <div class="mini" id="agRetraitMot" style="margin-top:0"></div>
+      <button class="btn sec" style="margin-top:10px;color:var(--danger);border-color:var(--danger)"
+              id="bAgRetirer" onclick="retirerDeMonPlanning(this)">Retirer de mon planning</button>
     </div>
 
     <div class="card">
@@ -1113,11 +1165,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=72"></script>
-<script src="jspdf.umd.min.js?v=72"></script>
-<script src="police.js?v=72"></script>
-<script src="logo.js?v=72"></script>
-<script src="pdf.js?v=72"></script>
-<script src="app.js?v=72"></script>
+<script src="config.js?v=73"></script>
+<script src="jspdf.umd.min.js?v=73"></script>
+<script src="police.js?v=73"></script>
+<script src="logo.js?v=73"></script>
+<script src="pdf.js?v=73"></script>
+<script src="app.js?v=73"></script>
 </body>
 </html>
