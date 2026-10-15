@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v73';
+var VERSION_APP = 'v74';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4892,6 +4892,7 @@ var PR = {
   onglet: 'appels',
   ville: '', secteur: '', ouverts: false, statut: '',
   rappelOuvert: false, rappelLe: null,
+  rdvOuvert: false, rdvLe: null,
   annuler: null,
   auto: true,
   charge: false,
@@ -4944,13 +4945,14 @@ function prRanger(){
    endroit décide, pour que la file d'appels, la liste et les compteurs ne
    puissent pas se contredire. */
 function prEtat(p){
-  var e = {statut:p.statut||'', note:p.note||'', rappel:p.rappel||'',
+  var e = {statut:p.statut||'', note:p.note||'', rappel:p.rappel||'', rdv:p.rdv||'',
            dernier:p.dernier||'', appels:p.appels||0, par:p.par||'', attente:false};
   PR.file.forEach(function(a){
     if(a.id !== p.id) return;
     e.statut = a.resultat;
     e.note = a.note || '';
     e.rappel = a.resultat === 'rappel' ? (a.rappel || '') : '';
+    e.rdv = a.resultat === 'rdv' ? (a.rdv || '') : '';
     e.dernier = a.t;
     e.appels = e.appels + 1;
     e.attente = true;
@@ -5232,6 +5234,9 @@ function prRendreFiche(f){
                 (e.par ? ' par ' + ech(e.par) : '') + '</li>');
   }
   if(e.statut === 'rappel' && e.rappel) lignes.push('<li>Rappel prévu ' + ech(prQuandTexte(e.rappel)) + '</li>');
+  if(e.statut === 'rdv') lignes.push('<li>' + (e.rdv
+    ? 'Rendez-vous le ' + ech(prQuandTexte(e.rdv))
+    : 'Rendez-vous pris, date à caler') + '</li>');
   if(lignes.length) h += '<ul class="prHist">' + lignes.join('') + '</ul>';
 
   var note = PR.brouillons[p.id] != null ? PR.brouillons[p.id] : (e.note || '');
@@ -5242,10 +5247,29 @@ function prRendreFiche(f){
 
   h += '<div class="prRes">';
   ['nrp','msg','rappel','interesse','rdv','refus','faux'].forEach(function(k){
-    h += '<button class="' + PR_RES[k].c + (k === 'rappel' && PR.rappelOuvert ? ' on' : '') +
+    var ouvert = (k === 'rappel' && PR.rappelOuvert) || (k === 'rdv' && PR.rdvOuvert);
+    h += '<button class="' + PR_RES[k].c + (ouvert ? ' on' : '') +
          '" onclick="prResultat(\'' + k + '\')">' + PR_RES[k].l + '</button>';
   });
   h += '<button onclick="prPasser()">Passer</button>';
+  /* Le rendez-vous (14 octobre 2026). Même patron que le rappel, à une
+     différence qui est tout l'objet de la demande : **le bouton n'est jamais
+     désactivé**. Un commercial qui a décroché un rendez-vous sans date
+     arrêtée doit pouvoir l'enregistrer tout de suite — sinon il s'arrête au
+     milieu de sa session d'appels, ou il invente une date fausse. */
+  if(PR.rdvOuvert){
+    h += '<div class="prRappel"><b>Le rendez-vous est quand ?</b>' +
+         '<div class="mini" style="margin-top:4px">Facultatif : tu peux enregistrer ' +
+         'sans date et la caler plus tard.</div><div class="prQuand">' +
+         prRdvChoix().map(function(c){
+           return '<button class="' + (PR.rdvLe === c.at ? 'on' : '') +
+                  '" onclick="prRdvPoser(\'' + c.at + '\')">' + c.l + '</button>';
+         }).join('') + '</div>' +
+         '<input type="datetime-local" id="prRdvLe" oninput="prRdvSaisi(this.value)" value="' +
+         (PR.rdvLe ? prLocalInput(PR.rdvLe) : '') + '">' +
+         '<button class="btn" style="margin-top:8px" onclick="prResultatFinal(\'rdv\')">' +
+         (PR.rdvLe ? 'Enregistrer le RDV' : 'Enregistrer sans date') + '</button></div>';
+  }
   if(PR.rappelOuvert){
     h += '<div class="prRappel"><b>Rappeler quand ?</b><div class="prQuand">' +
          prQuandChoix().map(function(c){
@@ -5304,10 +5328,49 @@ function prNoter(v){ var p = prCourant(); if(p) PR.brouillons[p.id] = v; }
 function prResultat(code){
   if(code === 'rappel'){
     PR.rappelOuvert = !PR.rappelOuvert;
+    PR.rdvOuvert = false;
     PR.rappelLe = null;
     return prRendre();
   }
+  /* Un rendez-vous ouvre son panneau au lieu de partir tout de suite : la date
+     se saisit là. Mais contrairement au rappel, rien n'empêche de l'enregistrer
+     sans. Un second appui sur « RDV pris » referme le panneau. */
+  if(code === 'rdv'){
+    PR.rdvOuvert = !PR.rdvOuvert;
+    PR.rappelOuvert = false;
+    PR.rdvLe = null;
+    return prRendre();
+  }
   prResultatFinal(code);
+}
+
+/* Les choix rapides du rendez-vous ne sont pas ceux du rappel : on ne cale pas
+   une visite « dans une heure ». Ce sont des demi-journées, à partir de demain,
+   et c'est le créneau qu'on propose au téléphone. */
+function prRdvChoix(){
+  var n = new Date(), out = [];
+  function a(j, h){ var d = new Date(n); d.setDate(d.getDate()+j); d.setHours(h,0,0,0); return d.toISOString(); }
+  /* Un rendez-vous le dimanche n'existe pas : le samedi et le vendredi
+     renvoient au lundi, comme pour la file d'appels. */
+  var j = n.getDay() === 5 ? 3 : n.getDay() === 6 ? 2 : 1;
+  var nom = j === 1 ? 'Demain' : 'Lundi';
+  out.push({l:nom + ' 9 h', at:a(j,9)});
+  out.push({l:nom + ' 14 h', at:a(j,14)});
+  out.push({l:'Dans 3 jours, 9 h', at:a(3,9)});
+  out.push({l:'La semaine prochaine', at:a(7,9)});
+  return out;
+}
+function prRdvPoser(at){ PR.rdvLe = at; prRendre(); }
+function prRdvSaisi(v){
+  var d = new Date(v);
+  PR.rdvLe = isNaN(d.getTime()) ? null : d.toISOString();
+  /* On repeint seulement le libellé du bouton : un rendu complet refermerait
+     le sélecteur de date au milieu de la saisie. */
+  var b = $('prRdvLe');
+  if(b){
+    var bt = b.parentNode.querySelector('.btn');
+    if(bt) bt.textContent = PR.rdvLe ? 'Enregistrer le RDV' : 'Enregistrer sans date';
+  }
 }
 
 /* Le cœur de la boucle. Tout ce qui suit l'appui doit tenir dans la même
@@ -5320,7 +5383,8 @@ function prResultatFinal(code){
   if(code === 'rappel' && !PR.rappelLe) return;
   var note = $('prNote') ? $('prNote').value.trim() : (prEtat(p).note || '');
   var a = {id:p.id, resultat:code, note:note, t:new Date().toISOString(),
-           rappel: code === 'rappel' ? PR.rappelLe : ''};
+           rappel: code === 'rappel' ? PR.rappelLe : '',
+           rdv: code === 'rdv' ? (PR.rdvLe || '') : ''};
   PR.annuler = {id:p.id, file:PR.file.slice(0), hist:(PR.hist[p.id]||[]).slice(0)};
   PR.file.push(a);
   PR.hist[p.id] = (PR.hist[p.id] || []).concat([{t:a.t, r:code, n:note}]).slice(-20);
@@ -5328,6 +5392,8 @@ function prResultatFinal(code){
   PR.courant = null;
   PR.rappelOuvert = false;
   PR.rappelLe = null;
+  PR.rdvOuvert = false;
+  PR.rdvLe = null;
   prRendre(true);
   window.scrollTo(0,0);
   if(PR.auto){

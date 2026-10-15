@@ -48,13 +48,13 @@ var ENTETES_PROSPECTS_ = [
   'ID', 'SIREN', 'COMMUNE', 'ZONE', 'SOCIETE', 'SECTEUR', 'ACTIVITE', 'DIRIGEANT',
   'TEL', 'MAIL', 'SITE', 'ADRESSE', 'EFFECTIF', 'PRIORITE',
   'SOURCE_HORAIRES', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM', 'COMMENTAIRE',
-  'STATUT', 'NOTE', 'RAPPEL_LE', 'DERNIER_APPEL', 'NB_APPELS', 'COMMERCIAL', 'MAJ_LE'
+  'STATUT', 'NOTE', 'RAPPEL_LE', 'RDV_LE', 'DERNIER_APPEL', 'NB_APPELS', 'COMMERCIAL', 'MAJ_LE'
 ];
 
 /* Une ligne par tentative, jamais réécrite. */
 var ENTETES_APPELS_ = [
   'HORODATAGE', 'COMMERCIAL', 'ID_PROSPECT', 'SOCIETE', 'COMMUNE',
-  'RESULTAT', 'NOTE', 'RAPPEL_LE', 'APPAREIL'
+  'RESULTAT', 'NOTE', 'RAPPEL_LE', 'APPAREIL', 'RDV_LE'
 ];
 
 /* Les sept résultats possibles d'un appel, et rien d'autre : le téléphone ne
@@ -5076,6 +5076,10 @@ function lireProspects_() {
         statut: lire(r, 'STATUT'),
         note: lire(r, 'NOTE'),
         rappel: isoDe_(r[col.RAPPEL_LE]),
+        /* La colonne peut manquer sur un classeur d'avant le 14 octobre 2026 :
+           « Mettre à jour la structure » l'ajoute, mais le téléphone ne doit
+           pas tomber en panne en attendant. */
+        rdv: col.RDV_LE != null ? isoDe_(r[col.RDV_LE]) : '',
         dernier: isoDe_(r[col.DERNIER_APPEL]),
         appels: Number(lire(r, 'NB_APPELS')) || 0,
         par: lire(r, 'COMMERCIAL'),
@@ -5189,7 +5193,8 @@ function historiqueAppels_(d, com) {
         commune: String(r[col.COMMUNE] || ''),
         resultat: String(r[col.RESULTAT] || ''),
         note: String(r[col.NOTE] || ''),
-        rappel: col.RAPPEL_LE != null && r[col.RAPPEL_LE] ? isoDe_(r[col.RAPPEL_LE]) : ''
+        rappel: col.RAPPEL_LE != null && r[col.RAPPEL_LE] ? isoDe_(r[col.RAPPEL_LE]) : '',
+        rdv: col.RDV_LE != null && r[col.RDV_LE] ? isoDe_(r[col.RDV_LE]) : ''
       });
     }
     ligne = depart - 1;
@@ -5246,6 +5251,11 @@ function enregistrerAppels_(d, com) {
       });
   }
 
+  /* Les en-têtes réels de la feuille des appels, dans leur ordre réel. */
+  var enA = shA.getLastColumn() > 0
+    ? shA.getRange(1, 1, 1, shA.getLastColumn()).getValues()[0]
+        .map(function (x) { return String(x).trim(); })
+    : ENTETES_APPELS_.slice();
   var lignesA = [], refuses = [], touchees = {}, recus = 0;
   lot.forEach(function (a) {
     var id = String((a && a.id) || '').trim();
@@ -5264,9 +5274,18 @@ function enregistrerAppels_(d, com) {
 
     var r = grille[i];
     var rappel = res === 'rappel' ? (isoDe_(a.rappel) || '') : '';
+    /* La date du rendez-vous (14 octobre 2026). Elle a sa propre colonne, et
+       non celle du rappel : un rappel est un appel a repasser, un rendez-vous
+       est un engagement pris. Les melanger ferait reapparaitre le prospect
+       dans la file le jour du rendez-vous.
+       Elle est FACULTATIVE, decision de Simon : un commercial qui a decroche
+       un rendez-vous sans date arretee doit pouvoir le dire quand meme. Vide
+       est donc une reponse, pas un oubli. */
+    var rdv = res === 'rdv' ? (isoDe_(a.rdv) || '') : '';
     if (col.STATUT != null) r[col.STATUT] = res;
     if (col.NOTE != null) r[col.NOTE] = String(a.note || '').slice(0, 1000);
     if (col.RAPPEL_LE != null) r[col.RAPPEL_LE] = rappel ? new Date(rappel) : '';
+    if (col.RDV_LE != null) r[col.RDV_LE] = rdv ? new Date(rdv) : '';
     if (col.DERNIER_APPEL != null) r[col.DERNIER_APPEL] = new Date(quand);
     if (col.NB_APPELS != null) r[col.NB_APPELS] = (Number(r[col.NB_APPELS]) || 0) + 1;
     if (col.COMMERCIAL != null) r[col.COMMERCIAL] = com.nom;
@@ -5274,10 +5293,25 @@ function enregistrerAppels_(d, com) {
     touchees[i] = 1;
     recus++;
 
-    lignesA.push([new Date(quand), com.nom, id,
-                  String(r[col.SOCIETE] || ''), String(r[col.COMMUNE] || ''),
-                  res, String(a.note || '').slice(0, 1000),
-                  rappel ? new Date(rappel) : '', String(d.appareil || '')]);
+    /* Écrite PAR NOM de colonne, jamais par position. « Mettre à jour la
+       structure » ajoute une colonne nouvelle à la FIN de la feuille, où
+       qu'elle soit dans ENTETES_APPELS_ : une ligne construite dans l'ordre du
+       tableau mettrait alors l'appareil dans la colonne de la date et la date
+       dans celle de l'appareil, sans que rien ne le signale. */
+    var ligneA = [];
+    for (var cA = 0; cA < enA.length; cA++) ligneA.push('');
+    var poser = function (nom, v) { if (colA[nom] != null) ligneA[colA[nom]] = v; };
+    poser('HORODATAGE', new Date(quand));
+    poser('COMMERCIAL', com.nom);
+    poser('ID_PROSPECT', id);
+    poser('SOCIETE', String(r[col.SOCIETE] || ''));
+    poser('COMMUNE', String(r[col.COMMUNE] || ''));
+    poser('RESULTAT', res);
+    poser('NOTE', String(a.note || '').slice(0, 1000));
+    poser('RAPPEL_LE', rappel ? new Date(rappel) : '');
+    poser('RDV_LE', rdv ? new Date(rdv) : '');
+    poser('APPAREIL', String(d.appareil || ''));
+    lignesA.push(ligneA);
   });
 
   /* Les lignes modifiées sont réécrites une par une : elles sont dispersées
