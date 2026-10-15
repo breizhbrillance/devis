@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v74';
+var VERSION_APP = 'v75';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -3747,7 +3747,14 @@ function ongletAdmin(quoi){
   AD_ONGLET = quoi;
   AD_QUI = '';
   AD_PASSE = false;             // chaque retour sur l'onglet repart du travail à venir
+  if(quoi === 'factures'){
+    FACT_NOTE = '';
+    if(!FACT_MOIS) FACT_MOIS = moisAujourdhui();
+  }
   peindreTableau();
+  /* La facturation ne vit pas dans le tableau : elle a sa propre lecture, et
+     elle interroge Henrri. On ne la charge donc qu'en arrivant sur l'onglet. */
+  if(quoi === 'factures' && !FACT) chargerFacturation($('bFactAct'));
 }
 function filtreAdmin(nom){ AD_QUI = nom; peindreTableau(); }
 
@@ -3758,9 +3765,23 @@ function peindreTableau(){
     : 'Jamais rafraîchi sur cet appareil.';
   $('bOngDevis').classList.toggle('on', AD_ONGLET === 'devis');
   $('bOngChantiers').classList.toggle('on', AD_ONGLET === 'chantiers');
+  $('bOngFactures').classList.toggle('on', AD_ONGLET === 'factures');
   $('adActions').classList.toggle('hide', AD_ONGLET !== 'chantiers');
+  $('adFact').classList.toggle('hide', AD_ONGLET !== 'factures');
   $('bAdSel').textContent = AD_SEL ? 'Terminer' : 'Sélectionner';
   peindreLot();
+
+  /* La facturation se peint à part : elle ne lit pas le tableau, et elle doit
+     s'afficher même si le tableau n'a jamais été rafraîchi sur cet appareil. */
+  if(AD_ONGLET === 'factures'){
+    if(!FACT_MOIS) FACT_MOIS = moisAujourdhui();
+    $('bFactMois').textContent = moisNom(FACT_MOIS);
+    $('adFiltres').innerHTML = '';
+    $('adListe').innerHTML = listeFacturesAdmin();
+    if(!t) $('adChiffres').innerHTML = '<div class="empty">Les chiffres arrivent ' +
+      'avec « Actualiser ».</div>';
+    return;
+  }
 
   if(!t){
     $('adChiffres').innerHTML = '<div class="empty">Appuie sur « Actualiser » pour aller chercher ' +
@@ -5728,4 +5749,265 @@ function prPousser(){
       prRanger();
       if(ETAPE === 8) prRendre();
     }, function(){ PR_ENVOI = false; });
+}
+
+/* ====================== LA FACTURATION ======================
+
+   Le devis est signé, le chantier est fait : il reste à facturer. Cet onglet
+   ne facture pas — il prépare. Chaque bouton dépose chez Henrri une facture en
+   BROUILLON, que Simon relit puis finalise là-bas. La numérotation légale, le
+   format électronique et l'envoi restent chez Henrri ; nous, nous savons ce qui
+   est signé et ce qui est fait, et c'est tout ce que nous apportons.
+
+   Deux listes, parce que ce sont deux métiers. Une prestation ponctuelle se
+   facture une fois, quand elle est terminée. Un contrat d'entretien se facture
+   chaque mois, qu'on le veuille ou non : c'est le mois qui déclenche, pas le
+   chantier. D'où le choix du mois en haut de l'onglet, qui ne sert qu'aux
+   contrats.
+   ============================================================= */
+
+var FACT = null;                      // le dernier état reçu du bureau
+var FACT_MOIS = '';                   // le mois regardé, « 2026-11 »
+
+function moisAujourdhui(){
+  var d = new Date();
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+}
+function moisNom(p){
+  var m = String(p || '').match(/^(\d{4})-(\d{2})$/);
+  if(!m) return String(p || '');
+  var noms = ['janvier','février','mars','avril','mai','juin','juillet','août',
+              'septembre','octobre','novembre','décembre'];
+  return noms[Number(m[2]) - 1] + ' ' + m[1];
+}
+function moisDecale(p, n){
+  var m = String(p || '').match(/^(\d{4})-(\d{2})$/);
+  if(!m) return moisAujourdhui();
+  var d = new Date(Number(m[1]), Number(m[2]) - 1 + n, 1);
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+}
+/* On ne va pas chercher les mensualités d'un mois qui n'a pas commencé : le
+   bouton existe, mais il prévient. */
+function moisAVenir(p){ return String(p || '') > moisAujourdhui(); }
+
+function moisFact(n){
+  FACT_MOIS = moisDecale(FACT_MOIS || moisAujourdhui(), n);
+  peindreTableau();
+  chargerFacturation();
+}
+
+function chargerFacturation(btn){
+  var moi = session();
+  if(!moi) return Promise.resolve();
+  if(!FACT_MOIS) FACT_MOIS = moisAujourdhui();
+  if(!navigator.onLine){
+    if(btn) libere(btn);
+    erreur('Hors connexion : la facturation a besoin du bureau et de Henrri.');
+    return Promise.resolve();
+  }
+  if(btn) occuper(btn, 'Lecture…');
+  return poster({action:'facturation', periode:FACT_MOIS,
+                 nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
+    if(btn) libere(btn);
+    if(!d || !d.ok){
+      if(d && d.refus) return reidentifier('Ton accès a changé côté bureau.');
+      /* Le message du devis — « rien n'est perdu, ça repartira » — n'a pas cours
+         ici : la facturation ne fait pas la queue. Quand le bureau dit pourquoi
+         il refuse, on affiche sa raison. C'est le cas, notamment, d'un classeur
+         dont le script n'a pas encore été mis à jour : il répond « action
+         inconnue », et il vaut mieux le lire que croire à un envoi en cours. */
+      return erreur((d && d.erreur) ? d.erreur : attenteLisible());
+    }
+    FACT = d;
+    FACT_MOIS = d.periode || FACT_MOIS;
+    erreur('');
+    peindreTableau();
+  }, function(){
+    if(btn) libere(btn);
+    erreur(attenteLisible());
+  });
+}
+
+/* Une prestation ponctuelle. « force » n'apparaît que si le chantier n'est pas
+   terminé : c'est un passe-droit, il se demande deux fois et il se trace. */
+function facturerUn(numero, btn, force){
+  var moi = session();
+  if(!moi) return;
+  occuper(btn, 'Chez Henrri…');
+  poster({action:'facturer', numero:numero, periode:FACT_MOIS, force:!!force,
+          nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
+    libere(btn);
+    if(!d) return erreur(attenteLisible());
+    if(d.ok){
+      erreur('');
+      var msg = 'Facture préparée chez Henrri' +
+                (d.ecart ? ' — mais ' + d.ecart + ', à vérifier avant de finaliser.' :
+                           ' : relis-la puis finalise-la là-bas.');
+      FACT_NOTE = msg;
+      return chargerFacturation();
+    }
+    if(d.pasPret){
+      return demander('Le chantier n\'est pas terminé',
+        d.erreur + '\n\nPréparer la facture quand même ? Le journal gardera que ' +
+        'cette facture a été préparée avant la fin du chantier.',
+        'Préparer quand même').then(function(oui){
+          if(oui) facturerUn(numero, btn, true);
+        });
+    }
+    erreur(d.erreur || 'La facture n\'a pas pu être préparée.');
+    if(d.deja) chargerFacturation();
+  }, function(){
+    libere(btn);
+    erreur(attenteLisible());
+  });
+}
+
+/* Toutes les mensualités du mois, d'un geste. */
+function facturerLeMois(btn){
+  var moi = session();
+  if(!moi) return;
+  var reste = ((FACT && FACT.contrats) || []).filter(function(c){ return !c.facturee; });
+  if(!reste.length){ erreur('Toutes les mensualités de ' + moisNom(FACT_MOIS) + ' sont déjà préparées.'); return; }
+  demander('Préparer ' + reste.length + ' facture(s) ?',
+    'Les contrats d\'entretien en cours recevront chacun leur facture de ' +
+    moisNom(FACT_MOIS) + ', en brouillon chez Henrri.' +
+    (moisAVenir(FACT_MOIS) ? '\n\nAttention : ce mois n\'a pas encore commencé.' : ''),
+    'Préparer').then(function(oui){
+      if(!oui) return;
+      occuper(btn, 'Chez Henrri…');
+      poster({action:'facturesMois', periode:FACT_MOIS,
+              nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
+        libere(btn);
+        if(!d || !d.ok) return erreur((d && d.erreur) || attenteLisible());
+        var n = (d.faits || []).length, e = (d.echecs || []).length;
+        FACT_NOTE = n + ' facture(s) préparée(s) pour ' + moisNom(d.periode) +
+                    (e ? ' · ' + e + ' en échec, voir ci-dessous' : '') +
+                    '. Relis-les chez Henrri avant de les finaliser.';
+        if(e) erreur((d.echecs[0].client || d.echecs[0].numero) + ' : ' + d.echecs[0].erreur);
+        else erreur('');
+        chargerFacturation();
+      }, function(){
+        libere(btn);
+        erreur(attenteLisible());
+      });
+    });
+}
+
+var FACT_NOTE = '';                   // ce que la dernière action a donné
+
+function listeFacturesAdmin(){
+  var h = '';
+  if(FACT_NOTE){
+    h += '<div class="card" style="border-color:var(--ok,#15803d)"><b>' + ech(FACT_NOTE) +
+         '</b></div>';
+  }
+  if(!FACT){
+    return h + '<div class="card"><div class="empty">Appuie sur « Actualiser la facturation » ' +
+           'pour aller voir ce qu\'il y a à facturer.</div></div>';
+  }
+  if(!FACT.henrri){
+    h += '<div class="card" style="border-color:var(--att,#b45309)">' +
+         '<b>Henrri n\'est pas connecté.</b><div class="mini">Dans le classeur : menu ' +
+         '« Devis » → « 19. Connecter Henrri ». Sans cela, la liste se lit mais rien ' +
+         'ne peut être préparé.</div></div>';
+  }
+
+  var p = FACT.ponctuels || [], c = FACT.contrats || [];
+  var prets = p.filter(function(x){ return !x.facturee && x.pret; });
+  var attente = p.filter(function(x){ return !x.facturee && !x.pret; });
+  var faites = p.filter(function(x){ return x.facturee; });
+
+  h += '<div class="card"><b>Prestations terminées</b><div class="mini">' +
+       (prets.length ? prets.length + ' à facturer' : 'rien à facturer pour le moment') +
+       '</div></div>';
+  prets.forEach(function(x){ h += carteFact(x, 'pret'); });
+
+  if(attente.length){
+    h += '<div class="card"><b>Pas encore terminées</b><div class="mini">' +
+         attente.length + ' devis signé(s) dont le chantier n\'est pas fini. ' +
+         'On ne les facture pas par défaut.</div></div>';
+    attente.forEach(function(x){ h += carteFact(x, 'attente'); });
+  }
+
+  h += '<div class="card" style="margin-top:14px"><b>Contrats d\'entretien — ' +
+       ech(moisNom(FACT_MOIS)) + '</b><div class="mini">' +
+       (c.length ? c.filter(function(x){ return !x.facturee; }).length +
+                   ' mensualité(s) à préparer sur ' + c.length + ' contrat(s)'
+                 : 'aucun contrat d\'entretien signé') + '</div>' +
+       (c.length ? '<button class="btn sec sm" style="margin-top:10px;width:100%" ' +
+                   'onclick="facturerLeMois(this)">Préparer les factures de ' +
+                   ech(moisNom(FACT_MOIS)) + '</button>' : '') + '</div>';
+  c.forEach(function(x){ h += carteContrat(x); });
+
+  if(faites.length){
+    h += '<div class="card" style="margin-top:14px"><b>Déjà préparées</b>' +
+         '<div class="mini">' + faites.length + ' prestation(s) ponctuelle(s)</div></div>';
+    faites.forEach(function(x){ h += carteFact(x, 'faite'); });
+  }
+  return h;
+}
+
+function lienHenrri(x){
+  return x.lienHenrri
+    ? '<a class="btn sec sm" style="margin-top:8px;display:block;text-align:center" ' +
+      'href="' + ech(x.lienHenrri) + '" target="_blank" rel="noopener">Voir le PDF chez Henrri</a>'
+    : '';
+}
+
+function carteFact(x, quoi){
+  var h = '<div class="card"><div class="row" style="justify-content:space-between">' +
+          '<b>' + ech(x.client) + '</b><span class="mini">' + ech(x.numero) + '</span></div>' +
+          '<div class="mini">' + ech(x.ville || '') +
+          (x.commercial ? ' · ' + ech(x.commercial) : '') + '</div>' +
+          ligneCh('À facturer', eur(x.ht) + ' HT', true);
+  /* Un signalement se dit dans tous les cas, prêt ou pas : c'est une raison de
+     ne pas facturer tout de suite, et c'est au gérant d'en juger. */
+  if(quoi !== 'faite' && x.soucis){
+    h += '<div class="mini" style="color:var(--att,#b45309)">' + x.soucis +
+         ' signalement(s) sur ce chantier : à regarder avant de facturer.</div>';
+  }
+  if(quoi === 'pret'){
+    h += '<div class="mini">Chantier terminé' + (x.faitLe ? ' le ' + dateCourte(x.faitLe) : '') + '.</div>';
+    h += '<button class="btn sm" style="margin-top:8px;width:100%" onclick="facturerUn(\'' +
+         ech(x.numero).replace(/'/g,'&#39;') + '\', this)">Préparer la facture</button>';
+  } else if(quoi === 'attente'){
+    h += '<div class="mini">' + (x.chantiers === 0
+      ? 'Aucun passage posé au planning.'
+      : (x.chantiers - x.faits) + ' passage(s) restant(s) sur ' + x.chantiers + '.') + '</div>';
+    h += '<button class="btn sec sm" style="margin-top:8px;width:100%" onclick="facturerUn(\'' +
+         ech(x.numero).replace(/'/g,'&#39;') + '\', this)">Facturer quand même…</button>';
+  } else {
+    h += '<div class="mini">Facture ' + ech(x.idHenrri) + ' chez Henrri.</div>' + lienHenrri(x);
+  }
+  return h + '</div>';
+}
+
+function carteContrat(x){
+  var h = '<div class="card"><div class="row" style="justify-content:space-between">' +
+          '<b>' + ech(x.client) + '</b><span class="mini">' + ech(x.numero) + '</span></div>' +
+          '<div class="mini">' + ech(x.ville || '') + '</div>' +
+          ligneCh(moisNom(x.periode), eur(x.htMois) + ' HT', true);
+  /* Le contrat se facture au forfait, mais si les passages du mois ne sont pas
+     tous faits, le gérant doit le savoir avant d'envoyer : c'est lui qui
+     décide, ce n'est pas à l'application de retenir la facture. */
+  if(x.passagesPrevus && x.passagesFaits < x.passagesPrevus){
+    h += '<div class="mini" style="color:var(--att,#b45309)">' + x.passagesFaits + ' passage(s) fait(s) ' +
+         'sur ' + x.passagesPrevus + ' prévus ce mois-ci.</div>';
+  } else if(x.passagesPrevus){
+    h += '<div class="mini">' + x.passagesPrevus + ' passage(s), tous faits.</div>';
+  }
+  if(x.facturee){
+    h += '<div class="mini">Facture ' + ech(x.idHenrri) + ' chez Henrri.</div>' + lienHenrri(x);
+  } else {
+    h += '<button class="btn sm" style="margin-top:8px;width:100%" onclick="facturerUn(\'' +
+         ech(x.numero).replace(/'/g,'&#39;') + '\', this)">Préparer ' +
+         ech(moisNom(x.periode)) + '</button>';
+  }
+  return h + '</div>';
+}
+
+function dateCourte(iso){
+  var d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear();
 }

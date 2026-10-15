@@ -983,6 +983,18 @@
     <div class="row" style="margin-top:12px">
       <button class="btn sec sm" style="flex:1" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
       <button class="btn sec sm" style="flex:1" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Chantiers</button>
+      <button class="btn sec sm" style="flex:1" id="bOngFactures" onclick="ongletAdmin('factures')">Facturer</button>
+    </div>
+    <!-- La facturation : le mois regardé, et les mensualités d'entretien
+         préparées d'un seul geste. Ne concerne que l'onglet « Facturer ». -->
+    <div class="hide" id="adFact" style="margin-top:10px">
+      <div class="row" style="gap:8px">
+        <button class="btn sec sm" style="flex:1" onclick="moisFact(-1)">◀ Mois précédent</button>
+        <button class="btn sec sm" style="flex:1" id="bFactMois">—</button>
+        <button class="btn sec sm" style="flex:1" onclick="moisFact(1)">Mois suivant ▶</button>
+      </div>
+      <button class="btn sec sm" style="margin-top:8px;width:100%" id="bFactAct"
+              onclick="chargerFacturation(this)">Actualiser la facturation</button>
     </div>
     <!-- Poser un chantier à la main, et agir sur plusieurs d'un coup. Les deux
          ne concernent que l'onglet des chantiers. -->
@@ -1165,11 +1177,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=74"></script>
-<script src="jspdf.umd.min.js?v=74"></script>
-<script src="police.js?v=74"></script>
-<script src="logo.js?v=74"></script>
-<script src="pdf.js?v=74"></script>
-<script src="app.js?v=74"></script>
+<script src="config.js?v=75"></script>
+<script src="jspdf.umd.min.js?v=75"></script>
+<script src="police.js?v=75"></script>
+<script src="logo.js?v=75"></script>
+<script src="pdf.js?v=75"></script>
+<script src="app.js?v=75"></script>
 </body>
 </html>
