@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v75';
+var VERSION_APP = 'v76';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1487,6 +1487,79 @@ function clePresta(p){
   var r = String((p && p.reference) || '').trim();
   return r ? 'R:' + r : 'D:' + normTexte(p && p.designation);
 }
+
+/* ====================== LE TARIF DE COMPLÉMENT ======================
+
+   Une prestation peut porter deux prix : celui qu'elle vaut seule, et celui
+   qu'elle vaut quand on est déjà chez le client pour autre chose. Le canapé en
+   est le premier cas : 150 € HT quand on se déplace pour lui seul, 70 € dès
+   qu'il s'ajoute à une autre mission. Ce n'est pas une remise — elle, le
+   commercial la décide — c'est un déplacement qu'on ne facture pas deux fois,
+   et c'est pourquoi l'application le fait toute seule.
+
+   La règle, et c'est mot pour mot celle du classeur : le prix de complément
+   s'applique dès que le devis porte au moins UNE AUTRE prestation payante —
+   une autre référence, une désignation renseignée, un montant supérieur à
+   zéro. Une ligne libre compte : c'est une vraie mission, décidée sur place.
+   La majoration pour état des lieux ne compte pas : elle n'est pas une
+   mission, c'est un pourcentage du reste.
+   ==================================================================== */
+function autrePrestationPayante(ref){
+  for(var i = 0; i < LIGNES.length; i++){
+    var l = LIGNES[i];
+    var r = String(l.reference || '').trim();
+    if(r && r === String(ref || '').trim()) continue;
+    if(r === REF_MAJ) continue;
+    if(!String(l.designation || '').trim()) continue;
+    if(brutL(l) <= 0) continue;
+    return true;
+  }
+  return false;
+}
+/* Le prix que cette prestation du catalogue porte sur le devis en cours. */
+function prixCatalogue(p){
+  var base = Number(p && p.pu) || 0;
+  var comp = Number(p && p.puComplement) || 0;
+  if(!comp) return base;
+  return autrePrestationPayante(p && p.reference) ? comp : base;
+}
+/* Vrai si cette prestation est en ce moment au tarif de complément. */
+function auTarifComplement(p){
+  var comp = Number(p && p.puComplement) || 0;
+  return !!comp && autrePrestationPayante(p && p.reference);
+}
+/* Repose le bon prix sur les lignes à deux tarifs, et rend la liste des
+   références qui viennent de changer : ajouter une prestation peut faire
+   tomber le prix d'une AUTRE ligne, déjà au devis, qu'il faut alors repeindre. */
+function majPrixComplement(){
+  var changees = [];
+  LIGNES.forEach(function(l){
+    if(estLigneLibre(l)) return;
+    var p = prestationRef(l.reference);
+    if(!p || !(Number(p.puComplement) > 0)) return;
+    var pu = prixCatalogue(p);
+    if(Math.abs((Number(l.pu) || 0) - pu) < 0.0001) return;
+    l.pu = pu;
+    changees.push(String(l.reference || ''));
+  });
+  return changees;
+}
+/* Le rang d'affichage d'une prestation, pour la repeindre après coup. */
+function rangDeReference(ref){
+  for(var i = 0; i < CATV.length; i++){
+    if(String(CATV[i].reference || '').trim() === String(ref || '').trim()) return i;
+  }
+  return -1;
+}
+/* Met les prix à jour et repeint ce qui a bougé ailleurs que sous le doigt. */
+function repeindrePrixComplement(saufRang){
+  majPrixComplement().forEach(function(ref){
+    var i = rangDeReference(ref);
+    if(i < 0 || i === saufRang) return;
+    redessinerPresta(i);
+    rafraichirLigne(i);
+  });
+}
 /* Un forfait se prend ou ne se prend pas : il n'a pas de quantité à saisir.
    Une prestation sans unité est dans le même cas. */
 function estForfait(p){
@@ -1532,12 +1605,13 @@ function poser(cle, qte){
   var p = prestaDe(cle);
   if(!p) return;
   LIGNES.push({categorie:p.categorie, designation:p.designation, detail:p.detail || '',
-    qte:qte, unite:p.unite, pu:p.pu, rem:REMISE.valeur, remMuet:REMISE.muet,
+    qte:qte, unite:p.unite, pu:prixCatalogue(p), rem:REMISE.valeur, remMuet:REMISE.muet,
     tva:(TAUX || p.tva), type:p.type, reference:p.reference || ''});
   ordonnerLignes();
 }
 
 function rendreLignes(){
+  majPrixComplement();          // un brouillon repris peut porter un prix périmé
   CATV = catalogueVisible();
   var c = $('lignes'), cat = CATV;
   CATS = []; CATP = {};
@@ -1579,8 +1653,17 @@ function blocCategorie(nom, k, rang){
 
 function lignePresta(p, i){
   var cle = clePresta(p), l = ligneDe(cle), q = l ? (Number(l.qte) || 0) : 0, actif = q > 0;
-  var sous = eur(p.pu) + (estForfait(p) ? ' · forfait' : ' / ' + ech(p.unite)) +
+  var pu = prixCatalogue(p);
+  var sous = eur(pu) + (estForfait(p) ? ' · forfait' : ' / ' + ech(p.unite)) +
              (String(p.type).toUpperCase() === 'MENSUEL' ? ' · mensuel' : '');
+  /* Deux tarifs : le commercial doit voir lequel s'applique, et savoir que
+     l'autre existe — c'est un argument de vente autant qu'une explication. */
+  if(Number(p.puComplement) > 0){
+    sous += auTarifComplement(p)
+      ? '<br><span class="pxC">tarif avec une autre prestation · seul : ' + eur(p.pu) + '</span>'
+      : '<br><span class="pxC">' + eur(p.puComplement) +
+        ' s\'il y a une autre prestation au devis</span>';
+  }
   if(estSurface(p)){
     sous += ' · <button class="lienM2" onclick="ouvrirSurface(' + i + ')">calculer</button>';
   }
@@ -1650,6 +1733,7 @@ function setQte(i, v, el){
   if(!isFinite(n) || n < 0){ n = 0; if(el) el.value = ''; }
   poser(clePresta(p), n);
   rafraichirLigne(i);
+  repeindrePrixComplement(i);   // ajouter ceci a pu faire tomber le prix d'autre chose
   majBarre(); sauverBrouillon();
 }
 
@@ -1669,6 +1753,7 @@ function basculerForfait(i){
   poser(cle, qteDe(cle) > 0 ? 0 : 1);
   redessinerPresta(i);
   rafraichirLigne(i);
+  repeindrePrixComplement(i);
   majBarre(); sauverBrouillon();
 }
 
@@ -1686,6 +1771,7 @@ function pasForfait(i, d){
   poser(cle, n);
   redessinerPresta(i);
   rafraichirLigne(i);
+  repeindrePrixComplement(i);
   majBarre(); sauverBrouillon();
 }
 
@@ -1777,13 +1863,17 @@ function setLibre(ref, champ, valeur){
   }
   var t = $('ltt' + ref);
   if(t) t.textContent = eur(montantL(l));
+  /* Une ligne libre chiffrée est une mission de plus : le canapé peut passer au
+     tarif de complément pendant qu'on tape son prix. On repeint la prestation
+     concernée, jamais le champ sous le doigt. */
+  repeindrePrixComplement(-1);
   majBarre(); sauverBrouillon();
 }
 function retirerLibre(ref){
   var l = ligneLibreDe(ref);
   if(!l) return;
   LIGNES.splice(LIGNES.indexOf(l), 1);
-  rendreLignes(); sauverBrouillon();
+  rendreLignes(); sauverBrouillon();   // rendreLignes remet les prix à jour
 }
 /* Une ligne libre sans intitulé ou sans prix n'est pas une prestation : elle
    partirait au client comme une ligne vide à 0 €. On la signale avant de
@@ -2123,6 +2213,10 @@ function noteKm(){
    lieux sur une intervention. Jamais les deux : un entretien n'est pas majoré,
    et une intervention ne paie pas la distance. */
 function lignesDevis(){
+  /* Le filet. Les écrans tiennent déjà les prix à jour, mais c'est par ici que
+     passent le total, le PDF et l'envoi au bureau : un chemin qui aurait
+     oublié de le faire ne doit pas envoyer un prix périmé. */
+  majPrixComplement();
   var taux = tauxSupKm();
   var ls = LIGNES.map(function(l){
     if(!taux || estLigneLibre(l)) return l;
