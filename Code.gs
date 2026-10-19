@@ -17,6 +17,10 @@ var SH = {
   LIGNES: 'LIGNES',
   JOURNAL: 'JOURNAL',
   FACTURER: 'A FACTURER',
+  /* Les factures préparées chez Henrri. « A FACTURER » dit ce qui reste à
+     facturer ; FACTURES garde ce qui est parti, et c'est elle qui empêche
+     d'envoyer deux fois la même mensualité. */
+  FACTURES: 'FACTURES',
   BORD: 'TABLEAU DE BORD',
   PRESTATAIRES: 'PRESTATAIRES',
   CHANTIERS: 'CHANTIERS',
@@ -165,6 +169,10 @@ function onOpen() {
     .addItem('17. Arrêter la mise à jour automatique', 'arreterMajProspects')
     .addSeparator()
     .addItem('18. Poser le planning des contrats récurrents', 'genererRecurrents')
+    .addSeparator()
+    .addItem('19. Connecter Henrri (facturation)', 'connecterHenrri')
+    .addItem('20. Tester la connexion Henrri', 'testerHenrri')
+    .addItem('21. Oublier les clés Henrri', 'oublierHenrri')
     .addToUi();
 }
 
@@ -225,7 +233,7 @@ function initialiser() {
   var ss = SpreadsheetApp.getActive();
 
   creerOnglet_(ss, SH.REGLAGES, ['CLE', 'VALEUR', 'COMMENTAIRE']);
-  creerOnglet_(ss, SH.CATALOGUE, ['CATEGORIE', 'DESIGNATION', 'DETAIL', 'UNITE', 'PU_HT', 'TVA', 'TYPE', 'ACTIF', 'REFERENCE', 'NATURES']);
+  creerOnglet_(ss, SH.CATALOGUE, ENTETES_CATALOGUE_);
   creerOnglet_(ss, SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES']);
   creerOnglet_(ss, SH.PRESTATAIRES, ENTETES_PRESTATAIRES_);
   creerOnglet_(ss, SH.ADMINS, ENTETES_ADMINS_);
@@ -245,7 +253,8 @@ function initialiser() {
 
   var cat = ss.getSheetByName(SH.CATALOGUE);
   if (cat.getLastRow() < 2) {
-    cat.getRange(2, 1, CATALOGUE_DEFAUT_.length, 8).setValues(CATALOGUE_DEFAUT_);
+    var grille0 = grilleComplete_();
+    cat.getRange(2, 1, grille0.length, ENTETES_CATALOGUE_.length).setValues(grille0);
     cat.setColumnWidth(2, 260); cat.setColumnWidth(3, 300);
   }
 
@@ -422,6 +431,16 @@ function majStructure_() {
       var iNat = shC.getLastColumn();
       shC.getRange(1, iNat + 1).setValue('NATURES')
         .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+      enC.push('NATURES');
+    }
+
+    /* PU_COMPLEMENT : le prix quand la prestation s'ajoute à une autre.
+       Laissée vide, la prestation n'a qu'un prix et rien ne change pour elle. */
+    if (enC.indexOf('PU_COMPLEMENT') < 0) {
+      var iComp = shC.getLastColumn();
+      shC.getRange(1, iComp + 1).setValue('PU_COMPLEMENT')
+        .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+      enC.push('PU_COMPLEMENT');
     }
   }
 
@@ -440,6 +459,7 @@ function majStructure_() {
 
   creerOnglet_(ss, SH.JOURNAL, ENTETES_JOURNAL_);
   creerOnglet_(ss, SH.FACTURER, ENTETES_FACTURER_);
+  creerOnglet_(ss, SH.FACTURES, ENTETES_FACTURES_);
 
   // Liste déroulante sur STATUT : le gérant peut corriger un état à la main
   // sans risquer une faute de frappe que les comptes ne reconnaîtraient pas.
@@ -468,7 +488,7 @@ function majStructure_() {
     var aRemplir = ['societe_tel', 'societe_email', 'societe_site', 'societe_capital',
                     'banque_nom', 'banque_iban', 'banque_bic', 'conditions_paiement',
                     'paiement_pct', 'clause_reserve', 'mentions_penalites',
-                    'mention_manuscrite', 'bordereau_retractation',
+                    'mention_manuscrite', 'bordereau_retractation', 'delai_paiement_jours',
                     'texte_information', 'version_information', 'journal_retention_mois'];
     REGLAGES_DEFAUT_.forEach(function (r) {
       if (aRemplir.indexOf(r[0]) < 0) return;
@@ -498,6 +518,7 @@ var REGLAGES_DEFAUT_ = [
   ['pointage_retention_mois', '36', 'Durée de conservation des pointages arrivée/départ, en mois'],
   ['texte_information_agent', 'L\'application enregistre, à chaque utilisation : les connexions, l\'heure d\'arrivée et l\'heure de départ de chaque chantier, les prestations cochées, les photos prises et les signalements.\n\nCes informations servent au suivi des interventions, à la preuve du travail effectué auprès des clients, et au décompte du temps de travail. Elles sont conservées {mois} mois, puis effacées.\n\nConformément au règlement général sur la protection des données, tu peux demander à consulter les informations qui te concernent et faire rectifier une erreur, en écrivant à breizhbrillance@gmail.com.', 'Texte affiché à chaque connexion d\'un agent — {mois} est remplacé par pointage_retention_mois'],
   ['validite_jours', '30', 'Durée de validité du devis en jours'],
+  ['delai_paiement_jours', '30', 'Délai de paiement porté sur la facture préparée dans Henrri, en jours'],
   ['conditions_reglement', 'Paiement à 30 jours à réception de facture. Pénalités de retard : 3 fois le taux d\'intérêt légal. Indemnité forfaitaire de recouvrement : 40 €.', 'Bas de devis'],
   ['mentions_bas', 'Devis gratuit. Il doit être retourné daté et signé avec la mention « Bon pour accord ».', 'Bas de devis'],
   ['mentions_particulier', 'Contrat conclu hors établissement : le client particulier dispose d\'un délai de rétractation de 14 jours à compter de la signature (art. L221-18 du Code de la consommation), sans motif ni pénalité. À faire valider par votre conseil.', 'Imprimé uniquement sur les devis aux particuliers'],
@@ -560,6 +581,23 @@ var REGLAGES_DEFAUT_ = [
    prestations d'intervention, puis quatorze tâches d'entretien au prix d'un
    passage. « Charger la grille de prix » remet exactement ceci ; si le classeur
    a évolué depuis, c'est lui qui a raison, pas cette liste. */
+/* PU_COMPLEMENT : le prix de la prestation quand elle s'ajoute à une autre.
+   Vide ou zéro, la prestation n'a qu'un prix. C'est le déplacement qui se paie
+   une fois : un canapé vaut 150 € quand on se déplace pour lui seul, 70 € quand
+   on est déjà chez le client pour autre chose. */
+var ENTETES_CATALOGUE_ = ['CATEGORIE', 'DESIGNATION', 'DETAIL', 'UNITE', 'PU_HT',
+                          'TVA', 'TYPE', 'ACTIF', 'REFERENCE', 'NATURES', 'PU_COMPLEMENT'];
+
+/* Les lignes peuvent avoir 10 ou 11 colonnes : celles qui n'ont pas de prix de
+   complément s'arrêtent à NATURES, et c'est l'écriture qui complète. */
+function grilleComplete_() {
+  return CATALOGUE_DEFAUT_.map(function (r) {
+    var l = r.slice();
+    while (l.length < ENTETES_CATALOGUE_.length) l.push('');
+    return l;
+  });
+}
+
 var CATALOGUE_DEFAUT_ = [
   ['Remise en état des sols', 'Nettoyage approfondi des plinthes et angles', '', 'm2', 0.20, 10, 'PONCTUEL', 'OUI', 'REF-0001', 'CHANTIER,REMISE'],
   ['Remise en état des sols', 'Aspiration complète des sols', '', 'm2', 0.40, 10, 'PONCTUEL', 'OUI', 'REF-0002', 'CHANTIER,REMISE'],
@@ -599,16 +637,36 @@ var CATALOGUE_DEFAUT_ = [
      offerte : c'était un geste commercial, pas un tarif — Simon la facture. */
   ['Déchets', 'Rotation des poubelles', '', 'pièce(s)', 0.50, 20, 'PONCTUEL', 'OUI', 'REF-0039', 'ENTRETIEN'],
   ['Contrôle', 'Contrôle visuel et hygiénique après chaque intervention', '', 'forfait', 1, 20, 'PONCTUEL', 'OUI', 'REF-0029', 'ENTRETIEN'],
+
+  /* Le canapé, relevé du devis I-26-10-21 du 16 octobre 2026 : 65 € de
+     pré-traitement, 35 € de brossage, 50 € d'extraction, soit 150 € HT pour un
+     déplacement qui ne sert qu'à lui. Les trois étapes tiennent en une ligne et
+     se lisent dans le détail : le client doit voir le travail, et le prix doit
+     pouvoir basculer d'un seul coup, sans arithmétique à refaire.
+     La onzième colonne est ce basculement : 70 € dès qu'une autre prestation
+     figure au devis, parce que le déplacement est alors déjà payé. */
+  ['Textiles et ameublement', 'Nettoyage d\'un canapé 1 ou 2 places',
+   'Pré-traitement et application d\'un shampoing textile sur l\'assise, le dossier, ' +
+   'les accoudoirs et les coussins ; brossage manuel en profondeur à la brosse à poils ' +
+   'doux ; extraction par injection-aspiration, assainissement du textile et détachage. ' +
+   'Les taches anciennes ou incrustées ne peuvent faire l\'objet d\'une garantie de résultat.',
+   'forfait', 150, 20, 'PONCTUEL', 'OUI', 'REF-0042', 'CHANTIER,REMISE', 70],
   /* Vitrages et menuiseries : un devis à part, jamais mêlé à un entretien —
      les vitres ne passent pas à la même fréquence que les sols. La grille est
-     celle du modèle « duplicable » de Simon ; la dernière ligne reprend le
-     forfait tout compris de ses devis au contrat. */
+     celle du modèle « duplicable » de Simon.
+
+     REF-0035, « Nettoyage des vitrages, huisseries, rails et verrières » à
+     55 € en forfait, a été RETIRÉE le 19 octobre 2026 à la demande de Simon.
+     Elle faisait double emploi avec le détail au mètre carré qui la précède :
+     un même devis pouvait porter le forfait ET les lignes qui le composent,
+     et facturer deux fois le même travail. Comme REF-0019 avant elle, **sa
+     référence ne se réattribue jamais** : une ligne de devis déjà établie la
+     porte, et la réemployer changerait le sens d'un devis signé. */
   ['Vitrages et menuiseries', 'Mise en place du matériel et sécurisation de la zone d\'intervention', '', 'forfait', 10, 20, 'PONCTUEL', 'OUI', 'REF-0030', 'VITRERIE'],
   ['Vitrages et menuiseries', 'Vitrages intérieurs', '', 'm²', 4, 20, 'PONCTUEL', 'OUI', 'REF-0031', 'VITRERIE'],
   ['Vitrages et menuiseries', 'Vitrages extérieurs', '', 'm²', 4, 20, 'PONCTUEL', 'OUI', 'REF-0032', 'VITRERIE'],
   ['Vitrages et menuiseries', 'Nettoyage des menuiseries, rails et appuis de fenêtre', '', 'm²', 5, 20, 'PONCTUEL', 'OUI', 'REF-0033', 'VITRERIE'],
   ['Vitrages et menuiseries', 'Dépoussiérage et nettoyage des volets roulants', '', 'm²', 3, 20, 'PONCTUEL', 'OUI', 'REF-0034', 'VITRERIE'],
-  ['Vitrages et menuiseries', 'Nettoyage des vitrages, huisseries, rails et verrières', '', 'forfait', 55, 20, 'PONCTUEL', 'OUI', 'REF-0035', 'VITRERIE'],
   /* Façade : un chantier à part, comme la vitrerie. Le nettoyage et l'antimousse
      se chiffrent au mètre carré de mur traité ; la nacelle se loue à la journée et
      ne suit donc pas la surface. La TVA inscrite ici n'est qu'un repli : sur le
@@ -629,8 +687,12 @@ function chargerGrillePrix() {
 
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CATALOGUE);
   if (!sh) return ui.alert('Onglet CATALOGUE introuvable. Lance d\'abord « 1. Initialiser le fichier ».');
-  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 10).clearContent();
-  sh.getRange(2, 1, CATALOGUE_DEFAUT_.length, 10).setValues(CATALOGUE_DEFAUT_);
+  var grille = grilleComplete_();
+  var large = Math.max(ENTETES_CATALOGUE_.length, sh.getLastColumn());
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, large).clearContent();
+  sh.getRange(1, 1, 1, ENTETES_CATALOGUE_.length).setValues([ENTETES_CATALOGUE_])
+    .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+  sh.getRange(2, 1, grille.length, ENTETES_CATALOGUE_.length).setValues(grille);
   sh.setColumnWidth(1, 250); sh.setColumnWidth(2, 340); sh.setColumnWidth(3, 200);
   ui.alert(CATALOGUE_DEFAUT_.length + ' prestations chargées.\n\n' +
     'Le taux de TVA indiqué ici n\'est qu\'une valeur de repli : sur le terrain, ' +
@@ -725,7 +787,8 @@ function doPost(e) {
                    'planning', 'chantier', 'tableau', 'planifier',
                    'chantierNeuf', 'lotChantiers',
                    'rdvNeuf', 'monChantier',
-                   'prospects', 'appel', 'historique'];
+                   'prospects', 'appel', 'historique',
+                   'facturation', 'facturer', 'facturesMois'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -753,7 +816,11 @@ function doPost(e) {
     var permis = admin
       ? ['connexion', 'config', 'journal', 'tableau', 'planifier', 'statut',
          'chantierNeuf', 'lotChantiers',
-         'prospects', 'appel', 'historique']
+         'prospects', 'appel', 'historique',
+         /* Facturer engage l'entreprise : ces trois actions sont au gérant
+            seul. Un commercial qui les appelle se voit refusé, et le refus
+            part au journal. */
+         'facturation', 'facturer', 'facturesMois']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -798,6 +865,15 @@ function doPost(e) {
     if (d.action === 'monChantier') return reponse_(monChantier_(d, com));
     if (d.action === 'photo') return reponse_(enregistrerPhoto_(d));
     if (d.action === 'statut') return reponse_(enregistrerStatut_(d, com));
+    if (d.action === 'facturation') return reponse_(etatFacturation_(d.periode));
+    if (d.action === 'facturer') {
+      lock.waitLock(30000);
+      return reponse_(preparerFacture_(d, com));
+    }
+    if (d.action === 'facturesMois') {
+      lock.waitLock(30000);
+      return reponse_(facturesDuMois_(d, com));
+    }
     if (d.action === 'prospects') return reponse_(listeProspects_(d));
     if (d.action === 'historique') return reponse_(historiqueAppels_(d, com));
     /* Les résultats d'appel arrivent par lots : le commercial passe des heures
@@ -3510,7 +3586,8 @@ function formaterDates_(ss) {
     [[SH.JOURNAL, ['HORODATAGE', 'MOMENT'], 'dd/mm/yyyy HH:mm:ss', 145],
      [SH.DEVIS,   ['RECU_LE', 'DATE_STATUT'], 'dd/mm/yyyy HH:mm',  130],
      [SH.DEVIS,   ['RELANCE_LE'],           'dd/mm/yyyy',          105],
-     [SH.FACTURER, ['DATE_SIGNATURE'],      'dd/mm/yyyy',          105]
+     [SH.FACTURER, ['DATE_SIGNATURE'],      'dd/mm/yyyy',          105],
+     [SH.FACTURES, ['CREE_LE'],              'dd/mm/yyyy HH:mm',    130]
     ].forEach(function (cfg) {
       var sh = ss.getSheetByName(cfg[0]);
       if (!sh || sh.getLastColumn() < 1) return;
@@ -3576,7 +3653,8 @@ function lireCatalogue_() {
         pu: Number(r[4]) || 0, tva: Number(r[5]) || 20,
         type: String(r[6] || '').toUpperCase() === 'MENSUEL' ? 'MENSUEL' : 'PONCTUEL',
         reference: String(r[8] || '').trim(),
-        natures: naturesCatalogue_(r[9])
+        natures: naturesCatalogue_(r[9]),
+        puComplement: Number(r[10]) || 0
       };
     });
 }
@@ -4023,6 +4101,45 @@ function mesurerCommunes() {
            '\n\nLes kilomètres déjà écrits n\'ont pas été touchés.');
 }
 
+/* ====================== LE TARIF DE COMPLÉMENT ======================
+
+   Une prestation peut porter deux prix : celui qu'elle vaut seule, et celui
+   qu'elle vaut quand on est déjà chez le client pour autre chose. Le canapé en
+   est le premier cas : 150 € HT pour un déplacement qui ne sert qu'à lui,
+   70 € dès qu'il s'ajoute à une autre mission. Ce n'est pas une remise, c'est
+   un déplacement qu'on ne facture pas deux fois.
+
+   La règle, et c'est mot pour mot la même dans l'application : le prix de
+   complément s'applique dès que le devis porte au moins UNE AUTRE prestation
+   payante — une autre référence, une désignation renseignée, un montant
+   supérieur à zéro. Une ligne libre compte : c'est une vraie mission, décidée
+   sur place. La majoration pour état des lieux ne compte pas : elle n'est pas
+   une mission, c'est un pourcentage du reste du devis.
+
+   Les deux côtés doivent en juger pareil, sinon le classeur signalerait un
+   écart de tarif à chaque canapé vendu avec autre chose.
+   ==================================================================== */
+function autrePrestationPayante_(lignes, ref) {
+  for (var i = 0; i < (lignes || []).length; i++) {
+    var l = lignes[i];
+    var r = String(l.reference || '').trim();
+    if (r && r === String(ref || '').trim()) continue;
+    if (r === REF_MAJORATION_) continue;
+    if (!String(l.designation || '').trim()) continue;
+    if (Math.round((Number(l.qte) || 0) * (Number(l.pu) || 0) * 100) / 100 <= 0) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Le prix du catalogue que cette prestation doit porter sur CE devis. */
+function puCatalogue_(p, lignes) {
+  var base = Number(p && p.pu) || 0;
+  var comp = Number(p && p.puComplement) || 0;
+  if (!comp) return base;
+  return autrePrestationPayante_(lignes, p.reference) ? comp : base;
+}
+
 function controlerTarifs_(devis, reg, communes) {
   var lignes = (devis && devis.lignes) || [];
   if (!lignes.length) return '';
@@ -4087,7 +4204,7 @@ function controlerTarifs_(devis, reg, communes) {
     } else if (!p) {
       ecarts.push(rang + ' : hors catalogue');
     } else {
-      var attendu = prixAttendu_(p.pu, tauxKm, reg), recu = Number(l.pu) || 0;
+      var attendu = prixAttendu_(puCatalogue_(p, lignes), tauxKm, reg), recu = Number(l.pu) || 0;
       if (Math.abs(attendu - recu) > 0.005) {
         ecarts.push(rang + ' : prix ' + recu + ' au lieu de ' + attendu +
                     (tauxKm > 0 ? ' (éloignement compris)' : ''));
@@ -5963,3 +6080,791 @@ function arreterMajProspects_(silencieux) {
   return n;
 }
 function arreterMajProspects() { arreterMajProspects_(false); }
+
+/* ====================== LA FACTURE PRÉPARÉE DANS HENRRI ======================
+
+   Le devis est signé, le chantier est fait : il reste à facturer. Jusqu'ici le
+   gérant recopiait à la main, dans Henrri, ce que l'onglet « A FACTURER » lui
+   affichait. Il le recopie encore, mais plus à la main : l'application dépose
+   la facture dans son Henrri, client et lignes comprises, en BROUILLON.
+
+   Pourquoi s'arrêter au brouillon, et pourquoi Henrri plutôt que nous ?
+   Parce qu'une facture n'est pas un PDF. C'est un numéro pris dans une série
+   continue, sans trou et sans retour en arrière ; c'est une pièce qu'on ne
+   corrige jamais, qu'on annule par un avoir ; et, depuis la réforme de la
+   facturation électronique, c'est un format normalisé transmis par une
+   plateforme agréée. Henrri porte tout cela. Nous, nous portons ce qu'Henrri
+   ne sait pas : quel devis a été signé, par qui, et si le travail est fait.
+   Chacun son métier. L'application prépare, Simon relit, Henrri émet.
+
+   La route passe par le serveur MCP de Henrri (mcp.henrri.io) : c'est la seule
+   interface qu'ils documentent, et c'est du JSON-RPC sur HTTP — UrlFetchApp
+   sait le parler. La réponse revient en flux d'événements (« event: message /
+   data: {...} ») : on la découpe. Les clés dorment dans les propriétés du
+   script, jamais dans ce fichier — le dépôt est public — et jamais dans une
+   cellule du classeur : c'est Simon qui les pose, par le menu.
+   ============================================================================ */
+
+var HENRRI_MCP_ = 'https://mcp.henrri.io/mcp';
+var HENRRI_P_ID_ = 'HENRRI_CLIENT_ID';
+var HENRRI_P_SECRET_ = 'HENRRI_CLIENT_SECRET';
+var HENRRI_P_ENV_ = 'HENRRI_ENV';
+/* Le jeton rendu par Henrri vit dix minutes. On le garde huit, pour ne pas
+   l'utiliser à la seconde où il meurt. La session MCP, elle, est un simple
+   numéro de conversation : neuf minutes suffisent. */
+var HENRRI_C_SESSION_ = 'henrri_sessionKey';
+var HENRRI_C_SID_ = 'henrri_mcp_sid';
+
+/** Les clés, ou rien. On ne les renvoie jamais à l'appli ni au journal. */
+function henrriCles_() {
+  var p = PropertiesService.getScriptProperties();
+  var id = String(p.getProperty(HENRRI_P_ID_) || '').trim();
+  var sec = String(p.getProperty(HENRRI_P_SECRET_) || '').trim();
+  if (!id || !sec) return null;
+  return { id: id, secret: sec,
+           env: String(p.getProperty(HENRRI_P_ENV_) || 'sandbox').trim() };
+}
+
+function henrriConfigure_() { return !!henrriCles_(); }
+
+/**
+ * Pose les clés d'API Henrri. Simon les colle lui-même dans la boîte de
+ * dialogue : elles ne passent ni par ce fichier, ni par le classeur, ni par
+ * une conversation. Elles vont dans les propriétés du script, que seul le
+ * propriétaire du projet peut lire.
+ */
+function connecterHenrri() {
+  var ui = SpreadsheetApp.getUi();
+  var env = ui.alert(
+    'Quel environnement Henrri ?',
+    'OUI = bac à sable (sandbox), pour essayer sans rien émettre.\n' +
+    'NON = production, ton vrai Henrri.\n\n' +
+    'Commence par le bac à sable.',
+    ui.ButtonSet.YES_NO_CANCEL);
+  if (env === ui.Button.CANCEL || env === ui.Button.CLOSE) return;
+  var environnement = (env === ui.Button.YES) ? 'sandbox' : 'production';
+
+  var r1 = ui.prompt('Clé API Henrri (1/2)',
+    'Colle ton clientId.\n\n' +
+    'Il se génère dans Henrri : avatar en haut à droite → « API & Intégrations ».',
+    ui.ButtonSet.OK_CANCEL);
+  if (r1.getSelectedButton() !== ui.Button.OK) return;
+  var id = String(r1.getResponseText() || '').trim();
+
+  var r2 = ui.prompt('Clé API Henrri (2/2)',
+    'Colle ton clientSecret.', ui.ButtonSet.OK_CANCEL);
+  if (r2.getSelectedButton() !== ui.Button.OK) return;
+  var sec = String(r2.getResponseText() || '').trim();
+
+  if (!id || !sec) { ui.alert('Il manque une des deux clés. Rien n\'a été enregistré.'); return; }
+
+  PropertiesService.getScriptProperties().setProperties({
+    HENRRI_CLIENT_ID: id, HENRRI_CLIENT_SECRET: sec, HENRRI_ENV: environnement
+  });
+  CacheService.getScriptCache().removeAll([HENRRI_C_SESSION_, HENRRI_C_SID_]);
+
+  var t = henrriTest_();
+  ui.alert(t.ok
+    ? 'Henrri est connecté (' + environnement + ').\n\n' + t.message
+    : 'Les clés sont enregistrées, mais l\'essai a échoué :\n\n' + t.message +
+      '\n\nVérifie que les clés correspondent bien à l\'environnement choisi.');
+}
+
+/** Efface les clés. Utile avant de passer du bac à sable à la production. */
+function oublierHenrri() {
+  var ui = SpreadsheetApp.getUi();
+  if (ui.alert('Oublier les clés Henrri ?',
+      'L\'application ne pourra plus préparer de facture tant que tu n\'auras pas ' +
+      'reconnecté Henrri. Rien n\'est supprimé chez Henrri.',
+      ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  PropertiesService.getScriptProperties()
+    .deleteProperty(HENRRI_P_ID_);
+  PropertiesService.getScriptProperties()
+    .deleteProperty(HENRRI_P_SECRET_);
+  PropertiesService.getScriptProperties()
+    .deleteProperty(HENRRI_P_ENV_);
+  CacheService.getScriptCache().removeAll([HENRRI_C_SESSION_, HENRRI_C_SID_]);
+  ui.alert('Clés oubliées.');
+}
+
+/** Essaie la connexion et dit qui l'on est chez Henrri. */
+function henrriTest_() {
+  var cles = henrriCles_();
+  if (!cles) return { ok: false, message: 'Aucune clé enregistrée. Lance « Connecter Henrri ».' };
+  try {
+    henrriSession_(true);
+    var moi = henrriAppel_('henrri_get_me', {});
+    var soc = moi && (moi.company || moi.societe || moi.companyName ||
+                      (moi.data && moi.data.company)) || null;
+    var nom = soc && (soc.name || soc.corporateName) ||
+              moi && (moi.name || moi.email) || '';
+    return { ok: true,
+             message: 'Environnement : ' + cles.env +
+                      (nom ? '\nCompte : ' + nom : '') };
+  } catch (err) {
+    return { ok: false, message: String(err && err.message || err) };
+  }
+}
+function testerHenrri() {
+  var t = henrriTest_();
+  SpreadsheetApp.getUi().alert(t.ok ? 'Henrri répond.\n\n' + t.message
+                                    : 'Henrri ne répond pas.\n\n' + t.message);
+}
+
+/* ---------------------------------------------------------------- */
+/* Le transport : JSON-RPC sur HTTP, réponse en flux d'événements.  */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Un appel JSON-RPC au serveur MCP. Rend { json: …, sid: … } ; ne juge pas le
+ * contenu, c'est l'appelant qui sait ce qu'il attend.
+ */
+function henrriRpc_(methode, params, sid, sansReponse) {
+  var en = { 'Accept': 'application/json, text/event-stream' };
+  if (sid) en['Mcp-Session-Id'] = sid;
+  var rep = UrlFetchApp.fetch(HENRRI_MCP_, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: en,
+    payload: JSON.stringify(
+      sansReponse ? { jsonrpc: '2.0', method: methode, params: params || {} }
+                  : { jsonrpc: '2.0', id: 1, method: methode, params: params || {} }),
+    muteHttpExceptions: true,
+    followRedirects: true
+  });
+  var code = rep.getResponseCode();
+  var corps = rep.getContentText();
+  var sidRendu = '';
+  try {
+    var h = rep.getAllHeaders();
+    sidRendu = String(h['Mcp-Session-Id'] || h['mcp-session-id'] || '');
+  } catch (e) {}
+  if (sansReponse) return { json: null, sid: sidRendu, code: code };
+  if (code < 200 || code >= 300) {
+    throw new Error('Henrri a répondu ' + code + ' : ' + String(corps).slice(0, 300));
+  }
+  return { json: henrriCorps_(corps), sid: sidRendu, code: code };
+}
+
+/**
+ * Le corps peut arriver en JSON nu, ou en flux d'événements — une suite de
+ * lignes « data: {…} ». On prend le dernier objet qui porte un « result » ou
+ * une « error » : c'est la réponse, les précédents ne sont que du bavardage.
+ */
+function henrriCorps_(corps) {
+  var txt = String(corps || '').trim();
+  if (!txt) return null;
+  if (txt.charAt(0) === '{') {
+    try { return JSON.parse(txt); } catch (e) {}
+  }
+  var lignes = txt.split('\n'), trouve = null;
+  for (var i = 0; i < lignes.length; i++) {
+    var l = lignes[i].replace(/^﻿/, '').trim();
+    if (l.indexOf('data:') !== 0) continue;
+    var brut = l.slice(5).trim();
+    if (!brut || brut === '[DONE]') continue;
+    try {
+      var o = JSON.parse(brut);
+      if (o && (o.result !== undefined || o.error !== undefined)) trouve = o;
+      else if (!trouve) trouve = o;
+    } catch (e2) {}
+  }
+  return trouve;
+}
+
+/** Le numéro de conversation MCP, ouvert à la demande et gardé neuf minutes. */
+function henrriSid_(neuf) {
+  var cache = CacheService.getScriptCache();
+  if (!neuf) {
+    var vu = cache.get(HENRRI_C_SID_);
+    if (vu) return vu;
+  }
+  var r = henrriRpc_('initialize', {
+    protocolVersion: '2025-06-18',
+    capabilities: {},
+    clientInfo: { name: 'breizh-brillance-devis', version: '1.0' }
+  }, '', false);
+  if (r.json && r.json.error) {
+    throw new Error('Henrri refuse la connexion : ' +
+                    String(r.json.error.message || '').slice(0, 200));
+  }
+  var sid = r.sid || '';
+  if (sid) {
+    try { henrriRpc_('notifications/initialized', {}, sid, true); } catch (e) {}
+    cache.put(HENRRI_C_SID_, sid, 540);
+  }
+  return sid;
+}
+
+/**
+ * Le jeton de session Henrri. C'est lui, et non le numéro de conversation MCP,
+ * qui prouve qui nous sommes : le serveur nous demande de le repasser à chaque
+ * appel, parce qu'il ne garde rien.
+ */
+function henrriSession_(neuf) {
+  var cache = CacheService.getScriptCache();
+  if (!neuf) {
+    var vu = cache.get(HENRRI_C_SESSION_);
+    if (vu) return vu;
+  }
+  var cles = henrriCles_();
+  if (!cles) throw new Error('Henrri n\'est pas connecté : lance « Connecter Henrri » dans le menu.');
+  var res = henrriAppelBrut_('henrri_authenticate', {
+    clientId: cles.id, clientSecret: cles.secret, environment: cles.env
+  }, henrriSid_(neuf));
+  var clef = res && (res.sessionKey || res.session_key ||
+                     (res.data && res.data.sessionKey)) || '';
+  if (!clef) {
+    throw new Error('Henrri n\'a pas rendu de jeton de session. Les clés sont-elles ' +
+                    'celles de l\'environnement « ' + cles.env + ' » ?');
+  }
+  cache.put(HENRRI_C_SESSION_, clef, 480);
+  return clef;
+}
+
+/** Un appel d'outil sans se soucier du jeton : sert à l'authentification. */
+function henrriAppelBrut_(outil, args, sid) {
+  var r = henrriRpc_('tools/call', { name: outil, arguments: args || {} }, sid, false);
+  var j = r.json;
+  if (!j) throw new Error('Henrri n\'a rien répondu (outil ' + outil + ').');
+  if (j.error) {
+    throw new Error('Henrri : ' + String(j.error.message || j.error.code || '').slice(0, 300));
+  }
+  return henrriContenu_(j.result, outil);
+}
+
+/**
+ * Un appel d'outil, jeton compris. Si Henrri dit que la session n'est pas
+ * authentifiée — le jeton a expiré, ou le serveur a oublié la conversation —
+ * on se réauthentifie une fois et on rejoue. Une seule fois : au-delà, c'est
+ * un vrai refus, et s'entêter ne ferait que brûler des appels.
+ */
+function henrriAppel_(outil, args) {
+  var a = {};
+  for (var k in args) if (args.hasOwnProperty(k)) a[k] = args[k];
+  a.sessionKey = henrriSession_(false);
+  try {
+    return henrriAppelBrut_(outil, a, henrriSid_(false));
+  } catch (err) {
+    var m = String(err && err.message || err);
+    if (!/non authentifi|not authenticated|session inconnue|expir|401|403/i.test(m)) throw err;
+    CacheService.getScriptCache().removeAll([HENRRI_C_SESSION_, HENRRI_C_SID_]);
+    a.sessionKey = henrriSession_(true);
+    return henrriAppelBrut_(outil, a, henrriSid_(false));
+  }
+}
+
+/**
+ * Ce qu'un outil MCP rend vraiment. Trois formes possibles : un objet
+ * structuré, un texte qui est du JSON, un texte qui n'en est pas. On accepte
+ * les trois, et une erreur annoncée dans le contenu reste une erreur.
+ */
+function henrriContenu_(result, outil) {
+  if (!result) return null;
+  if (result.isError) {
+    var msg = '';
+    try { msg = String(result.content[0].text || ''); } catch (e) {}
+    throw new Error('Henrri refuse « ' + outil + ' » : ' + msg.slice(0, 300));
+  }
+  if (result.structuredContent) return result.structuredContent;
+  var txt = '';
+  try {
+    (result.content || []).forEach(function (c) {
+      if (c && c.type === 'text' && c.text) txt += c.text;
+    });
+  } catch (e2) {}
+  txt = String(txt || '').trim();
+  if (!txt) return result;
+  if (txt.charAt(0) === '{' || txt.charAt(0) === '[') {
+    try { return JSON.parse(txt); } catch (e3) {}
+  }
+  return { texte: txt };
+}
+
+/* ---------------------------------------------------------------- */
+/* CE QU'IL Y A À FACTURER, ET CE QU'ON EN FAIT                     */
+/* ---------------------------------------------------------------- */
+
+/* Une ligne par facture préparée. ID_HENRRI est la seule colonne qui compte
+   vraiment : elle dit qu'un devis est déjà parti chez Henrri, et empêche de le
+   facturer deux fois. PERIODE est vide sur un ponctuel, et vaut « 2026-11 »
+   sur une mensualité de contrat d'entretien : c'est le couple
+   (NUMERO_DEVIS, PERIODE) qui est unique, pas le numéro seul. */
+var ENTETES_FACTURES_ = [
+  'CREE_LE', 'NUMERO_DEVIS', 'CLIENT', 'TYPE', 'PERIODE', 'PASSAGES',
+  'TOTAL_HT', 'TOTAL_TVA', 'TOTAL_TTC',
+  'ID_HENRRI', 'ID_CLIENT_HENRRI', 'LIEN_HENRRI',
+  'ETAT', 'ECART', 'CREE_PAR', 'NOTE'
+];
+
+/** Les chantiers rangés par numéro de devis. */
+function chantiersParDevis_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  var out = {};
+  if (!sh || sh.getLastRow() < 2) return out;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var cN = en.indexOf('NUMERO');
+  for (var i = 1; i < v.length; i++) {
+    var n = String(v[i][cN] || '').trim();
+    if (!n) continue;
+    var o = {};
+    en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
+    (out[n] = out[n] || []).push(o);
+  }
+  return out;
+}
+
+/** Les factures déjà préparées, rangées par numéro de devis puis par période. */
+function facturesFaites_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.FACTURES);
+  var out = {};
+  if (!sh || sh.getLastRow() < 2) return out;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  for (var i = 1; i < v.length; i++) {
+    var o = {};
+    en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
+    var num = String(o.NUMERO_DEVIS || '').trim();
+    if (!num) continue;
+    /* Un échec ne barre pas la route : on doit pouvoir réessayer. Seule une
+       facture réellement déposée chez Henrri compte comme faite. */
+    if (!String(o.ID_HENRRI || '').trim()) continue;
+    var k = String(o.PERIODE || '').trim();
+    (out[num] = out[num] || {})[k] = o;
+  }
+  return out;
+}
+
+function moisDe_(v) {
+  var d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d.getTime())) return '';
+  var m = d.getMonth() + 1;
+  return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m;
+}
+function moisCourant_() { return moisDe_(new Date()); }
+function moisLisible_(p) {
+  var mois = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet',
+              'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  var m = String(p || '').match(/^(\d{4})-(\d{2})$/);
+  if (!m) return String(p || '');
+  return mois[Number(m[2]) - 1] + ' ' + m[1];
+}
+
+/**
+ * L'état de facturation de tout ce qui est signé. Rend deux listes : les
+ * prestations ponctuelles, et les contrats qui se facturent au mois.
+ *
+ * La règle que Simon a posée : on ne facture un ponctuel que lorsque le travail
+ * est fait — c'est-à-dire quand le salarié a pointé son départ et que le
+ * chantier est passé à FAIT. Un chantier annulé ne compte pas ; un chantier
+ * en PROBLEME non plus, mais il se dit, parce qu'un problème non réglé se
+ * facture rarement sans discussion.
+ */
+function etatFacturation_(periode) {
+  var mois = String(periode || '').match(/^\d{4}-\d{2}$/) ? periode : moisCourant_();
+  var parNum = chantiersParDevis_();
+  var faites = facturesFaites_();
+  var lp = lignesParDevis_();
+  var ponctuels = [], contrats = [];
+
+  lireDevis_().forEach(function (d) {
+    if (String(d.STATUT || '').toUpperCase() !== 'SIGNE') return;
+    var num = String(d.NUMERO || '').trim();
+    if (!num) return;
+    var ch = (parNum[num] || []).filter(function (c) {
+      return String(c.STATUT || '').toUpperCase() !== 'ANNULE';
+    });
+    var faits = ch.filter(function (c) { return String(c.STATUT || '').toUpperCase() === 'FAIT'; });
+    var soucis = ch.filter(function (c) { return String(c.STATUT || '').toUpperCase() === 'PROBLEME'; });
+    var base = {
+      numero: num, client: String(d.CLIENT || ''), commercial: String(d.COMMERCIAL || ''),
+      ville: String(d.VILLE || ''), signeLe: isoDe_(d.DATE_STATUT || d.DATE) || '',
+      nature: String(d.NATURE || ''), lignes: (lp[num] || []).length,
+      soucis: soucis.length
+    };
+
+    if (recurrentDevis_(d.NATURE, d.PASSAGES_MOIS)) {
+      var prevus = Number(d.PASSAGES_MOIS) || 0;
+      var duMois = ch.filter(function (c) { return moisDe_(c.DATE) === mois; });
+      var faitsMois = duMois.filter(function (c) {
+        return String(c.STATUT || '').toUpperCase() === 'FAIT';
+      });
+      var dejaF = (faites[num] || {})[mois];
+      contrats.push({
+        numero: base.numero, client: base.client, commercial: base.commercial,
+        ville: base.ville, signeLe: base.signeLe, nature: base.nature,
+        lignes: base.lignes, soucis: base.soucis,
+        periode: mois, periodeNom: moisLisible_(mois),
+        htMois: Number(d.TOTAL_HT_MENSUEL) || Number(d.TOTAL_HT) || 0,
+        passagesPrevus: prevus, passagesFaits: faitsMois.length,
+        passagesPoses: duMois.length,
+        facturee: !!dejaF, idHenrri: dejaF ? String(dejaF.ID_HENRRI || '') : '',
+        lienHenrri: dejaF ? String(dejaF.LIEN_HENRRI || '') : ''
+      });
+      return;
+    }
+
+    var dejaP = (faites[num] || {})[''];
+    ponctuels.push({
+      numero: base.numero, client: base.client, commercial: base.commercial,
+      ville: base.ville, signeLe: base.signeLe, nature: base.nature,
+      lignes: base.lignes, soucis: base.soucis,
+      ht: Number(d.TOTAL_HT) || 0, tva: Number(d.TOTAL_TVA) || 0,
+      ttc: Number(d.TOTAL_TTC) || 0,
+      chantiers: ch.length, faits: faits.length,
+      /* Prêt : le travail est fait et rien n'attend. Attente : il reste un
+         passage à faire, ou aucun n'a encore été posé au planning. */
+      pret: ch.length > 0 && faits.length === ch.length,
+      facturee: !!dejaP, idHenrri: dejaP ? String(dejaP.ID_HENRRI || '') : '',
+      lienHenrri: dejaP ? String(dejaP.LIEN_HENRRI || '') : '',
+      faitLe: faits.length ? isoDe_(faits[faits.length - 1].DEPART ||
+                                    faits[faits.length - 1].DATE) : ''
+    });
+  });
+
+  ponctuels.sort(function (a, b) {
+    if (a.facturee !== b.facturee) return a.facturee ? 1 : -1;
+    if (a.pret !== b.pret) return a.pret ? -1 : 1;
+    return String(a.signeLe) < String(b.signeLe) ? -1 : 1;
+  });
+  contrats.sort(function (a, b) {
+    if (a.facturee !== b.facturee) return a.facturee ? 1 : -1;
+    return String(a.client).localeCompare(String(b.client));
+  });
+  return { ok: true, periode: mois, periodeNom: moisLisible_(mois),
+           henrri: henrriConfigure_(), ponctuels: ponctuels, contrats: contrats };
+}
+
+/* ---------------------------------------------------------------- */
+/* LE CLIENT CHEZ HENRRI                                            */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Retrouve le client chez Henrri, ou le crée. On cherche d'abord dans les
+ * factures déjà préparées : un client créé le mois dernier n'a pas à être
+ * cherché à nouveau, et surtout pas recréé. Puis chez Henrri, par SIRET quand
+ * on l'a — deux sociétés peuvent porter le même nom, jamais le même SIRET.
+ */
+function henrriClient_(d) {
+  var siret = String(d.SIRET_CLIENT || '').replace(/\s+/g, '');
+  var nom = String(d.CLIENT || '').trim();
+  if (!nom) throw new Error('Ce devis n\'a pas de nom de client.');
+
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.FACTURES);
+  if (sh && sh.getLastRow() > 1) {
+    var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+    var en = v[0].map(function (x) { return String(x).trim(); });
+    var cC = en.indexOf('CLIENT'), cI = en.indexOf('ID_CLIENT_HENRRI');
+    if (cC >= 0 && cI >= 0) {
+      for (var i = v.length - 1; i >= 1; i--) {
+        if (String(v[i][cC] || '').trim().toUpperCase() === nom.toUpperCase() &&
+            String(v[i][cI] || '').trim()) {
+          return { id: Number(v[i][cI]), neuf: false };
+        }
+      }
+    }
+  }
+
+  var trouve = null;
+  var res = henrriAppel_('henrri_list_customers', { search: siret || nom, limit: 20 });
+  var liste = henrriListe_(res);
+  for (var j = 0; j < liste.length; j++) {
+    var c = liste[j];
+    var cSiret = String(c.siret || c.siretNumber || '').replace(/\s+/g, '');
+    var cNom = String(c.name || c.corporateName || c.tradeName || '').trim();
+    if (siret && cSiret && cSiret === siret) { trouve = c; break; }
+    if (!trouve && cNom.toUpperCase() === nom.toUpperCase()) trouve = c;
+  }
+  if (trouve && (trouve.id || trouve.customerId)) {
+    return { id: Number(trouve.id || trouve.customerId), neuf: false };
+  }
+
+  var pro = String(d.TYPE_CLIENT || '').toUpperCase().indexOf('PART') !== 0;
+  var args = {
+    name: nom,
+    type: pro ? 'professional' : 'individual',
+    address: {
+      address: String(d.ADRESSE || ''), city: String(d.VILLE || ''),
+      postCode: String(d.CP || ''), country: 'FR'
+    }
+  };
+  if (siret) args.siret = siret;
+  var contact = String(d.CONTACT || '').trim();
+  var mail = String(d.EMAIL || '').trim();
+  var tel = String(d.TELEPHONE || '').trim();
+  if (contact || mail || tel) {
+    var ct = {};
+    if (contact) {
+      var mots = contact.split(/\s+/);
+      ct.lastName = mots.length > 1 ? mots.slice(1).join(' ') : contact;
+      if (mots.length > 1) ct.firstName = mots[0];
+    }
+    if (mail) ct.email = mail;
+    if (tel) ct.phone = tel;
+    args.contacts = [ct];
+  }
+  var cree = henrriAppel_('henrri_create_customer', args);
+  var id = cree && (cree.id || cree.customerId ||
+                    (cree.customer && cree.customer.id) ||
+                    (cree.data && cree.data.id));
+  if (!id) throw new Error('Henrri n\'a pas rendu l\'identifiant du client créé.');
+  return { id: Number(id), neuf: true };
+}
+
+/** Henrri rend tantôt un tableau, tantôt un objet qui en contient un. */
+function henrriListe_(res) {
+  if (!res) return [];
+  if (Object.prototype.toString.call(res) === '[object Array]') return res;
+  var cles = ['customers', 'items', 'documents', 'data', 'results', 'list'];
+  for (var i = 0; i < cles.length; i++) {
+    var v = res[cles[i]];
+    if (Object.prototype.toString.call(v) === '[object Array]') return v;
+    if (v && Object.prototype.toString.call(v.items) === '[object Array]') return v.items;
+  }
+  return [];
+}
+
+/* ---------------------------------------------------------------- */
+/* LA FACTURE                                                       */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Prépare une facture chez Henrri à partir d'un devis signé.
+ *
+ * Sur le montant, un choix qui mérite d'être écrit : chaque ligne part chez
+ * Henrri au TOTAL_HT que porte le devis signé, en quantité 1 (ou en nombre de
+ * passages pour une mensualité), et le détail du calcul — « 120 m² × 0,15 € » —
+ * passe dans le libellé. On pourrait envoyer la quantité et le prix unitaire,
+ * et laisser Henrri multiplier ; on ne le fait pas, parce que la remise et les
+ * arrondis se feraient deux fois, chez nous puis chez eux, et qu'une facture
+ * qui s'écarte d'un centime du devis signé est une facture à discuter. Ce que
+ * le client a signé est ce qu'il reçoit.
+ */
+function preparerFacture_(d, com) {
+  var num = String(d.numero || '').trim();
+  if (!num) return { ok: false, erreur: 'Numéro de devis manquant.' };
+  if (!henrriConfigure_()) {
+    return { ok: false, erreur: 'Henrri n\'est pas connecté. Dans le classeur : ' +
+                                'menu « Devis » → « Connecter Henrri ».' };
+  }
+
+  var devis = null;
+  lireDevis_().forEach(function (x) {
+    if (String(x.NUMERO || '').trim() === num) devis = x;
+  });
+  if (!devis) return { ok: false, erreur: 'Devis ' + num + ' introuvable.' };
+  if (String(devis.STATUT || '').toUpperCase() !== 'SIGNE') {
+    return { ok: false, erreur: 'Le devis ' + num + ' n\'est pas signé.' };
+  }
+
+  var recurrent = recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS);
+  var periode = recurrent
+    ? (String(d.periode || '').match(/^\d{4}-\d{2}$/) ? d.periode : moisCourant_())
+    : '';
+  var passages = recurrent ? (Number(devis.PASSAGES_MOIS) || 1) : 1;
+
+  var faites = facturesFaites_();
+  if ((faites[num] || {})[periode]) {
+    var dj = faites[num][periode];
+    return { ok: false, deja: true,
+             erreur: 'Déjà préparée' + (periode ? ' pour ' + moisLisible_(periode) : '') +
+                     ' (facture ' + String(dj.ID_HENRRI) + ' chez Henrri).',
+             idHenrri: String(dj.ID_HENRRI || ''), lien: String(dj.LIEN_HENRRI || '') };
+  }
+
+  /* Le garde-fou de Simon : on ne facture pas une prestation qui n'est pas
+     faite. Il peut passer outre — c'est son entreprise — mais il doit le dire
+     explicitement, et le journal en gardera la trace. */
+  var etat = etatFacturation_(periode);
+  var vu = null;
+  (recurrent ? etat.contrats : etat.ponctuels).forEach(function (x) {
+    if (x.numero === num) vu = x;
+  });
+  if (!recurrent && vu && !vu.pret && !d.force) {
+    return { ok: false, pasPret: true,
+             erreur: vu.chantiers === 0
+               ? 'Aucun passage n\'est encore posé au planning pour ce devis.'
+               : 'Il reste ' + (vu.chantiers - vu.faits) + ' passage(s) non terminé(s) sur ' +
+                 vu.chantiers + '.' };
+  }
+
+  var lignes = (lignesParDevis_()[num] || []).slice().sort(function (a, b) {
+    return (Number(a.ORDRE) || 0) - (Number(b.ORDRE) || 0);
+  });
+  if (!lignes.length) return { ok: false, erreur: 'Ce devis n\'a aucune ligne de prestation.' };
+
+  var attenduHt = 0;
+  lignes.forEach(function (l) { attenduHt += (Number(l.TOTAL_HT) || 0) * passages; });
+  attenduHt = Math.round(attenduHt * 100) / 100;
+
+  var client, doc, idDoc = 0, poseesOk = 0, erreur = '';
+  try {
+    client = henrriClient_(devis);
+    var reg = lireReglages_();
+    var jours = Number(reg.delai_paiement_jours) || 30;
+    var aujourd = new Date();
+    var ech = new Date(aujourd.getTime() + jours * 24 * 3600 * 1000);
+
+    doc = henrriAppel_('henrri_create_document', {
+      documentTypeId: 1,
+      customerId: client.id,
+      documentDate: iso10_(aujourd),
+      dueDate: iso10_(ech),
+      notes: (recurrent
+        ? 'Contrat d\'entretien — ' + moisLisible_(periode) +
+          ' (' + passages + ' passage' + (passages > 1 ? 's' : '') + ')'
+        : 'Prestation réalisée') +
+        ' · devis ' + num +
+        (devis.SIGNATAIRE ? ' signé par ' + String(devis.SIGNATAIRE) : '')
+    });
+    idDoc = Number(doc && (doc.id || doc.documentId ||
+                           (doc.document && doc.document.id) ||
+                           (doc.data && doc.data.id)) || 0);
+    if (!idDoc) throw new Error('Henrri n\'a pas rendu l\'identifiant de la facture.');
+
+    for (var i = 0; i < lignes.length; i++) {
+      var l = lignes[i];
+      henrriAppel_('henrri_add_document_line', {
+        documentId: idDoc,
+        description: libelleFacture_(l, recurrent, periode),
+        sellingPriceWithoutTax: Number(l.TOTAL_HT) || 0,
+        quantity: passages,
+        vatPercent: Number(l.TVA) || 0
+      });
+      poseesOk++;
+    }
+  } catch (err) {
+    erreur = String(err && err.message || err);
+  }
+
+  var ecart = '';
+  var totaux = { ht: attenduHt, tva: 0, ttc: 0 };
+  if (idDoc && !erreur) {
+    try {
+      var relu = henrriAppel_('henrri_get_document', { id: idDoc });
+      var o = (relu && (relu.document || relu.data)) || relu || {};
+      var ht = Number(o.totalWithoutTax || o.totalHT || o.amountWithoutTax || 0);
+      if (ht) {
+        totaux.ht = ht;
+        totaux.tva = Number(o.totalTax || o.totalVat || 0);
+        totaux.ttc = Number(o.totalWithTax || o.totalTTC || 0);
+        if (Math.abs(ht - attenduHt) >= 0.01) {
+          ecart = 'Henrri compte ' + nb_(ht) + ' € HT, le devis ' + nb_(attenduHt) + ' €';
+        }
+      }
+    } catch (e) {}
+  }
+
+  var lien = '';
+  if (idDoc) {
+    try {
+      var p = henrriAppel_('henrri_get_document_pdf_url', { id: idDoc });
+      lien = String((p && (p.url || p.pdfUrl || p.link)) || '');
+    } catch (e2) {}
+  }
+
+  ecrireFacture_({
+    CREE_LE: new Date(), NUMERO_DEVIS: num, CLIENT: String(devis.CLIENT || ''),
+    TYPE: recurrent ? 'MENSUEL' : 'PONCTUEL', PERIODE: periode,
+    PASSAGES: passages,
+    TOTAL_HT: totaux.ht, TOTAL_TVA: totaux.tva, TOTAL_TTC: totaux.ttc,
+    ID_HENRRI: idDoc || '', ID_CLIENT_HENRRI: client ? client.id : '',
+    LIEN_HENRRI: lien,
+    ETAT: erreur ? 'ECHEC' : 'BROUILLON', ECART: ecart,
+    CREE_PAR: com ? com.nom : '',
+    NOTE: erreur ? erreur.slice(0, 400)
+                 : (poseesOk + ' ligne(s)') +
+                   (d.force && !recurrent ? ' · facturé avant la fin du chantier' : '')
+  });
+
+  if (erreur) {
+    tracerServeur_(com ? com.nom : '', 'FACTURE EN ECHEC',
+                   String(devis.CLIENT || '') + ' · ' + erreur.slice(0, 200), num,
+                   d.appareil || '');
+    return { ok: false, erreur: erreur, idHenrri: idDoc || '' };
+  }
+
+  tracerServeur_(com ? com.nom : '', 'FACTURE PREPAREE',
+                 String(devis.CLIENT || '') +
+                 (periode ? ' · ' + moisLisible_(periode) : '') +
+                 ' · ' + nb_(totaux.ht) + ' € HT · Henrri ' + idDoc +
+                 (ecart ? ' · ÉCART : ' + ecart : '') +
+                 (d.force && !recurrent ? ' · AVANT LA FIN DU CHANTIER' : ''),
+                 num, d.appareil || '');
+
+  return { ok: true, numero: num, idHenrri: idDoc, lien: lien,
+           periode: periode, passages: passages,
+           ht: totaux.ht, tva: totaux.tva, ttc: totaux.ttc,
+           ecart: ecart, lignes: poseesOk,
+           clientNeuf: client ? !!client.neuf : false };
+}
+
+/** Le libellé d'une ligne de facture : la prestation, et d'où vient son prix. */
+function libelleFacture_(l, recurrent, periode) {
+  var t = String(l.DESIGNATION || '').trim();
+  if (l.DETAIL) t += ' (' + String(l.DETAIL).trim() + ')';
+  var q = Number(l.QTE) || 0, pu = Number(l.PU_HT) || 0;
+  var det = [];
+  if (q && q !== 1) det.push(nb_(q) + ' ' + String(l.UNITE || '').trim() + ' × ' + nb_(pu) + ' €');
+  if (Number(l.REMISE_PCT) > 0) det.push('remise ' + nb_(l.REMISE_PCT) + ' %');
+  if (det.length) t += ' — ' + det.join(', ');
+  if (recurrent) t += ' — ' + moisLisible_(periode) + ', le passage';
+  return t.slice(0, 500);
+}
+
+function iso10_(d) {
+  return Utilities.formatDate(d, 'Europe/Paris', 'yyyy-MM-dd');
+}
+
+function ecrireFacture_(v) {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(SH.FACTURES) || creerOnglet_(ss, SH.FACTURES, ENTETES_FACTURES_);
+  var en = sh.getLastColumn() > 0
+    ? sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim(); })
+    : [];
+  if (!en.length) {
+    sh.getRange(1, 1, 1, ENTETES_FACTURES_.length).setValues([ENTETES_FACTURES_])
+      .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+    sh.setFrozenRows(1);
+    en = ENTETES_FACTURES_.slice();
+  }
+  /* Écriture par nom de colonne, jamais par position : une colonne ajoutée
+     plus tard arrive à la fin de la feuille, et une ligne posée par position
+     irait alors porter ses valeurs dans la mauvaise case. */
+  var ligne = [];
+  for (var i = 0; i < en.length; i++) ligne.push('');
+  for (var k in v) {
+    if (!v.hasOwnProperty(k)) continue;
+    var c = en.indexOf(k);
+    if (c >= 0) ligne[c] = v[k];
+  }
+  sh.appendRow(ligne);
+  return sh.getLastRow();
+}
+
+/**
+ * Les mensualités d'un mois, préparées d'un coup. Simon clique une fois, et
+ * chaque contrat en cours reçoit sa facture. Un contrat déjà facturé pour ce
+ * mois est sauté sans bruit : relancer le bouton ne crée pas de doublon.
+ */
+function facturesDuMois_(d, com) {
+  var periode = String(d.periode || '').match(/^\d{4}-\d{2}$/) ? d.periode : moisCourant_();
+  var etat = etatFacturation_(periode);
+  var faits = [], sautes = [], echecs = [];
+  etat.contrats.forEach(function (c) {
+    if (c.facturee) { sautes.push({ numero: c.numero, client: c.client, motif: 'déjà préparée' }); return; }
+    var r = preparerFacture_({ numero: c.numero, periode: periode,
+                               appareil: d.appareil || '' }, com);
+    if (r.ok) faits.push({ numero: c.numero, client: c.client, ht: r.ht,
+                           idHenrri: r.idHenrri, lien: r.lien, ecart: r.ecart });
+    else if (r.deja) sautes.push({ numero: c.numero, client: c.client, motif: 'déjà préparée' });
+    else echecs.push({ numero: c.numero, client: c.client, erreur: r.erreur });
+  });
+  tracerServeur_(com ? com.nom : '', 'FACTURES DU MOIS',
+                 moisLisible_(periode) + ' · ' + faits.length + ' préparée(s), ' +
+                 sautes.length + ' sautée(s), ' + echecs.length + ' en échec',
+                 '', d.appareil || '');
+  return { ok: true, periode: periode, periodeNom: moisLisible_(periode),
+           faits: faits, sautes: sautes, echecs: echecs };
+}
