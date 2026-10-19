@@ -673,7 +673,18 @@ var CATALOGUE_DEFAUT_ = [
      terrain l'appli applique 10 % au logement de plus de deux ans, 20 % sinon. */
   ['Nettoyage de façade', 'Nettoyage de façade', 'Mise en sécurité du chantier • protection de la maison et de ses abords • pulvérisation du nettoyant sans chlore • passage du nettoyeur réglé au jet plat • finition et nettoyage du chantier', 'm²', 14.90, 10, 'PONCTUEL', 'OUI', 'REF-0036', 'FACADE'],
   ['Nettoyage de façade', "Pulvérisation d'antimousse végétale, non-retour de mousse garanti 2 ans", '', 'm²', 3.90, 10, 'PONCTUEL', 'OUI', 'REF-0037', 'FACADE'],
-  ['Nettoyage de façade', 'Forfait nacelle à la journée', '', 'journée(s)', 450, 10, 'PONCTUEL', 'OUI', 'REF-0038', 'FACADE']
+  ['Nettoyage de façade', 'Forfait nacelle à la journée', '', 'journée(s)', 450, 10, 'PONCTUEL', 'OUI', 'REF-0038', 'FACADE'],
+
+  /* La nacelle de la vitrerie (19 octobre 2026). Une verrière ou un pignon vitré
+     se nettoient depuis la même machine qu'une façade, au même prix à la
+     journée — mais Simon la veut dans les deux catégories, chacune sous son
+     propre intitulé : sur un devis de vitrerie elle se lit sous « Vitrages et
+     menuiseries », pas sous « Nettoyage de façade ».
+     D'où deux lignes et deux références plutôt qu'une ligne à deux natures.
+     Elles ne se croisent jamais : un devis est de vitrerie OU de façade, jamais
+     les deux, et chacune ne se vend que sur la sienne. Même prix des deux
+     côtés : c'est la même nacelle, elle se loue au même tarif. */
+  ['Vitrages et menuiseries', 'Forfait nacelle à la journée', '', 'journée(s)', 450, 20, 'PONCTUEL', 'OUI', 'REF-0043', 'VITRERIE']
 ];
 
 /** Remplace le contenu du CATALOGUE par la grille de prix de référence. */
