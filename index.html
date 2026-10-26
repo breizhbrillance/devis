@@ -685,10 +685,11 @@
            commercial avait promis, et ne pouvait rien poser sur un planning.
            La date se choisit maintenant dans un calendrier, et la phrase pour
            le client passe à côté, où elle ne gêne personne. -->
-      <label>Intervention à partir du</label>
+      <label>Intervention à partir du (facultatif)</label>
       <input id="fDate" type="date">
-      <div class="mini">Obligatoire : le client doit savoir quand la prestation sera faite,
-        et c'est cette date qui sert à poser le chantier sur le planning.</div>
+      <div class="mini">Si le client sait quand il veut qu'on vienne, pose la date : elle
+        s'imprime sur le devis et sert à poser le chantier sur le planning. Sinon, laisse
+        vide — le bureau planifiera à partir du jour de la signature.</div>
       <label>Précision sur le délai (facultatif)</label>
       <input id="fDelai" placeholder="Sur deux jours, de préférence en fin de semaine">
       <label>Précisions / conditions particulières</label>
@@ -940,11 +941,12 @@
        propose déjà. Il n'apparaît donc que là où cette feuille n'existe pas,
        c'est-à-dire sur un ordinateur. -->
   <div class="so-f">
-    <button class="btn hide" id="poImpr" style="flex:1" onclick="imprimerVu()">Imprimer</button>
+    <button class="btn sec hide" id="poImpr" style="flex:1" onclick="imprimerVu()">Imprimer</button>
+    <button class="btn sec" id="poTel" style="flex:1" onclick="telechargerVu(this)">Télécharger</button>
     <button class="btn" style="flex:1.2" onclick="partagerVu(this)">Partager</button>
   </div>
   <div class="mini" id="poAide" style="padding:0 14px 12px;margin:0;text-align:center">
-    Enregistre le devis dans Fichiers, l'imprime ou l'envoie.
+    Télécharge le devis sur cet appareil, l'imprime ou l'envoie.
   </div>
 </div>
 
@@ -1180,11 +1182,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=76"></script>
-<script src="jspdf.umd.min.js?v=76"></script>
-<script src="police.js?v=76"></script>
-<script src="logo.js?v=76"></script>
-<script src="pdf.js?v=76"></script>
-<script src="app.js?v=76"></script>
+<script src="config.js?v=77"></script>
+<script src="jspdf.umd.min.js?v=77"></script>
+<script src="police.js?v=77"></script>
+<script src="logo.js?v=77"></script>
+<script src="pdf.js?v=77"></script>
+<script src="app.js?v=77"></script>
 </body>
 </html>

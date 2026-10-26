@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v76';
+var VERSION_APP = 'v77';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -799,14 +799,15 @@ function suivant(){
       var ch = $('fPassages4'); if(ch){ ch.focus(); }
       return erreur('Combien de passages par mois ? Le devis doit être mensualisé.');
     }
-    // La date d'intervention commande le planning : sans elle, le chantier
-    // naîtrait sans jour et personne ne le verrait venir.
+    /* La date d'intervention n'est plus exigée (25 octobre 2026). Tous les
+       clients ne savent pas, au moment du devis, quand ils veulent qu'on
+       vienne — et un devis ne doit pas attendre cette réponse pour exister.
+       Sans elle, le bureau pose le chantier à partir d'aujourd'hui, et le
+       devis imprimé n'annonce simplement aucune date.
+       Une date PASSÉE reste refusée : ce n'est pas une absence de réponse,
+       c'est une faute de frappe. */
     var dOk = val('fDate');
-    if(!dOk){
-      var cd = $('fDate'); if(cd) cd.focus();
-      return erreur('À partir de quand l\'intervention peut-elle commencer ?');
-    }
-    if(dOk < isoJour()){
+    if(dOk && dOk < isoJour()){
       var cd2 = $('fDate'); if(cd2) cd2.focus();
       return erreur('La date d\'intervention est déjà passée.');
     }
@@ -3131,6 +3132,45 @@ function partager(enr){
   a.href=url; a.download=enr.nomFichier; document.body.appendChild(a); a.click();
   setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 4000);
 }
+/* Télécharger : le fichier descend sur l'appareil, là où il range ses
+   téléchargements. C'est le geste que réclame un ordinateur, où la feuille de
+   partage du système n'existe pas ou n'enregistre rien.
+
+   Sur iPhone et iPad, un lien de téléchargement ouvre le PDF dans une
+   visionneuse au lieu de l'enregistrer : Safari ne sait pas faire autrement.
+   On y passe donc par la feuille de partage, qui offre « Enregistrer dans
+   Fichiers » — c'est le même geste pour celui qui tient le téléphone, et
+   c'est le seul qui aboutisse à un fichier gardé. */
+function estApple(){
+  try{
+    var ua = navigator.userAgent || '';
+    if(/iPad|iPhone|iPod/.test(ua)) return true;
+    /* Un iPad récent se présente comme un Mac : seul le tactile le trahit. Un
+       vrai Mac, lui, télécharge très bien. */
+    return /Mac/.test(ua) && Number(navigator.maxTouchPoints) > 1;
+  }catch(e){ return false; }
+}
+function telecharger(enr){
+  if(!enr || !enr.pdf) return;
+  tracer('PDF TELECHARGE', enr.nomFichier || '', enr.numero);
+  var blob = b64versBlob(enr.pdf);
+  var nom = enr.nomFichier || ('Devis ' + (enr.numero || '') + '.pdf');
+  if(estApple()){
+    var f = null;
+    try{ f = new File([blob], nom, {type:'application/pdf'}); }catch(e){}
+    if(f && navigator.canShare && navigator.canShare({files:[f]})){
+      navigator.share({files:[f], title:'Devis ' + (enr.numero || '')})
+        .catch(function(){});
+      return;
+    }
+  }
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = nom;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} a.remove(); }, 4000);
+}
+
 /* ====================== VOIR LE DEVIS ======================
    Le PDF s'ouvre dans l'application, en plein écran : le commercial le montre
    au client sans rien télécharger ni quitter l'outil. C'est de là qu'on
@@ -3257,6 +3297,14 @@ function voirPdfId(id, btn){
   DB.get(id).then(function(e){ ouvrirPdf(e); if(btn) setTimeout(function(){ libere(btn); }, 400); },
                   function(){ if(btn) libere(btn); });
 }
+/* Enregistrer sur l'appareil le devis ouvert à l'écran. */
+function telechargerVu(btn){
+  if(!PDF_VU) return;
+  if(btn) occuper(btn, '…');
+  telecharger(PDF_VU);
+  if(btn) setTimeout(function(){ libere(btn); }, 600);
+}
+
 /* Envoyer : la feuille de partage du système — mail, messagerie, AirDrop. */
 function partagerVu(btn){
   if(!PDF_VU) return;
