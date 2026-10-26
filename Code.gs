@@ -616,7 +616,12 @@ var CATALOGUE_DEFAUT_ = [
   ['Finitions générales et livraison', 'Contrôle qualité et reprises générales', '', 'forfait', 10, 10, 'PONCTUEL', 'OUI', 'REF-0014', 'CHANTIER,REMISE'],
   ['Bureaux et espaces de travail', 'Nettoyage et désinfection des bureaux, tables, chaises et points de contact', '', 'bureau(x)', 2, 20, 'PONCTUEL', 'OUI', 'REF-0016', 'ENTRETIEN'],
   ['Bureaux et espaces de travail', 'Dépoussiérage et suppression des traces sur matériel informatique, casiers et étagères', '', 'bureau(x)', 1, 20, 'PONCTUEL', 'OUI', 'REF-0017', 'ENTRETIEN'],
-  ['Bureaux et espaces de travail', 'Dépoussiérage des lustres et luminaires', '', 'forfait', 6.20, 20, 'PONCTUEL', 'OUI', 'REF-0018', 'ENTRETIEN'],
+  /* REF-0018, « Dépoussiérage des lustres et luminaires » à 6,20 € en forfait,
+     a été RETIRÉE le 26 octobre 2026 à la demande de Simon. Elle venait du
+     devis type d'entretien et il l'avait d'abord gardée à ce prix, le
+     12 octobre ; il ne la vend plus. Comme REF-0019 et REF-0035 avant elle,
+     **sa référence ne se réattribue jamais** : un devis déjà établi la porte,
+     et la réemployer changerait le sens d'un devis signé. */
   ['Cuisine et espace repas', 'Nettoyage et désinfection des surfaces extérieures', '', 'forfait', 4, 20, 'PONCTUEL', 'OUI', 'REF-0041', 'ENTRETIEN'],
   ['Cuisine et espace repas', 'Désinfection des ustensiles de cuisine et du plan de travail', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0020', 'ENTRETIEN'],
   ['Cuisine et espace repas', 'Nettoyage des micro-ondes : points de contact extérieurs et intérieur', '', 'forfait', 1.50, 20, 'PONCTUEL', 'OUI', 'REF-0021', 'ENTRETIEN'],

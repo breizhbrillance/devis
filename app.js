@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v77';
+var VERSION_APP = 'v78';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -755,7 +755,10 @@ function etape(n){
   majBandeauModif();            // le rappel ne suit que le parcours du devis
   if(n===1) majType();
   if(n<=2) majBarre();          // le total du bas suit le devis en cours, pas le précédent
-  if(n===3) rendreLignes();
+  /* L'objet se pose aussi en arrivant sur les prestations : un brouillon
+     commencé avant cette version, ou repris sans titre, n'a pas à sortir sous
+     un « DEVIS » nu. */
+  if(n===3){ poserObjet(); rendreLignes(); }
   if(n===4){
     ecranEtat(); ecranRemise(); majOrigine(); calculer(); majApercuSignature();
     // le calendrier ne propose pas de date déjà passée
@@ -1174,6 +1177,7 @@ function choisirNature(n){
   if(n !== 'ENTRETIEN' && n !== 'VITRERIE') PASSAGES = 0;
   var retirees = purgerSelonNature();
   majNature();
+  poserObjet();
   majKm();
   if(ETAPE === 3) rendreLignes();
   if(retirees) majBarre();
@@ -1291,6 +1295,35 @@ function libelleNature(n){
   if(n === 'REMISE')    return 'Remise en état';
   return 'Nettoyage de fin de chantier';
 }
+/* ====================== L'OBJET DU DEVIS ======================
+
+   L'objet s'imprime en titre, tout en haut : « DEVIS — ENTRETIEN DES LOCAUX ».
+   Le commercial le tapait à la main, devant le client ; il l'oubliait parfois,
+   et le devis sortait alors sous un titre nu. Depuis le 26 octobre 2026 il se
+   remplit tout seul, à partir de la nature choisie — c'est la même phrase que
+   celle du classeur et du planning, donc le devis, le tableau du gérant et la
+   fiche du salarié disent tous la même chose.
+
+   Il reste modifiable : un commercial qui veut préciser « Nettoyage maison fin
+   de chantier » le fait. La règle est alors simple et tient en une ligne : on
+   ne remplace QUE le texte que l'application a posé elle-même. Dès qu'il a
+   écrit quelque chose, changer la nature ne l'efface plus. */
+function objetAuto(){ return NATURE ? libelleNature(NATURE) : ''; }
+function estObjetAuto(t){
+  t = String(t || '').trim().toLowerCase();
+  if(!t) return true;                       // vide : à nous
+  return ['ENTRETIEN','VITRERIE','FACADE','REMISE','CHANTIER']
+    .some(function(n){ return libelleNature(n).toLowerCase() === t; });
+}
+function poserObjet(){
+  var e = $('fObjet');
+  if(!e) return;
+  if(!estObjetAuto(e.value)) return;        // le commercial a écrit : on se tait
+  var neuf = objetAuto();
+  if(String(e.value || '') === neuf) return;
+  e.value = neuf;
+}
+
 function majType(){
   var pro = (TYPE === 'PRO');
   $('chPRO').classList.toggle('on', pro);
@@ -5010,7 +5043,6 @@ function nouveauDevis(){
   cacherSugg();
   ['cSociete','cSiret','cTva','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate']
     .forEach(function(id){ if($(id)) $(id).value=''; });
-  $('fObjet').value = '';
   $('fEnvoi').checked = false;
   $('mSiret').textContent = 'Le n° de TVA se complète tout seul à partir du SIRET.';
   effacerSignature();
