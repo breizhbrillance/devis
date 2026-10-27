@@ -153,6 +153,10 @@
   #sigOverlay{position:fixed;inset:0;z-index:60;background:#fff;display:flex;flex-direction:column;
     padding:calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom))}
   #sigOverlay.hide{display:none}
+  #arOverlay{position:fixed;inset:0;z-index:62;background:var(--bg);overflow:auto;
+    -webkit-overflow-scrolling:touch;
+    padding:calc(10px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom))}
+  #arOverlay.hide{display:none}
   #pdfOverlay{position:fixed;inset:0;z-index:61;background:var(--bg);display:flex;flex-direction:column;
     padding:calc(10px + env(safe-area-inset-top)) 12px calc(10px + env(safe-area-inset-bottom))}
   #pdfOverlay.hide{display:none}
@@ -813,6 +817,20 @@
       <div id="rappels" class="hide"></div>
       <div id="liste"></div>
     </div>
+    <!-- Ce que le bureau a gardé. « Mes devis » ne lisait que la mémoire du
+         téléphone : un appareil neuf ou un cache vidé laissait le commercial
+         devant une liste vide alors que le classeur avait tout. -->
+    <div class="card">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">
+        <h2 style="flex:1;margin:0">Devis du bureau</h2>
+        <button class="btn sec sm" id="bArch" onclick="chargerArchive(0, this)">Actualiser</button>
+      </div>
+      <div class="mini" style="margin-top:0" id="arAide">Tes devis tels que le bureau les a
+        gardés, même ceux faits sur un autre téléphone.</div>
+      <div id="arListe"></div>
+      <button class="btn sec" id="bArchPlus" style="margin-top:10px"
+              onclick="chargerArchive(120, this)">Remonter plus loin</button>
+    </div>
     <button class="btn" onclick="nouveauDevis()">Nouveau devis</button>
     <!-- La prospection téléphonique vit à côté des devis, pas dedans : c'est le
          même commercial, le même téléphone, mais pas le même moment. Elle
@@ -938,6 +956,20 @@
 <!-- SIGNATURE PLEIN ÉCRAN -->
 <!-- Le devis à l'écran, dans l'application : rien à télécharger pour le
      montrer au client. -->
+<!-- La fiche d'un devis du bureau. Par-dessus l'écran plutôt que dans le
+     parcours : elle ne doit rien changer aux étapes du devis en cours. -->
+<div id="arOverlay" class="hide">
+  <div class="so-h">
+    <div>
+      <b>Devis du bureau</b>
+      <div id="arNum"></div>
+    </div>
+    <button class="btn sec sm" onclick="fermerArchive()">Fermer</button>
+  </div>
+  <div id="arErr" class="err hide"></div>
+  <div id="arCorps"></div>
+</div>
+
 <div id="pdfOverlay" class="hide">
   <div class="so-h">
     <div>
@@ -1194,11 +1226,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=79"></script>
-<script src="jspdf.umd.min.js?v=79"></script>
-<script src="police.js?v=79"></script>
-<script src="logo.js?v=79"></script>
-<script src="pdf.js?v=79"></script>
-<script src="app.js?v=79"></script>
+<script src="config.js?v=80"></script>
+<script src="jspdf.umd.min.js?v=80"></script>
+<script src="police.js?v=80"></script>
+<script src="logo.js?v=80"></script>
+<script src="pdf.js?v=80"></script>
+<script src="app.js?v=80"></script>
 </body>
 </html>

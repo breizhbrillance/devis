@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v79';
+var VERSION_APP = 'v80';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -335,6 +335,7 @@ function deconnexion(){
            'Se déconnecter').then(function(oui){
     if(!oui) return;
     tracer('DECONNEXION', '');
+    oublierArchive();
     session(null);
     ecranConnexion('');
   });
@@ -344,6 +345,7 @@ function reidentifier(raison){
   // On ne coupe que pendant la saisie d'un devis (prestations et validation) :
   // partout ailleurs, y compris « Mes devis », le commercial doit être prévenu.
   if(ETAPE === 3 || ETAPE === 4) return;
+  oublierArchive();
   session(null);
   ecranConnexion(raison + ' Saisis de nouveau ton nom et ton code.');
 }
@@ -3590,6 +3592,10 @@ function ouvrirHistorique(){
   $('hTitre').textContent='Mes devis';
   var moi = session();
   $('quiSuisJe').textContent = (moi && moi.nom) || '—';
+  /* Les devis du bureau : ce qui est déjà en cache s'affiche tout de suite, et
+     un appel les rafraîchit sans bloquer l'écran. */
+  archiveRelue();
+  if(navigator.onLine) chargerArchive(0, $('bArch'));
   var m=$('majCat'); if(m && CFG && CFG.maj) m.textContent = new Date(CFG.maj).toLocaleDateString('fr-FR');
   rendreHistorique(); window.scrollTo(0,0);
 }
@@ -3597,6 +3603,15 @@ function rendreHistorique(){
   DB.tous().then(function(l){
     l.sort(function(a,b){ return b.cree-a.cree; });
     peindreRappels(l);
+    /* Ce que l'appareil porte déjà : la liste du bureau s'en sert pour ne pas
+       afficher deux fois le même devis. */
+    NUM_LOCAUX = {};
+    l.forEach(function(e){
+      [e.numero, e.numeroOrigine, e.numeroPdf].forEach(function(n){
+        if(n) NUM_LOCAUX[String(n)] = 1;
+      });
+    });
+    rendreArchive();
     if(!l.length){ $('liste').innerHTML='<div class="empty">Aucun devis pour le moment.</div>'; return; }
     $('liste').innerHTML = l.slice(0,100).map(function(e){
       var d = new Date(e.cree);
@@ -3792,6 +3807,13 @@ function dupliquer(id, btn){
   if(btn) occuper(btn, '');
   DB.get(id).then(function(e){
     if(btn) libere(btn);
+    dupliquerEnr(e);
+  });
+}
+
+/* Le même geste, que le devis vienne de l'appareil ou du bureau. */
+function dupliquerEnr(e){
+  (function(){
     if(!e || !e.devis) return;
     var d = e.devis, c = d.client || {};
     nouveauDevis();
@@ -3834,6 +3856,282 @@ function dupliquer(id, btn){
     sauverBrouillon();
     etape(2);
     erreur('');
+  })();
+}
+
+/* ====================== LES DEVIS GARDÉS PAR LE BUREAU ======================
+   « Mes devis » ne lisait que la mémoire du téléphone. Un appareil neuf, un
+   cache vidé, ou simplement la purge des trente jours, et le commercial se
+   retrouvait devant une liste vide alors que le classeur, lui, avait tout
+   gardé. Cette liste-ci vient du bureau : ses devis des douze derniers mois,
+   les siens seulement, qu'ils aient été faits sur ce téléphone ou sur un
+   autre. Il les consulte, lit le PDF, pose le résultat et les duplique ;
+   modifier et signer restent à l'appareil qui porte le devis, sinon deux
+   téléphones se marcheraient dessus. */
+var ARCH = [];                // les devis relus dans le classeur
+var ARCH_MOIS = 12;           // la profondeur du dernier chargement
+var ARCH_MAJ = 0;             // quand il date
+var ARCH_NUM = '';            // le devis ouvert dans la fiche
+var NUM_LOCAUX = {};          // ce que l'appareil porte déjà, par numéro
+
+function archiveRelue(){
+  var a = lsj('archive');
+  if(!a || !a.devis) return;
+  ARCH = a.devis;
+  ARCH_MOIS = Number(a.mois) || 12;
+  ARCH_MAJ = Number(a.maj) || 0;
+}
+function archiveRangee(){
+  try{ lsj('archive', {devis:ARCH, mois:ARCH_MOIS, maj:ARCH_MAJ}); }catch(e){}
+}
+/* La liste du bureau est celle d'un commercial : elle quitte l'appareil avec
+   lui, sinon le suivant la trouverait en ouvrant « Mes devis ». Les devis
+   enregistrés sur l'appareil, eux, restent : ils doivent encore partir. */
+function oublierArchive(){
+  ARCH = []; ARCH_MOIS = 12; ARCH_MAJ = 0; ARCH_NUM = '';
+  try{ lsj('archive', null); }catch(e){}
+  var z = $('arListe'); if(z) z.innerHTML = '';
+}
+function archiveDe(num){
+  for(var i = 0; i < ARCH.length; i++){ if(ARCH[i].numero === num) return ARCH[i]; }
+  return null;
+}
+
+function chargerArchive(mois, btn){
+  var moi = session();
+  if(!moi) return;
+  if(!navigator.onLine){
+    if(btn) libere(btn);
+    return erreur('Hors connexion : tes devis du bureau s\'afficheront au retour du réseau.');
+  }
+  var m = Number(mois) || ARCH_MOIS || 12;
+  if(btn) occuper(btn, 'Chargement…');
+  poster({action:'mesDevis', nom:moi.nom, code:moi.code, appareil:APPAREIL, mois:m}, 40000)
+    .then(function(r){
+      if(btn) libere(btn);
+      if(!r || !r.ok){
+        if(r && r.refus) return reidentifier('Ton accès a changé côté bureau.');
+        return erreur((r && r.erreur) ? String(r.erreur) : 'Le bureau n\'a pas répondu.');
+      }
+      ARCH = r.devis || [];
+      ARCH_MOIS = Number(r.mois) || m;
+      ARCH_MAJ = Number(r.maj) || Date.now();
+      archiveRangee();
+      erreur('');
+      rendreArchive();
+    }, function(){
+      if(btn) libere(btn);
+      erreur('Le bureau n\'a pas répondu. Réessaie dans un instant.');
+    });
+}
+
+function badgeArchive(d){
+  var s = String(d.statut || '').toUpperCase();
+  if(s === 'SIGNE')      return '<span class="vb vb-s">SIGNÉ</span>';
+  if(s === 'REFUSE')     return '<span class="vb vb-x">REFUSÉ</span>';
+  if(s === 'A RELANCER') return '<span class="vb vb-r">À RELANCER</span>';
+  return '<span class="vb vb-a">À RENSEIGNER</span>';
+}
+
+function rendreArchive(){
+  var z = $('arListe');
+  if(!z) return;
+  var a = $('arAide');
+  if(a){
+    a.textContent = ARCH_MAJ
+      ? 'Relu dans le classeur le ' + jjmmaa(isoJour(new Date(ARCH_MAJ))) +
+        ' · ' + ARCH_MOIS + ' derniers mois'
+      : 'Tes devis tels que le bureau les a gardés, même ceux faits sur un autre téléphone.';
+  }
+  var p = $('bArchPlus');
+  if(p) p.classList.toggle('hide', ARCH_MOIS >= 120);
+  /* Un devis déjà sur l'appareil ne se montre pas deux fois : c'est la version
+     locale qui compte, c'est elle qui porte le PDF et qui se modifie. */
+  var l = ARCH.filter(function(d){
+    if(NUM_LOCAUX[d.numero]) return false;
+    if(d.numeroOrigine && NUM_LOCAUX[d.numeroOrigine]) return false;
+    return true;
+  });
+  if(!l.length){
+    z.innerHTML = '<div class="empty">' + (ARCH.length
+      ? 'Tous tes devis du bureau sont déjà sur cet appareil.'
+      : 'Rien reçu du bureau pour l\'instant.') + '</div>';
+    return;
+  }
+  z.innerHTML = l.slice(0, 200).map(function(d){
+    var qui = d.client || d.contact || '—';
+    return '<div class="hist"><div class="i">' +
+      '<b>' + badgeArchive(d) + ech(qui) + '</b>' +
+      '<span>' + ech(d.numero) + ' · ' + jjmmaa(d.date) + ' · ' + eur(d.ttc) + ' TTC' +
+      (d.ville ? ' · ' + ech(d.ville) : '') +
+      (d.relance ? ' · relance le ' + jjmmaa(d.relance) : '') +
+      (d.motif ? ' · ' + ech(d.motif) : '') + '</span></div>' +
+      '<div class="acts">' +
+      '<button class="btn sec sm" onclick="ficheArchive(\'' +
+        encodeURIComponent(d.numero) + '\')">Ouvrir</button>' +
+      '</div></div>';
+  }).join('');
+}
+
+/* ---- la fiche d'un devis du bureau ---- */
+function erreurArchive(t){
+  var e = $('arErr');
+  if(!e) return;
+  e.textContent = String(t || '');
+  e.classList.toggle('hide', !t);
+}
+
+function ficheArchive(num){
+  var d = archiveDe(decodeURIComponent(num));
+  if(!d) return;
+  ARCH_NUM = d.numero;
+  erreurArchive('');
+  peindreFicheArchive(d);
+  $('arOverlay').classList.remove('hide');
+  window.scrollTo(0,0);
+}
+function fermerArchive(){
+  $('arOverlay').classList.add('hide');
+  ARCH_NUM = '';
+  erreurArchive('');
+}
+
+function peindreFicheArchive(d){
+  $('arNum').textContent = d.numero;
+  $('arCorps').innerHTML =
+    '<div class="card">' +
+      '<div style="display:flex;gap:10px;align-items:baseline">' +
+        '<b style="flex:1;font-size:17px">' + ech(d.client || d.contact || '—') + '</b>' +
+        badgeArchive(d) +
+      '</div>' +
+      '<div class="mini" style="margin-top:6px">' + jjmmaa(d.date) +
+        (d.ville ? ' · ' + ech([d.cp, d.ville].filter(Boolean).join(' ')) : '') +
+        (d.validite ? ' · valable jusqu\'au ' + jjmmaa(d.validite) : '') + '</div>' +
+      (d.objet ? '<div class="mini">' + ech(d.objet) + '</div>' : '') +
+      (d.numeroOrigine ? '<div class="mini">Avant signature : ' + ech(d.numeroOrigine) + '</div>' : '') +
+      '<div class="ch" style="margin-top:10px"><span style="color:var(--mut)">Total HT</span><b>' +
+        eur(d.ht) + '</b></div>' +
+      (d.mensuel ? '<div class="ch"><span style="color:var(--mut)">dont mensuel HT</span><b>' +
+        eur(d.mensuel) + '</b></div>' : '') +
+      '<div class="ch gros"><span>Total TTC</span><span>' + eur(d.ttc) + '</span></div>' +
+      (d.note ? '<div class="mini" style="margin-top:8px">Ta note : ' + ech(d.note) + '</div>' : '') +
+    '</div>' +
+
+    '<div class="card">' +
+      '<h2>Le devis</h2>' +
+      '<div class="mini" style="margin-top:0">' + (d.pdf
+        ? 'Le PDF est archivé au bureau. Le charger permet de le lire, de l\'enregistrer ' +
+          'sur cet appareil ou de le renvoyer au client.'
+        : 'Aucun PDF archivé pour ce devis.') + '</div>' +
+      (d.pdf ? '<button class="btn sec" style="margin-top:10px" onclick="pdfArchive(this)">' +
+        'Charger le PDF</button>' : '') +
+      '<button class="btn sec" style="margin-top:8px" onclick="dupliquerArchive(this)">' +
+        'Dupliquer ce devis</button>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<h2>Résultat du rendez-vous</h2>' +
+      '<div class="mini" style="margin-top:0">Ce que tu poses ici part directement au ' +
+        'bureau et remplace ce qui y était inscrit.</div>' +
+      '<button class="choix" onclick="verdictArchive(\'SIGNE\')"><b>Signé</b></button>' +
+      '<button class="choix" onclick="verdictArchive(\'RELANCE\')"><b>À relancer</b>' +
+        '<span>Choisis la date ci-dessous.</span></button>' +
+      '<button class="choix" onclick="verdictArchive(\'REFUSE\')"><b>Refusé</b>' +
+        '<span>Précise la raison ci-dessous.</span></button>' +
+      '<label>Date de relance</label>' +
+      '<input id="arRelance" type="date" value="' + ech(d.relance || '') + '">' +
+      '<label>Raison du refus</label>' +
+      '<input id="arMotif" placeholder="Trop cher, concurrent…" value="' + ech(d.motif || '') + '">' +
+    '</div>';
+}
+
+function pdfArchive(btn){
+  var d = archiveDe(ARCH_NUM);
+  if(!d) return;
+  if(!navigator.onLine) return erreurArchive('Hors connexion : le PDF est chez le bureau.');
+  var moi = session();
+  if(!moi) return;
+  erreurArchive('');
+  if(btn) occuper(btn, 'Chargement…');
+  poster({action:'devisArchive', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+          numero:d.numero, pdf:1}, 60000)
+    .then(function(r){
+      if(btn) libere(btn);
+      if(!r || !r.ok) return erreurArchive((r && r.erreur) ? String(r.erreur) : 'Le bureau n\'a pas répondu.');
+      if(!r.pdf) return erreurArchive(r.erreurPdf || 'Aucun PDF archivé pour ce devis.');
+      tracer('PDF DU BUREAU CHARGE', d.numero, d.numero);
+      ouvrirPdf({numero: d.numero, pdf: r.pdf,
+                 nomFichier: r.nomFichier || ('Devis ' + d.numero + '.pdf'),
+                 devis: {numero: d.numero, signature: d.signe ? 1 : null}});
+    }, function(){
+      if(btn) libere(btn);
+      erreurArchive('Le bureau n\'a pas répondu. Réessaie dans un instant.');
+    });
+}
+
+function dupliquerArchive(btn){
+  var d = archiveDe(ARCH_NUM);
+  if(!d) return;
+  if(!navigator.onLine) return erreurArchive('Hors connexion : les lignes sont chez le bureau.');
+  var moi = session();
+  if(!moi) return;
+  erreurArchive('');
+  if(btn) occuper(btn, 'Chargement…');
+  poster({action:'devisArchive', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+          numero:d.numero}, 40000)
+    .then(function(r){
+      if(btn) libere(btn);
+      if(!r || !r.ok) return erreurArchive((r && r.erreur) ? String(r.erreur) : 'Le bureau n\'a pas répondu.');
+      fermerArchive();
+      dupliquerEnr({
+        numero: r.numero,
+        devis: {client: r.client || {}, lignes: r.lignes || [], nature: r.nature,
+                passages: r.passages, etatSite: r.etatSite, objet: r.objet,
+                delai: r.delai, notes: r.notes}
+      });
+    }, function(){
+      if(btn) libere(btn);
+      erreurArchive('Le bureau n\'a pas répondu. Réessaie dans un instant.');
+    });
+}
+
+function verdictArchive(type){
+  var d = archiveDe(ARCH_NUM);
+  if(!d) return;
+  var moi = session();
+  if(!moi) return;
+  var corps = {action:'statut', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+               numero:d.numero, verdict:type, quand:Date.now()};
+  if(type === 'RELANCE'){
+    corps.relance = val('arRelance');
+    if(!corps.relance) return erreurArchive('Choisis une date de relance.');
+  }
+  if(type === 'REFUSE'){
+    corps.motif = val('arMotif');
+    if(!corps.motif) return erreurArchive('Précise la raison du refus.');
+  }
+  if(!navigator.onLine)
+    return erreurArchive('Hors connexion : un résultat ne peut pas partir maintenant.');
+  erreurArchive('');
+  poster(corps, 40000).then(function(r){
+    if(!r || !r.ok) return erreurArchive((r && r.erreur) ? String(r.erreur) : 'Le bureau n\'a pas répondu.');
+    tracer('RESULTAT ' + type, d.numero + ' — devis du bureau', d.numero);
+    d.statut = type === 'SIGNE' ? 'SIGNE' : (type === 'RELANCE' ? 'A RELANCER' : 'REFUSE');
+    d.signe  = (type === 'SIGNE');
+    d.motif  = corps.motif || '';
+    d.relance = corps.relance || '';
+    /* Signer change le numéro côté bureau : on reprend le neuf, sinon la fiche
+       parlerait d'un devis que le classeur ne connaît plus sous ce nom. */
+    if(r.numero && r.numero !== d.numero){
+      d.numeroOrigine = d.numeroOrigine || d.numero;
+      d.numero = r.numero;
+      ARCH_NUM = r.numero;
+    }
+    archiveRangee();
+    peindreFicheArchive(d);
+    rendreArchive();
+  }, function(){
+    erreurArchive('Le bureau n\'a pas répondu. Réessaie dans un instant.');
   });
 }
 

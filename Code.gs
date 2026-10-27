@@ -809,7 +809,8 @@ function doPost(e) {
                    'chantierNeuf', 'lotChantiers',
                    'rdvNeuf', 'monChantier',
                    'prospects', 'appel', 'historique',
-                   'facturation', 'facturer', 'facturesMois'];
+                   'facturation', 'facturer', 'facturesMois',
+                   'mesDevis', 'devisArchive'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -841,11 +842,15 @@ function doPost(e) {
          /* Facturer engage l'entreprise : ces trois actions sont au gérant
             seul. Un commercial qui les appelle se voit refusé, et le refus
             part au journal. */
-         'facturation', 'facturer', 'facturesMois']
+         'facturation', 'facturer', 'facturesMois',
+         'mesDevis', 'devisArchive']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
-           'prospects', 'appel', 'historique'];
+           'prospects', 'appel', 'historique',
+           /* Ses devis à lui, relus dans le classeur : l'action filtre sur
+              son nom, elle ne sait pas rendre ceux d'un autre. */
+           'mesDevis', 'devisArchive'];
     /* Le commercial qui fait aussi des chantiers lit son planning et pointe.
        On ne lui ouvre que ces deux actions, et seulement s'il figure vraiment
        parmi les prestataires : c'est la liste qui protège, pas l'écran. Et
@@ -895,6 +900,8 @@ function doPost(e) {
       lock.waitLock(30000);
       return reponse_(facturesDuMois_(d, com));
     }
+    if (d.action === 'mesDevis') return reponse_(mesDevis_(d, com));
+    if (d.action === 'devisArchive') return reponse_(devisArchive_(d, com));
     if (d.action === 'prospects') return reponse_(listeProspects_(d));
     if (d.action === 'historique') return reponse_(historiqueAppels_(d, com));
     /* Les résultats d'appel arrivent par lots : le commercial passe des heures
@@ -4284,6 +4291,144 @@ function tauxPrincipal_(devis) {
 function eur_(n) {
   var v = (Math.round((Number(n) || 0) * 100) / 100).toFixed(2).split('.');
   return v[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ',' + v[1] + ' €';
+}
+
+/* ====================== MES DEVIS, DEPUIS LE BUREAU ======================
+   L'écran « Mes devis » du commercial ne lisait que la mémoire du téléphone.
+   Un appareil neuf, un cache vidé, ou simplement la purge des trente jours, et
+   il n'avait plus rien sous les yeux alors que le classeur, lui, gardait tout.
+   Ces deux actions lui rendent SES devis — jamais ceux d'un autre — sans
+   jamais le laisser écrire par-dessus le travail fait sur l'autre appareil :
+   il consulte, il lit le PDF, il pose le résultat (par l'action « statut »,
+   déjà en place) et il duplique. Modifier et signer restent à l'appareil qui
+   porte le devis. */
+
+/** L'identifiant Drive caché dans un lien de fichier. */
+function idDrive_(url) {
+  var m = /[-\w]{25,}/.exec(String(url || ''));
+  return m ? m[0] : '';
+}
+
+/** La liste légère : de quoi peindre l'écran, pas un octet de plus. */
+function mesDevis_(d, com) {
+  var mois = Number(d.mois) || 12;
+  if (mois < 1) mois = 1;
+  if (mois > 120) mois = 120;
+  var depuis = new Date();
+  depuis.setMonth(depuis.getMonth() - mois);
+  depuis.setHours(0, 0, 0, 0);
+
+  var moi = normNom_(com.nom);
+  var tout = String(com.role || '') === 'ADMIN';
+  var out = [];
+  objetsDe_(SH.DEVIS).forEach(function (o) {
+    var num = String(o.NUMERO || '').trim();
+    if (!num) return;
+    if (!tout && normNom_(o.COMMERCIAL) !== moi) return;
+    var dt = o.DATE ? new Date(o.DATE) : null;
+    if (!dt || isNaN(dt.getTime()) || dt < depuis) return;
+    out.push({
+      numero: num,
+      numeroOrigine: String(o.NUMERO_ORIGINE || '').trim(),
+      date: isoJour_(dt),
+      commercial: String(o.COMMERCIAL || '').trim(),
+      client: String(o.CLIENT || ''),
+      contact: String(o.CONTACT || ''),
+      cp: String(o.CP || ''),
+      ville: String(o.VILLE || ''),
+      ht: Number(o.TOTAL_HT) || 0,
+      ttc: Number(o.TOTAL_TTC) || 0,
+      mensuel: Number(o.TOTAL_HT_MENSUEL) || 0,
+      statut: String(o.STATUT || '').toUpperCase() || 'REMIS',
+      signe: String(o.SIGNE || '').toUpperCase() === 'OUI',
+      motif: String(o.MOTIF_REFUS || ''),
+      relance: o.RELANCE_LE ? isoJour_(o.RELANCE_LE) : '',
+      note: String(o.NOTE_COMMERCIAL || ''),
+      objet: String(o.OBJET || ''),
+      nature: String(o.NATURE || ''),
+      validite: o.VALIDITE ? isoJour_(o.VALIDITE) : '',
+      pdf: String(o.LIEN_PDF || '').trim() ? true : false
+    });
+  });
+  out.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+  var tronque = out.length > 400;
+  if (tronque) out = out.slice(0, 400);
+  return { ok: true, devis: out, mois: mois, tronque: tronque, maj: Date.now() };
+}
+
+/** Le détail d'un devis : ses lignes pour le dupliquer, son PDF pour le lire. */
+function devisArchive_(d, com) {
+  var num = String(d.numero || '').trim();
+  if (!num) return { ok: false, erreur: 'numéro manquant' };
+
+  var cible = null;
+  objetsDe_(SH.DEVIS).forEach(function (o) {
+    var n = String(o.NUMERO || '').trim();
+    var a = String(o.NUMERO_ORIGINE || '').trim();
+    if (n === num || (a && a === num)) cible = o;
+  });
+  if (!cible) return { ok: false, erreur: 'devis introuvable' };
+
+  /* Les devis des autres ne regardent personne. Le refus part au journal :
+     une demande pareille n'arrive pas par hasard. */
+  if (String(com.role || '') !== 'ADMIN' && normNom_(cible.COMMERCIAL) !== normNom_(com.nom)) {
+    tracerServeur_(com.nom, 'DEVIS D UN AUTRE REFUSE', num, '', d.appareil || '');
+    return { ok: false, erreur: 'ce devis n\'est pas le vôtre' };
+  }
+
+  var vrai = String(cible.NUMERO || '').trim();
+  var lignes = [];
+  objetsDe_(SH.LIGNES).forEach(function (l) {
+    if (String(l.NUMERO || '').trim() !== vrai) return;
+    lignes.push({
+      categorie: String(l.CATEGORIE || ''), reference: String(l.REFERENCE || ''),
+      designation: String(l.DESIGNATION || ''), detail: String(l.DETAIL || ''),
+      qte: Number(l.QTE) || 0, unite: String(l.UNITE || ''),
+      pu: Number(l.PU_HT) || 0, rem: Number(l.REMISE_PCT) || 0,
+      type: String(l.TYPE || 'PONCTUEL'), tva: Number(l.TVA) || 0,
+      ordre: Number(l.ORDRE) || 0
+    });
+  });
+  lignes.sort(function (a, b) { return a.ordre - b.ordre; });
+
+  var p2a = cible.LOGEMENT_PLUS_2_ANS;
+  var res = {
+    ok: true, numero: vrai, lignes: lignes,
+    client: {
+      type: String(cible.TYPE_CLIENT || 'PRO').toUpperCase() === 'PART' ? 'PART' : 'PRO',
+      societe: String(cible.CLIENT || ''), siret: String(cible.SIRET_CLIENT || ''),
+      tva: String(cible.TVA_CLIENT || ''), contact: String(cible.CONTACT || ''),
+      tel: String(cible.TELEPHONE || ''), email: String(cible.EMAIL || ''),
+      adresse: String(cible.ADRESSE || ''), cp: String(cible.CP || ''),
+      ville: String(cible.VILLE || ''),
+      plus2ans: (p2a === '' || p2a === undefined || p2a === null)
+        ? null : (String(p2a).toUpperCase() === 'OUI')
+    },
+    objet: String(cible.OBJET || ''), nature: String(cible.NATURE || ''),
+    passages: Number(cible.PASSAGES_MOIS) || 0,
+    etatSite: String(cible.ETAT_SITE || 'NORMAL'),
+    delai: String(cible.DELAI || ''), notes: String(cible.NOTES || '')
+  };
+
+  /* Le PDF ne part que si on le demande : il pèse, et l'écran n'en a besoin
+     qu'au moment où le commercial veut le lire. Le classeur va le chercher sur
+     le Drive du gérant, dont le commercial n'a pas la clé — c'est pour cela
+     que le fichier passe par ici plutôt que par un lien. */
+  if (d.pdf) {
+    var id = idDrive_(cible.LIEN_PDF);
+    if (!id) {
+      res.erreurPdf = 'aucun PDF archivé pour ce devis';
+    } else {
+      try {
+        var f = DriveApp.getFileById(id);
+        res.pdf = Utilities.base64Encode(f.getBlob().getBytes());
+        res.nomFichier = f.getName();
+      } catch (ePdf) {
+        res.erreurPdf = 'le PDF archivé n\'a pas pu être lu';
+      }
+    }
+  }
+  return res;
 }
 
 /* ====================== LES COURRIELS ======================
