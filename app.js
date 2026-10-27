@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v78';
+var VERSION_APP = 'v79';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -1085,7 +1085,7 @@ function appliquerSugg(i){
     if(TYPE === 'PART' && NATURE === 'ENTRETIEN'){ NATURE = null; PASSAGES = 0; }
     majType(); majNature();
   }
-  ['Societe','Siret','Tva','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
+  ['Societe','Siret','Tva','Civ','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
     var v = c[k.toLowerCase()];
     if(v) $('c' + k).value = v;
   });
@@ -2876,7 +2876,7 @@ function lireClient(){
           societe: pro ? val('cSociete') : '',
           siret:   pro ? val('cSiret')   : '',
           tva:     pro ? val('cTva')     : '',
-          contact:val('cContact'),tel:val('cTel'),email:val('cEmail'),
+          civ:val('cCiv'),contact:val('cContact'),tel:val('cTel'),email:val('cEmail'),
           adresse:val('cAdresse'),cp:val('cCp'),ville:val('cVille')};
 }
 function sauverBrouillon(){
@@ -2922,7 +2922,7 @@ function restaurer(b){
   if(!NATURE) NATURE = 'CHANTIER';
   majType();
   majNature();
-  ['Societe','Siret','Tva','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
+  ['Societe','Siret','Tva','Civ','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
     $('c'+k).value = c[k.toLowerCase()]||''; });
   majKm();
   $('fObjet').value = b.objet||'';
@@ -3735,7 +3735,7 @@ function ouvrirModification(id, btn){
     PLUS2ANS = (c.plus2ans === true || c.plus2ans === false) ? c.plus2ans : null;
     majType();
     if(PLUS2ANS !== null) appliquerTaux(PLUS2ANS ? 10 : 20);
-    ['Societe','Siret','Tva','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
+    ['Societe','Siret','Tva','Civ','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
       $('c'+k).value = c[k.toLowerCase()] || '';
     });
     /* Les lignes telles qu'elles ont été chiffrées, prix compris. On retire la
@@ -3799,7 +3799,7 @@ function dupliquer(id, btn){
     PLUS2ANS = (c.plus2ans === true || c.plus2ans === false) ? c.plus2ans : null;
     majType();
     if(PLUS2ANS !== null) appliquerTaux(PLUS2ANS ? 10 : 20);
-    ['Societe','Siret','Tva','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
+    ['Societe','Siret','Tva','Civ','Contact','Tel','Email','Adresse','Cp','Ville'].forEach(function(k){
       $('c'+k).value = c[k.toLowerCase()] || '';
     });
     tracer('DEVIS DUPLIQUE', 'repris de ' + e.numero, e.numero);
@@ -5041,7 +5041,7 @@ function nouveauDevis(){
   GRP = {};
   PHOTO_ID = null;
   cacherSugg();
-  ['cSociete','cSiret','cTva','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate']
+  ['cSociete','cSiret','cTva','cCiv','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate']
     .forEach(function(id){ if($(id)) $(id).value=''; });
   $('fEnvoi').checked = false;
   $('mSiret').textContent = 'Le n° de TVA se complète tout seul à partir du SIRET.';

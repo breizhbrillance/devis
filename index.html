@@ -561,7 +561,18 @@
       <div class="mini" id="mSiret">Le n° de TVA se complète tout seul à partir du SIRET.</div>
     </div>
     <label id="lContact">Interlocuteur</label>
-    <input id="cContact" autocomplete="off" oninput="suggerer('con')" onfocus="suggerer('con')">
+    <div class="row" style="gap:8px">
+      <div style="max-width:92px;flex:none">
+        <select id="cCiv" onchange="sauverBrouillon()">
+          <option value="">—</option>
+          <option value="M">M.</option>
+          <option value="MME">Mme</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <input id="cContact" autocomplete="off" oninput="suggerer('con')" onfocus="suggerer('con')">
+      </div>
+    </div>
     <div id="suggCon" class="sugg hide"></div>
     <div class="row">
       <div><label>Téléphone</label><input id="cTel" type="tel" inputmode="tel"></div>
@@ -1183,11 +1194,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=78"></script>
-<script src="jspdf.umd.min.js?v=78"></script>
-<script src="police.js?v=78"></script>
-<script src="logo.js?v=78"></script>
-<script src="pdf.js?v=78"></script>
-<script src="app.js?v=78"></script>
+<script src="config.js?v=79"></script>
+<script src="jspdf.umd.min.js?v=79"></script>
+<script src="police.js?v=79"></script>
+<script src="logo.js?v=79"></script>
+<script src="pdf.js?v=79"></script>
+<script src="app.js?v=79"></script>
 </body>
 </html>

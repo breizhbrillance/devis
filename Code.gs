@@ -234,7 +234,7 @@ function initialiser() {
 
   creerOnglet_(ss, SH.REGLAGES, ['CLE', 'VALEUR', 'COMMENTAIRE']);
   creerOnglet_(ss, SH.CATALOGUE, ENTETES_CATALOGUE_);
-  creerOnglet_(ss, SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES']);
+  creerOnglet_(ss, SH.COMMERCIAUX, ENTETES_COMMERCIAUX_);
   creerOnglet_(ss, SH.PRESTATAIRES, ENTETES_PRESTATAIRES_);
   creerOnglet_(ss, SH.ADMINS, ENTETES_ADMINS_);
   creerOnglet_(ss, SH.CHANTIERS, ENTETES_CHANTIERS_);
@@ -280,6 +280,11 @@ function creerOnglet_(ss, nom, entetes) {
   }
   return sh;
 }
+
+/* Le TELEPHONE du commercial : c'est celui qui part dans le mot adresse au
+   client avec son devis, pour qu'il rappelle celui qui est venu chez lui.
+   Vide, c'est le numero de la societe (reglage societe_tel) qui sert. */
+var ENTETES_COMMERCIAUX_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES', 'TELEPHONE'];
 
 var ENTETES_DEVIS_ = [
   'NUMERO', 'DATE', 'COMMERCIAL', 'CLIENT', 'TYPE_CLIENT', 'SIRET_CLIENT', 'TVA_CLIENT',
@@ -379,7 +384,7 @@ function majStructure_() {
    [SH.RECURRENTS, ENTETES_RECURRENTS_],
    [SH.ADMINS, ENTETES_ADMINS_], [SH.COMMUNES, ENTETES_COMMUNES_],
    [SH.PROSPECTS, ENTETES_PROSPECTS_], [SH.APPELS, ENTETES_APPELS_],
-   [SH.COMMERCIAUX, ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES']]]
+   [SH.COMMERCIAUX, ENTETES_COMMERCIAUX_]]
     .forEach(function (o) {
       var sh2 = ss.getSheetByName(o[0]);
       if (!sh2 || sh2.getLastColumn() === 0) return;
@@ -1211,7 +1216,7 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
         subject: 'Devis ' + numero + ' révisé — ' + (reg.societe_nom || ''),
         name: String(reg.societe_nom || 'Devis'),
         replyTo: (com && com.email) || String(reg.societe_email || ''),
-        htmlBody: corpsMail_(devis, reg), attachments: pj
+        htmlBody: corpsMail_(devis, reg, com, true), attachments: pj
       }, reg);
     } else if (copie.length) {
       envoyerMail_({
@@ -1481,7 +1486,7 @@ function enregistrer_(d, com) {
         subject: 'Devis ' + devis.numero + ' — ' + (reg.societe_nom || ''),
         name: String(reg.societe_nom || 'Devis'),
         replyTo: com.email || String(reg.societe_email || ''),
-        htmlBody: corpsMail_(devis, reg), attachments: pj
+        htmlBody: corpsMail_(devis, reg, com), attachments: pj
       }, reg);
     } else if (copie.length) {
       envoyerMail_({
@@ -3757,6 +3762,7 @@ function lireCommerciaux_() {
   var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
     .map(function (x) { return String(x).trim().toUpperCase(); });
   var cIni = en.indexOf('INITIALES');
+  var cTel = en.indexOf('TELEPHONE');
   return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
     .filter(function (r) { return String(r[0]).trim() && String(r[3]).toUpperCase() !== 'NON'; })
     .map(function (r) {
@@ -3765,7 +3771,8 @@ function lireCommerciaux_() {
          Simon veut lire SLG sur ses devis — personne ne devine cela. */
       var ini = cIni >= 0 ? String(r[cIni] || '').trim() : '';
       return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(),
-               code: String(r[2] || '').trim(), initiales: initialesDe_(r[0], ini) };
+               code: String(r[2] || '').trim(), initiales: initialesDe_(r[0], ini),
+               tel: cTel >= 0 ? String(r[cTel] || '').trim() : '' };
     });
 }
 
@@ -4320,14 +4327,41 @@ function envoyerMail_(m, reg) {
   MailApp.sendEmail(o);
 }
 
-function corpsMail_(devis, reg) {
-  var d = new Date(devis.validite);
-  var fr = ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear();
-  return '<p>Bonjour ' + String((devis.client || {}).contact || '') + ',</p>' +
-    '<p>Veuillez trouver ci-joint le devis <strong>' + devis.numero + '</strong> d\'un montant de <strong>' +
-    eur_((devis.totaux || {}).ttc) + ' TTC</strong>, valable jusqu\'au ' + fr + '.</p>' +
-    '<p>Je reste à votre disposition.</p><p>' + devis.commercial + '<br>' +
-    String(reg.societe_nom || '') + '<br>' + String(reg.societe_tel || '') + '</p>';
+/* Caractères spéciaux neutralisés : un nom de client avec une esperluette ne
+   doit pas casser le courriel. */
+function echHtml_(t) {
+  return String(t === null || t === undefined ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* « Monsieur Le Guern », « Madame Le Guern », ou le nom seul quand la civilité
+   n'a pas été cochée sur place : jamais un « Monsieur » lancé au hasard. */
+function appelClient_(c) {
+  var n = String((c || {}).contact || '').trim();
+  if (!n) return '';
+  var civ = String((c || {}).civ || '').trim().toUpperCase();
+  if (civ === 'M') return 'Monsieur ' + n;
+  if (civ === 'MME') return 'Madame ' + n;
+  return n;
+}
+
+/* Le mot qui accompagne le devis. Il est signé par le commercial qui a fait le
+   chiffrage, avec SON téléphone (colonne TELEPHONE de l'onglet COMMERCIAUX) :
+   c'est lui que le client doit pouvoir rappeler. Pas de numéro renseigné pour
+   lui, c'est celui de la maison qui part. */
+function corpsMail_(devis, reg, com, revise) {
+  var qui = echHtml_(appelClient_(devis.client));
+  var tel = echHtml_(String((com && com.tel) || reg.societe_tel || '').trim());
+  return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1f2937">' +
+    '<p>Bonjour' + (qui ? ' ' + qui : '') + ',</p>' +
+    '<p>J\'espère que vous allez bien !</p>' +
+    '<p>Suite au chiffrage réalisé dernièrement, je vous transmets ci-joint le devis ' +
+    (revise ? 'corrigé ' : '') + 'correspondant à votre demande.</p>' +
+    '<p>Si vous avez des questions ou quoi que ce soit d\'autre, je reste disponible' +
+    (tel ? ' par téléphone au ' + tel : '') + '.</p>' +
+    '<p>Belle fin de journée,<br>Cordialement,</p>' +
+    '<p>' + echHtml_(devis.commercial) + ' — ' + echHtml_(reg.societe_nom) + '</p>' +
+    '</div>';
 }
 
 /* ====================== TEST DEPUIS L'ÉDITEUR ====================== */
