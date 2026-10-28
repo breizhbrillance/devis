@@ -158,6 +158,7 @@ function onOpen() {
     .addItem('5. Tester (devis fictif)', 'testerDevis')
     .addItem('6. Mettre à jour la structure du fichier', 'majStructure')
     .addItem('7. Charger la grille de prix', 'chargerGrillePrix')
+    .addItem('7 bis. Compléter le catalogue (ajouter les nouveautés)', 'completerCatalogue')
     .addItem('8. Purger le journal des actions', 'purgerJournal')
     .addItem('9. Mesurer la distance des communes', 'mesurerCommunes')
     .addSeparator()
@@ -688,6 +689,21 @@ var CATALOGUE_DEFAUT_ = [
   ['Nettoyage de façade', "Pulvérisation d'antimousse végétale, non-retour de mousse garanti 2 ans", '', 'm²', 3.90, 10, 'PONCTUEL', 'OUI', 'REF-0037', 'FACADE'],
   ['Nettoyage de façade', 'Forfait nacelle à la journée', '', 'journée(s)', 450, 10, 'PONCTUEL', 'OUI', 'REF-0038', 'FACADE'],
 
+  /* Les terrasses (28 octobre 2026). Elles se vendent avec la façade — même
+     chantier, même machine, même journée — et portent donc la même nature :
+     un seul devis peut couvrir le mur et le sol. Leur catégorie est à part
+     pour que le commercial les retrouve d'un coup d'œil dans la liste, et la
+     TVA est celle des travaux sur logement de plus de deux ans, comme la
+     façade. Le prix au m² est plus bas qu'en façade : on travaille au sol,
+     sans échafaudage ni nacelle. */
+  ['Nettoyage de terrasse', 'Nettoyage de terrasse au nettoyeur haute pression',
+   'Mise en sécurité de la zone • protection des abords et des plantations • pulvérisation du nettoyant sans chlore • passage du nettoyeur réglé selon le support • rinçage et remise en ordre du chantier',
+   'm²', 8, 10, 'PONCTUEL', 'OUI', 'REF-0044', 'FACADE'],
+  ['Nettoyage de terrasse', "Pulvérisation d'antimousse végétale sur la terrasse", '',
+   'm²', 2.90, 10, 'PONCTUEL', 'OUI', 'REF-0045', 'FACADE'],
+  ['Nettoyage de terrasse', 'Imperméabilisation de la terrasse (traitement hydrofuge)', '',
+   'm²', 8, 10, 'PONCTUEL', 'OUI', 'REF-0046', 'FACADE'],
+
   /* La nacelle de la vitrerie (19 octobre 2026). Une verrière ou un pignon vitré
      se nettoient depuis la même machine qu'une façade, au même prix à la
      journée — mais Simon la veut dans les deux catégories, chacune sous son
@@ -701,6 +717,56 @@ var CATALOGUE_DEFAUT_ = [
 ];
 
 /** Remplace le contenu du CATALOGUE par la grille de prix de référence. */
+/* Les prestations de la grille que le classeur n'a pas encore, ajoutées à la
+   suite — et rien d'autre. « Charger la grille de prix » remplace tout : il
+   efface les lignes désactivées, qu'on garde exprès, et les prix que le gérant
+   a pu ajuster ici. Cette entrée-là ne touche à aucune ligne existante : elle
+   compare par REFERENCE et n'écrit que ce qui manque. C'est par elle que
+   passent les ajouts au catalogue. */
+function completerCatalogue() {
+  var ui = SpreadsheetApp.getUi();
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CATALOGUE);
+  if (!sh) return ui.alert('Onglet CATALOGUE introuvable. Lance d\'abord « 1. Initialiser le fichier ».');
+
+  var en = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cRef = en.indexOf('REFERENCE');
+  if (cRef < 0) return ui.alert('Le CATALOGUE n\'a pas de colonne REFERENCE.\n\n' +
+                                'Lance « 6. Mettre à jour la structure du fichier », puis réessaie.');
+
+  var deja = {};
+  if (sh.getLastRow() > 1) {
+    sh.getRange(2, cRef + 1, sh.getLastRow() - 1, 1).getValues().forEach(function (r) {
+      var v = String(r[0]).trim();
+      if (v) deja[v] = 1;
+    });
+  }
+
+  /* On écrit par nom de colonne : le classeur d'un ancien fichier peut avoir
+     ses colonnes dans un autre ordre, ou en porter d'autres. */
+  var manque = grilleComplete_().filter(function (l) {
+    return !deja[String(l[ENTETES_CATALOGUE_.indexOf('REFERENCE')]).trim()];
+  });
+  if (!manque.length) return ui.alert('Le catalogue est déjà complet : aucune prestation à ajouter.');
+
+  var large = Math.max(en.length, 1);
+  var rows = manque.map(function (l) {
+    return en.map(function (h) {
+      var i = ENTETES_CATALOGUE_.indexOf(h);
+      return i >= 0 ? l[i] : '';
+    });
+  });
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, large).setValues(rows);
+
+  var noms = manque.map(function (l) {
+    return '• ' + l[ENTETES_CATALOGUE_.indexOf('REFERENCE')] + ' — ' +
+           l[ENTETES_CATALOGUE_.indexOf('DESIGNATION')];
+  }).join('\n');
+  ui.alert(manque.length + ' prestation' + (manque.length > 1 ? 's ajoutées' : ' ajoutée') +
+           ' à la fin du catalogue :\n\n' + noms +
+           '\n\nAucune ligne existante n\'a été touchée.');
+}
+
 function chargerGrillePrix() {
   var ui = SpreadsheetApp.getUi();
   var rep = ui.alert('Remplacer le catalogue ?',
