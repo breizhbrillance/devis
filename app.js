@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v81';
+var VERSION_APP = 'v82';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -372,7 +372,10 @@ function rangerConfig(cfg){
   // La configuration d'un agent n'a pas de catalogue, et c'est voulu : elle
   // doit quand même être rangée, sinon il n'a ni nom de société ni texte
   // d'information.
-  if(cfg.role === 'PRESTATAIRE' || cfg.role === 'ADMIN'){
+  /* L'agent n'a pas de catalogue, et c'est voulu : sa configuration se range
+     telle quelle. Le gerant, lui, en a un depuis la v82 — il etablit ses
+     propres devis — alors il suit le meme chemin qu'un commercial. */
+  if(cfg.role === 'PRESTATAIRE' || (cfg.role === 'ADMIN' && !cfg.catalogue)){
     CFG = cfg;
     lsj('cfg', cfg);
     $('hSub').textContent = cfg.reglages.societe_nom || 'Chantiers';
@@ -459,7 +462,11 @@ function repondreConf(oui){
 var ECRANS = ['eCo','eAccord','e1','e2','e3','e4','e5','e6','e7','ePro','eAg1','eAg2','eAg3','eAd1','eAd2'];
 var ECRAN_VU = '';
 /* Les trois lieux de la barre du bas, et l'onglet qui s'allume sur chacun. */
-var ONGLET_ECRAN = { e1:'devis', e6:'liste', ePro:'phoning', eAg1:'planning' };
+var ONGLET_ECRAN = { e1:'devis', e6:'liste', ePro:'phoning', eAg1:'planning',
+                     /* Le tableau du gérant : depuis la v82 il établit des devis,
+                        il lui faut donc un chemin de retour qui ne soit pas une
+                        impasse au milieu d'une saisie. */
+                     eAd1:'tableau' };
 /* Où en était le devis en cours quand on l'a quitté pour les devis faits ou
    pour le phoning : l'onglet « Devis » y ramène au lieu de tout reprendre. */
 var ETAPE_DEVIS = 1;
@@ -480,7 +487,9 @@ function ongletsIci(){
   /* La barre n'a de sens que s'il y a un troisième lieu : la prospection, le
      planning de celui qui fait aussi des chantiers, ou les deux. Sans cela,
      deux onglets ne valent pas une barre. */
-  if(!(CFG && (CFG.prospection || CFG.planning))) return false;
+  /* Le gérant a toujours au moins deux lieux : son tableau et la saisie d'un
+     devis. La barre a donc toujours un sens pour lui. */
+  if(!estAdmin() && !(CFG && (CFG.prospection || CFG.planning))) return false;
   if(enModification()) return false;
   return !!ONGLET_ECRAN[ECRAN_VU];
 }
@@ -497,6 +506,10 @@ function majOnglets(){
      pas l'écran. */
   $('ongP').classList.toggle('hide', !(CFG && CFG.prospection));
   $('ongPl').classList.toggle('hide', !(CFG && CFG.planning));
+  /* L'onglet du tableau n'existe pas dans une page servie avant la v82 : on ne
+     tombe pas pour autant. */
+  var oT = $('ongT');
+  if(oT){ oT.classList.toggle('hide', !estAdmin()); oT.classList.toggle('on', ou === 'tableau'); }
   $('ongD').classList.toggle('on', ou === 'devis');
   $('ongL').classList.toggle('on', ou === 'liste');
   $('ongP').classList.toggle('on', ou === 'phoning');
@@ -3376,13 +3389,10 @@ var SYNC = false;
 function synchroniser(manuel, btn){
   // Un agent n'a pas de devis à envoyer : pour lui, se synchroniser veut dire
   // remonter ses pointages et rafraîchir son planning.
-  if(estAdmin()){
-    // Un admin n'a rien à déposer : se synchroniser, pour lui, c'est
-    // rafraîchir ce qu'il regarde.
-    if(btn) libere(btn);
-    envoyerJournal();
-    return navigator.onLine ? chargerTableau() : Promise.resolve();
-  }
+  /* Le gérant établit lui aussi des devis depuis la v82 : les siens partent
+     par le même chemin que ceux des commerciaux. On rafraîchit son tableau en
+     plus, puis on laisse l'envoi suivre son cours. */
+  if(estAdmin() && navigator.onLine) chargerTableau();
   if(estAgent()){
     if(btn) libere(btn);
     return pousserChantiers().then(function(){
@@ -3581,7 +3591,50 @@ function purger(){
   }, function(){});
 }
 
-/* ====================== HISTORIQUE ====================== */
+/* ====================== HISTORIQUE ======================
+   Le mois regardé. Un commercial qui cherche « le devis de septembre » ne doit
+   pas avoir à dérouler toute l'année : le choix vit le temps de la session,
+   et retombe sur « tous les mois » à la connexion suivante. */
+var MOIS_VU = '';                 // '' = tous, sinon 'AAAA-MM'
+var MOIS_LOCAUX = {};             // les mois des devis portés par l'appareil
+
+function moisDe(t){
+  var d = new Date(t);
+  if(isNaN(d.getTime())) return '';
+  return d.getFullYear() + '-' + ('0' + (d.getMonth()+1)).slice(-2);
+}
+var MOIS_NOM = ['janvier','février','mars','avril','mai','juin',
+                'juillet','août','septembre','octobre','novembre','décembre'];
+function libelleMois(m){
+  var p = /^(\d{4})-(\d{2})$/.exec(String(m||''));
+  if(!p) return '';
+  return MOIS_NOM[Number(p[2]) - 1] + ' ' + p[1];
+}
+function choisirMois(v){
+  MOIS_VU = String(v || '');
+  rendreHistorique();
+}
+/* Les mois où il s'est passé quelque chose, du plus récent au plus ancien :
+   proposer un mois vide n'aurait aucun sens. */
+function peindreMois(){
+  var s = $('hMois');
+  if(!s) return;
+  var vus = {};
+  Object.keys(MOIS_LOCAUX).forEach(function(m){ vus[m] = 1; });
+  ARCH.forEach(function(d){ var m = moisDe(d.date); if(m) vus[m] = 1; });
+  var l = Object.keys(vus).sort().reverse();
+  /* Le mois choisi reste proposé même s'il n'a plus rien : sinon le menu
+     changerait de valeur tout seul sous le doigt. */
+  if(MOIS_VU && l.indexOf(MOIS_VU) < 0) l.unshift(MOIS_VU);
+  s.innerHTML = '<option value="">Tous les mois</option>' +
+    l.map(function(m){
+      return '<option value="' + m + '"' + (m === MOIS_VU ? ' selected' : '') + '>' +
+             ech(libelleMois(m)) + '</option>';
+    }).join('');
+  /* Pas de « s.value = MOIS_VU » ici : l'attribut « selected » posé ci-dessus
+     fait déjà le travail, et le mois choisi figure toujours dans la liste. */
+  s.classList.toggle('hide', !l.length);
+}
 function ouvrirHistorique(){
   if(ETAPE >= 1 && ETAPE <= 5) ECRAN_AVANT = ETAPE;
   ETAPE=6; montrer('e6');
@@ -3611,8 +3664,18 @@ function rendreHistorique(){
         if(n) NUM_LOCAUX[String(n)] = 1;
       });
     });
+    MOIS_LOCAUX = {};
+    l.forEach(function(e){ var m = moisDe(e.cree); if(m) MOIS_LOCAUX[m] = 1; });
+    peindreMois();
     rendreArchive();
-    if(!l.length){ $('liste').innerHTML='<div class="empty">Aucun devis pour le moment.</div>'; return; }
+    var tout = l.length;
+    if(MOIS_VU) l = l.filter(function(e){ return moisDe(e.cree) === MOIS_VU; });
+    if(!l.length){
+      $('liste').innerHTML = '<div class="empty">' + (tout && MOIS_VU
+        ? 'Aucun devis sur cet appareil en ' + ech(libelleMois(MOIS_VU)) + '.'
+        : 'Aucun devis pour le moment.') + '</div>';
+      return;
+    }
     $('liste').innerHTML = l.slice(0,100).map(function(e){
       var d = new Date(e.cree);
       var cl = String((e.devis.client||{}).societe || (e.devis.client||{}).contact || '—');
@@ -3888,7 +3951,7 @@ function archiveRangee(){
    lui, sinon le suivant la trouverait en ouvrant « Mes devis ». Les devis
    enregistrés sur l'appareil, eux, restent : ils doivent encore partir. */
 function oublierArchive(){
-  ARCH = []; ARCH_MOIS = 12; ARCH_MAJ = 0; ARCH_NUM = '';
+  ARCH = []; ARCH_MOIS = 12; ARCH_MAJ = 0; ARCH_NUM = ''; MOIS_VU = ''; MOIS_LOCAUX = {};
   try{ lsj('archive', null); }catch(e){}
   var z = $('arListe'); if(z) z.innerHTML = '';
 }
@@ -3936,6 +3999,9 @@ function badgeArchive(d){
 function rendreArchive(){
   var z = $('arListe');
   if(!z) return;
+  /* Le menu des mois se refait ici aussi : la liste du bureau arrive après
+     celle de l'appareil, et elle apporte des mois que l'appareil n'a plus. */
+  peindreMois();
   var a = $('arAide');
   if(a){
     a.textContent = ARCH_MAJ
@@ -3950,12 +4016,17 @@ function rendreArchive(){
   var l = ARCH.filter(function(d){
     if(NUM_LOCAUX[d.numero]) return false;
     if(d.numeroOrigine && NUM_LOCAUX[d.numeroOrigine]) return false;
+    /* Le mois choisi vaut pour les deux listes : sans cela, filtrer n'en
+       cacherait que la moitié. */
+    if(MOIS_VU && moisDe(d.date) !== MOIS_VU) return false;
     return true;
   });
   if(!l.length){
-    z.innerHTML = '<div class="empty">' + (ARCH.length
-      ? 'Tous tes devis du bureau sont déjà sur cet appareil.'
-      : 'Rien reçu du bureau pour l\'instant.') + '</div>';
+    z.innerHTML = '<div class="empty">' + (MOIS_VU
+      ? 'Rien d\'autre au bureau en ' + ech(libelleMois(MOIS_VU)) + '.'
+      : (ARCH.length
+        ? 'Tous tes devis du bureau sont déjà sur cet appareil.'
+        : 'Rien reçu du bureau pour l\'instant.')) + '</div>';
     return;
   }
   z.innerHTML = l.slice(0, 200).map(function(d){
@@ -4167,6 +4238,63 @@ function ecranAdmin(){
   if(!TABLEAU) TABLEAU = lsj('tableau');
   peindreTableau();
   if(navigator.onLine) chargerTableau();
+}
+
+/* ---- le devis établi au bureau ----
+   Le gérant reçoit depuis la v82 le même catalogue qu'un commercial : le
+   parcours est le même, le devis est à son nom, et il part au classeur comme
+   n'importe quel autre. */
+function devisAdmin(btn){
+  if(CFG && CFG.catalogue){ erreur(''); return nouveauDevis(); }
+  /* Un gérant connecté avant la v82 porte une configuration sans catalogue :
+     on va le chercher plutôt que de le renvoyer se débrouiller. */
+  if(!navigator.onLine){
+    return erreur('Hors connexion : le catalogue n\'est pas encore sur cet appareil.');
+  }
+  var moi = session();
+  if(!moi) return;
+  if(btn) occuper(btn, 'Chargement du catalogue…');
+  poster({action:'config', nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
+    if(btn) libere(btn);
+    if(!d || !d.ok || !d.config || !d.config.catalogue){
+      return erreur('Le catalogue n\'est pas arrivé. Réessaie dans un instant.');
+    }
+    rangerConfig(d.config);
+    erreur('');
+    nouveauDevis();
+  }, function(){
+    if(btn) libere(btn);
+    erreur('Le bureau n\'a pas répondu. Réessaie dans un instant.');
+  });
+}
+
+/* Repartir d'un devis du tableau : même client, mêmes prestations, un devis
+   neuf. Les lignes sont au bureau et non sur cet appareil : on va les y
+   chercher. */
+function devisDepuisFiche(btn){
+  var f = AD_FICHE;
+  if(!f || f.type !== 'devis') return;
+  if(!(CFG && CFG.catalogue)) return erreur('Le catalogue n\'est pas encore arrivé.');
+  if(!navigator.onLine) return erreur('Hors connexion : les lignes de ce devis sont au bureau.');
+  var moi = session();
+  if(!moi) return;
+  if(btn) occuper(btn, 'Chargement…');
+  erreur('');
+  poster({action:'devisArchive', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+          numero:f.cle}, 40000)
+    .then(function(r){
+      if(btn) libere(btn);
+      if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : 'Le bureau n\'a pas répondu.');
+      dupliquerEnr({
+        numero: r.numero,
+        devis: {client: r.client || {}, lignes: r.lignes || [], nature: r.nature,
+                passages: r.passages, etatSite: r.etatSite, objet: r.objet,
+                delai: r.delai, notes: r.notes}
+      });
+    }, function(){
+      if(btn) libere(btn);
+      erreur('Le bureau n\'a pas répondu. Réessaie dans un instant.');
+    });
 }
 
 function chargerTableau(btn){
@@ -4514,6 +4642,11 @@ function peindreFicheDevis(d){
       '<input id="adMotif" placeholder="Trop cher, concurrent…" value="' + ech(d.motif||'') + '">' +
     '</div>' +
 
+    /* Repartir de ce devis : même client, mêmes prestations, un devis neuf à
+       son nom. Le client rappelle souvent pour une autre adresse ou une autre
+       date — le retaper serait du temps perdu. */
+    '<button class="btn sec" style="margin-bottom:10px" onclick="devisDepuisFiche(this)">' +
+      'Refaire un devis pour ce client</button>' +
     '<button class="btn sec" onclick="retourTableau()">Retour au tableau</button>';
 }
 
@@ -5458,6 +5591,32 @@ function prParId(id){
 }
 function prTels(p){ return (p && p.tels) || []; }
 
+/* Un devis qui part de la fiche du prospect : ses coordonnées sont déjà là,
+   les retaper serait du temps perdu et une occasion de faute. Le SIRET reste
+   vide — l'annuaire le complète dès que le nom est confirmé. */
+function prFaireDevis(){
+  var p = prCourant();
+  if(!p) return;
+  if(!(CFG && CFG.catalogue)){
+    return erreur('Le catalogue n\'est pas encore arrivé. Actualise, puis réessaie.');
+  }
+  var t = prTels(p)[0];
+  nouveauDevis();
+  TYPE = 'PRO';
+  majType();
+  $('cSociete').value = p.nom || '';
+  $('cContact').value = p.dirigeant || '';
+  $('cTel').value = (t && t.t) || '';
+  $('cEmail').value = p.mail || '';
+  $('cAdresse').value = p.adresse || '';
+  $('cVille').value = p.ville || '';
+  majKm();
+  tracer('DEVIS DEPUIS PROSPECT', p.nom || '', '');
+  sauverBrouillon();
+  etape(2);
+  window.scrollTo(0,0);
+}
+
 /* ---------------------- horaires ---------------------- */
 function prHm(n){ return (n/60|0) + ' h' + (n%60 ? ' ' + String(n%60).padStart(2,'0') : ''); }
 function prOuvert(p, quand){
@@ -5731,6 +5890,14 @@ function prRendreFiche(f){
     ? 'Rendez-vous le ' + ech(prQuandTexte(e.rdv))
     : 'Rendez-vous pris, date à caler') + '</li>');
   if(lignes.length) h += '<ul class="prHist">' + lignes.join('') + '</ul>';
+
+  /* Le gérant chiffre au bureau, souvent pendant l'appel : il part de la fiche
+     plutôt que de retaper le client. Les commerciaux, eux, chiffrent sur place
+     et n'ont pas besoin de ce raccourci au milieu de leur boucle d'appels. */
+  if(estAdmin()){
+    h += '<button class="btn sec sm" style="margin-top:12px;width:100%" ' +
+         'onclick="prFaireDevis()">Faire un devis pour ce prospect</button>';
+  }
 
   var note = PR.brouillons[p.id] != null ? PR.brouillons[p.id] : (e.note || '');
   h += '<label style="margin-top:14px">Note</label>' +

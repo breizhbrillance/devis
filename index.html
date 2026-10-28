@@ -823,6 +823,10 @@
         <button class="btn sec sm" onclick="synchroniser(true, this)">Synchroniser</button>
       </div>
       <div id="rappels" class="hide"></div>
+      <!-- Le mois regardé. Il vaut pour les deux listes : celle de l'appareil
+           et celle du bureau. -->
+      <select id="hMois" class="hide" style="margin-bottom:10px"
+              onchange="choisirMois(this.value)"></select>
       <div id="liste"></div>
     </div>
     <!-- Ce que le bureau a gardé. « Mes devis » ne lisait que la mémoire du
@@ -943,6 +947,12 @@
      pour qui a la prospection, et jamais pendant la saisie ni pendant la
      modification d'un devis, où l'on ne doit pas partir par mégarde. -->
 <nav class="ongl hide" id="ongl">
+  <!-- Le tableau du gérant. Depuis la v82 il établit ses propres devis : sans
+       cet onglet, une saisie commencée serait une impasse. -->
+  <button id="ongT" class="hide" onclick="ecranAdmin()">
+    <svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M3.5 9h17M9 9v11"/></svg>
+    <span>Tableau</span>
+  </button>
   <button id="ongD" onclick="ongletDevis()">
     <svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4"/><path d="M9 13h6M9 17h4"/></svg>
     <span>Devis</span>
@@ -1036,6 +1046,10 @@
       <div id="adChiffres" style="margin-top:12px"></div>
       <button class="btn sec sm" style="margin-top:12px" onclick="chargerTableau(this)">Actualiser</button>
     </div>
+
+    <!-- Le devis établi au bureau : même parcours que sur le terrain, au nom du
+         compte connecté. -->
+    <button class="btn" style="margin-top:12px" onclick="devisAdmin(this)">Nouveau devis</button>
 
     <div class="row" style="margin-top:12px">
       <button class="btn sec sm" style="flex:1" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
@@ -1234,11 +1248,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=81"></script>
-<script src="jspdf.umd.min.js?v=81"></script>
-<script src="police.js?v=81"></script>
-<script src="logo.js?v=81"></script>
-<script src="pdf.js?v=81"></script>
-<script src="app.js?v=81"></script>
+<script src="config.js?v=82"></script>
+<script src="jspdf.umd.min.js?v=82"></script>
+<script src="police.js?v=82"></script>
+<script src="logo.js?v=82"></script>
+<script src="pdf.js?v=82"></script>
+<script src="app.js?v=82"></script>
 </body>
 </html>

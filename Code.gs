@@ -81,7 +81,10 @@ var ENTETES_PRESTATAIRES_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'TELEPHONE',
 /* Les comptes qui voient tout : les plannings de chacun, les devis de chacun,
    et les chiffres. Mêmes colonnes que les deux autres populations, pour que
    la façon d'ajouter ou de retirer quelqu'un ne change jamais. */
-var ENTETES_ADMINS_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF'];
+/* INITIALES : depuis la v82 le gerant etablit lui-meme des devis depuis son
+   tableau, et un numero de devis porte les initiales de qui l'a fait. Vide,
+   elles se devinent du nom, comme pour un commercial. */
+var ENTETES_ADMINS_ = ['NOM', 'EMAIL', 'CODE', 'ACTIF', 'INITIALES'];
 
 /* Les jours où l'on ne pose rien : congés d'un salarié, ou fermeture de la
    maison quand PRESTATAIRE est vide ou vaut TOUS. Volontairement sans motif :
@@ -838,6 +841,9 @@ function doPost(e) {
     var permis = admin
       ? ['connexion', 'config', 'journal', 'tableau', 'planifier', 'statut',
          'chantierNeuf', 'lotChantiers',
+         /* Le gerant etablit ses propres devis depuis son tableau : « sync »
+            est ce qui les depose, « photo » ce qui porte la signature. */
+         'sync', 'photo',
          'prospects', 'appel', 'historique',
          /* Facturer engage l'entreprise : ces trois actions sont au gérant
             seul. Un commercial qui les appelle se voit refusé, et le refus
@@ -2067,7 +2073,7 @@ function lotChantiers_(d, com) {
 /* Un seul endroit décide de ce que chaque métier reçoit à la connexion. */
 function configPour_(role, com) {
   if (role === 'PRESTATAIRE') return configPrestataire_();
-  if (role === 'ADMIN') return configAdmin_();
+  if (role === 'ADMIN') return configAdmin_(com);
   return config_(com);
 }
 
@@ -2076,19 +2082,16 @@ function configPour_(role, com) {
  * déroulantes, et rien de plus. Les chiffres et les listes viennent de
  * l'action « tableau », qui se rafraîchit à la demande.
  */
-function configAdmin_() {
-  var reg = lireReglages_();
-  return {
-    maj: new Date().toISOString(),
-    role: 'ADMIN',
-    reglages: {
-      societe_nom: String(reg.societe_nom || ''),
-      texte_information: String(reg.texte_information || ''),
-      version_information: String(reg.version_information || '1')
-    },
-    commerciaux: lireCommerciaux_().map(function (c) { return c.nom; }),
-    prestataires: lirePrestataires_().map(function (p) { return p.nom; })
-  };
+/* Depuis la v82 le gerant etablit des devis depuis son tableau : il lui faut
+   donc tout ce qu'il faut pour en faire un — catalogue, reglages, communes,
+   compteurs — exactement comme a un commercial. On part de sa configuration et
+   on y ajoute les listes que l'ecran du tableau remplit. */
+function configAdmin_(com) {
+  var c = config_(com);
+  c.role = 'ADMIN';
+  c.commerciaux = lireCommerciaux_().map(function (x) { return x.nom; });
+  c.prestataires = lirePrestataires_().map(function (p) { return p.nom; });
+  return c;
 }
 
 function configPrestataire_() {
@@ -3755,11 +3758,16 @@ function trouverPersonne_(nom) {
 function lireAdmins_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.ADMINS);
   if (!sh || sh.getLastRow() < 2) return [];
-  return sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues()
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim().toUpperCase(); });
+  var cIni = en.indexOf('INITIALES');
+  return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
     .filter(function (r) { return String(r[0]).trim() && String(r[3]).toUpperCase() !== 'NON'; })
     .map(function (r) {
+      var ini = cIni >= 0 ? String(r[cIni] || '').trim() : '';
       return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(),
-               code: String(r[2] || '').trim(), role: 'ADMIN' };
+               code: String(r[2] || '').trim(), role: 'ADMIN',
+               initiales: initialesDe_(r[0], ini) };
     });
 }
 
@@ -4319,7 +4327,9 @@ function mesDevis_(d, com) {
   depuis.setHours(0, 0, 0, 0);
 
   var moi = normNom_(com.nom);
-  var tout = String(com.role || '') === 'ADMIN';
+  /* Le gerant ne recoit la maison entiere que s'il la demande : son ecran
+     « Mes devis » montre les siens, son tableau montre le reste. */
+  var tout = String(com.role || '') === 'ADMIN' && !!d.tous;
   var out = [];
   objetsDe_(SH.DEVIS).forEach(function (o) {
     var num = String(o.NUMERO || '').trim();
