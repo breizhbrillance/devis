@@ -833,6 +833,43 @@ function normNom_(s) {
           .replace(/[òóôöõ]/g, 'o').replace(/[ùúûü]/g, 'u').replace(/[ç]/g, 'c');
 }
 
+/* Actif ou non, dans une colonne tenue à la main.
+
+   « NON » écrit en toutes lettres, mais aussi une case à cocher décochée : le
+   tableur la rend sous la forme FALSE, que l'ancien test laissait passer pour
+   un OUI. Le gérant décochait la case d'un salarié parti, et le téléphone de
+   celui-ci continuait d'ouvrir le planning — sans bruit, c'est le pire genre
+   de panne. Depuis la v85 la connexion tient trente jours : cette colonne est
+   devenue le seul moyen de couper un appareil, elle doit répondre.
+
+   Vide vaut actif : les fiches écrites avant que la colonne existe gardent
+   leur place. */
+function estActif_(v) {
+  var s = String(v == null ? '' : v).trim().toUpperCase();
+  return s !== 'NON' && s !== 'FALSE' && s !== 'NO' && s !== 'N' && s !== '0';
+}
+
+/* Le nom figure-t-il quelque part, mais désactivé ? Posée seulement quand un
+   refus vient de tomber, pour en écrire la vraie raison au journal : « code
+   refusé » et « accès coupé » ne se réparent pas de la même façon, et le
+   gérant doit pouvoir lire laquelle des deux s'est produite. La réponse rendue
+   au téléphone, elle, ne change pas d'un mot — un appareil trouvé ne doit pas
+   apprendre quels noms existent chez BB. */
+function personneInactive_(nom) {
+  var n = normNom_(nom);
+  if (!n) return false;
+  var feuilles = [SH.ADMINS, SH.COMMERCIAUX, SH.PRESTATAIRES];
+  for (var i = 0; i < feuilles.length; i++) {
+    var sh = SpreadsheetApp.getActive().getSheetByName(feuilles[i]);
+    if (!sh || sh.getLastRow() < 2) continue;
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues();
+    for (var j = 0; j < v.length; j++) {
+      if (normNom_(v[j][0]) === n && !estActif_(v[j][3])) return true;
+    }
+  }
+  return false;
+}
+
 function trouverCommercial_(nom) {
   var n = normNom_(nom), out = null;
   lireCommerciaux_().forEach(function (c) { if (normNom_(c.nom) === n) out = c; });
@@ -912,7 +949,15 @@ function doPost(e) {
       noterEchec_(d.nom);
       // On ne journalise que les noms qui existent : sinon, n'importe qui
       // pourrait remplir le journal en essayant des noms au hasard.
-      if (com) tracerServeur_(com.nom, 'CODE REFUSE', '', '', d.appareil || '');
+      if (com) {
+        tracerServeur_(com.nom, 'CODE REFUSE', '', '', d.appareil || '');
+      } else if (personneInactive_(d.nom)) {
+        /* Le compte existe mais il a été désactivé : c'est une coupure voulue,
+           pas une tentative d'intrusion. Le téléphone, lui, reçoit le même
+           refus que les autres et efface sa session. */
+        tracerServeur_(String(d.nom || '').trim(), 'ACCES COUPE',
+                       'compte désactivé au classeur', '', d.appareil || '');
+      }
       return reponse_({ ok: false, refus: true, erreur: 'Nom ou code incorrect' });
     }
 
@@ -2388,10 +2433,10 @@ function prestatairesPlanning_() {
   return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
     .filter(function (r) {
       return String(r[iNom]).trim() &&
-             (iActif < 0 || String(r[iActif]).toUpperCase() !== 'NON') &&
+             (iActif < 0 || estActif_(r[iActif])) &&
              /* Vide vaut OUI : les fiches d'avant cette colonne gardent leur
                 place dans la répartition. */
-             (iPlan < 0 || String(r[iPlan]).toUpperCase().trim() !== 'NON');
+             (iPlan < 0 || estActif_(r[iPlan]));
     })
     .map(function (r) {
       var plages = plagesTravail_(iPlages >= 0 ? r[iPlages] : '');
@@ -3390,7 +3435,7 @@ function genererRecurrents_() {
   });
 
   var series = objetsDe_(SH.RECURRENTS).filter(function (r) {
-    return String(r.ID || '').trim() && String(r.ACTIF || '').toUpperCase().trim() !== 'NON';
+    return String(r.ID || '').trim() && estActif_(r.ACTIF);
   });
   bilan.series = series.length;
 
@@ -3445,7 +3490,7 @@ function genererRecurrents_() {
     var fin = r.FIN ? minuit_(r.FIN) : null;
     if (fin && isNaN(fin.getTime())) fin = null;
     vivantes[id] = {
-      actif: String(r.ACTIF || '').toUpperCase().trim() !== 'NON',
+      actif: estActif_(r.ACTIF),
       fin: fin
     };
   });
@@ -3777,7 +3822,7 @@ function lireCatalogue_() {
   if (!sh || sh.getLastRow() < 2) return [];
   var large = Math.max(10, sh.getLastColumn());
   return sh.getRange(2, 1, sh.getLastRow() - 1, large).getValues()
-    .filter(function (r) { return String(r[1]).trim() && String(r[7]).toUpperCase() !== 'NON'; })
+    .filter(function (r) { return String(r[1]).trim() && estActif_(r[7]); })
     .map(function (r) {
       return {
         categorie: String(r[0] || 'Divers'), designation: String(r[1]),
@@ -3820,7 +3865,7 @@ function lirePrestataires_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.PRESTATAIRES);
   if (!sh || sh.getLastRow() < 2) return [];
   return sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues()
-    .filter(function (r) { return String(r[0]).trim() && String(r[3]).toUpperCase() !== 'NON'; })
+    .filter(function (r) { return String(r[0]).trim() && estActif_(r[3]); })
     .map(function (r) {
       return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(),
                code: String(r[2] || '').trim(), role: 'PRESTATAIRE' };
@@ -3863,7 +3908,7 @@ function lireAdmins_() {
     .map(function (x) { return String(x).trim().toUpperCase(); });
   var cIni = en.indexOf('INITIALES');
   return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
-    .filter(function (r) { return String(r[0]).trim() && String(r[3]).toUpperCase() !== 'NON'; })
+    .filter(function (r) { return String(r[0]).trim() && estActif_(r[3]); })
     .map(function (r) {
       var ini = cIni >= 0 ? String(r[cIni] || '').trim() : '';
       return { nom: String(r[0]).trim(), email: String(r[1] || '').trim(),
@@ -3880,7 +3925,7 @@ function lireCommerciaux_() {
   var cIni = en.indexOf('INITIALES');
   var cTel = en.indexOf('TELEPHONE');
   return sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues()
-    .filter(function (r) { return String(r[0]).trim() && String(r[3]).toUpperCase() !== 'NON'; })
+    .filter(function (r) { return String(r[0]).trim() && estActif_(r[3]); })
     .map(function (r) {
       /* Les initiales du numéro de devis. Devinées à partir du nom, sauf si la
          colonne INITIALES en impose d'autres : « SIMON LG » donne SL, alors que

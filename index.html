@@ -1137,6 +1137,10 @@
     <div id="adLot" class="card hide" style="margin-top:10px;border-color:var(--acc-b)"></div>
     <div id="adFiltres" class="row" style="flex-wrap:wrap;gap:6px;margin-top:10px"></div>
     <div id="adListe" style="margin-top:10px"></div>
+    <div class="mini" style="text-align:center;margin-top:14px">
+      Connecté : <b id="quiSuisJeAd">—</b> ·
+      <a href="#" onclick="deconnexion();return false;">se déconnecter</a>
+    </div>
   </section>
 
   <section id="eAd2" class="hide">
@@ -1167,6 +1171,12 @@
          qui pose le chantier. -->
     <div class="card hide" id="notifZone"></div>
     <div id="agListe"></div>
+    <!-- Depuis la v85 la connexion tient trente jours : il faut donc un moyen
+         de sortir, et il doit être là où le salarié travaille. -->
+    <div class="mini" style="text-align:center;margin-top:14px">
+      Connecté : <b id="quiSuisJeAg">—</b> ·
+      <a href="#" onclick="deconnexion();return false;">se déconnecter</a>
+    </div>
   </section>
 
   <!-- UN RENDEZ-VOUS SUR SON PROPRE PLANNING (13 octobre 2026)
@@ -1315,11 +1325,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=84"></script>
-<script src="jspdf.umd.min.js?v=84"></script>
-<script src="police.js?v=84"></script>
-<script src="logo.js?v=84"></script>
-<script src="pdf.js?v=84"></script>
-<script src="app.js?v=84"></script>
+<script src="config.js?v=85"></script>
+<script src="jspdf.umd.min.js?v=85"></script>
+<script src="police.js?v=85"></script>
+<script src="logo.js?v=85"></script>
+<script src="pdf.js?v=85"></script>
+<script src="app.js?v=85"></script>
 </body>
 </html>

@@ -86,18 +86,71 @@ function ls(k,v){ try{ if(v===undefined) return localStorage.getItem(k);
 function lsj(k,v){ if(v===undefined){ try{ return JSON.parse(ls(k)||'null'); }catch(e){ return null; } }
   ls(k, JSON.stringify(v)); }
 
-/* ---- session du commercial ----
-   Volontairement dans sessionStorage, pas dans localStorage : elle survit à une
-   mise en veille, à un passage en arrière-plan et à un rechargement de page,
-   mais disparaît dès que l'application est fermée. Le commercial ressaisit alors
-   son nom et son code. */
+/* ---- session ----
+   Elle vivait dans sessionStorage : fermer l'application déconnectait, et il
+   fallait retaper nom et code à la rouvrir. Un salarié qui regarde son planning
+   trois fois dans la journée n'a pas à faire cela.
+
+   Elle vit donc dans localStorage, avec une échéance de trente jours qui
+   glisse : chaque jour d'usage la repousse d'autant, si bien qu'un téléphone
+   qui sert ne redemande jamais rien, tandis qu'un appareil oublié dans un
+   tiroir se referme tout seul. L'écriture n'a lieu qu'une fois par jour —
+   session() est appelée des centaines de fois, il n'y a pas lieu de réécrire
+   la même chose à chaque appel.
+
+   La coupure immédiate ne vient pas d'ici : elle vient du bureau. ACTIF = NON
+   dans le classeur, et le premier échange venu répond « refus », ce qui efface
+   la session (voir reidentifier). C'est la seule chose qui agisse sur un
+   téléphone perdu — l'échéance, elle, attend son terme. */
+var SESSION_JOURS = 30;
+function sessionDuree(){ return SESSION_JOURS * 24 * 60 * 60 * 1000; }
+
 function session(v){
   try{
-    if(v === undefined) return JSON.parse(sessionStorage.getItem('moi') || 'null');
-    if(v === null) sessionStorage.removeItem('moi');
-    else sessionStorage.setItem('moi', JSON.stringify(v));
+    if(v === undefined){
+      var s = null;
+      try{ s = JSON.parse(localStorage.getItem('moi') || 'null'); }catch(e){ s = null; }
+      /* Une session ouverte avant la v85 dort encore dans sessionStorage : on
+         la reprend, plutôt que de déconnecter tout le monde le jour même de la
+         mise à jour. */
+      if(!s){
+        var vieille = null;
+        try{ vieille = JSON.parse(sessionStorage.getItem('moi') || 'null'); }catch(e){ vieille = null; }
+        if(!vieille || !vieille.nom || !vieille.code) return null;
+        try{ sessionStorage.removeItem('moi'); }catch(e){}
+        session(vieille);
+        try{ return JSON.parse(localStorage.getItem('moi') || 'null'); }catch(e){ return null; }
+      }
+      // Une session sans nom ou sans code ne sert à rien : tout passe par eux.
+      if(!s.nom || !s.code){ session(null); return null; }
+      if(!(Number(s.jusqu) > Date.now())){ session(null); return null; }
+      if(Number(s.jusqu) - Date.now() < sessionDuree() - 86400000){
+        s.jusqu = Date.now() + sessionDuree();
+        try{ localStorage.setItem('moi', JSON.stringify(s)); }catch(e){}
+      }
+      return s;
+    }
+    if(v === null){
+      try{ localStorage.removeItem('moi'); }catch(e){}
+      try{ sessionStorage.removeItem('moi'); }catch(e){}
+      return null;
+    }
+    localStorage.setItem('moi', JSON.stringify({
+      nom: v.nom, code: v.code, role: v.role,
+      jusqu: Date.now() + sessionDuree()
+    }));
   }catch(e){ return null; }
   return null;
+}
+
+/* Le nom affiché en pied d'écran, et le lien pour sortir. Trois endroits,
+   parce que les trois métiers ne partagent aucun écran — et il en faut un
+   partout depuis la v85 : quelqu'un qui reste connecté trente jours doit
+   pouvoir se déconnecter de là où il travaille. */
+function direQuiJeSuis(nom){
+  ['quiSuisJe','quiSuisJeAg','quiSuisJeAd'].forEach(function(id){
+    var e = $(id); if(e) e.textContent = nom || '—';
+  });
 }
 
 /* Comparaison des noms tolérante : casse, accents et espaces en trop. */
@@ -218,7 +271,11 @@ window.addEventListener('load', function(){
   }
 
   chargerRepertoire();
-  ls('moi', null);   // anciennes versions : la session ne doit plus survivre à la fermeture
+  /* Ici se trouvait « ls('moi', null) », qui effaçait la session à chaque
+     démarrage : c'était la règle d'hier, celle d'une connexion qui ne survivait
+     pas à la fermeture. Depuis la v85 elle tient trente jours, et c'est session()
+     elle-même qui juge si elle est encore valable. Effacer ici rendrait tout le
+     reste sans effet — y compris la reprise d'une session d'avant la v85. */
 
   CFG = lsj('cfg');
   // Une version antérieure de l'application interrogeait le serveur en GET et
@@ -266,7 +323,7 @@ function demarrer(){
   if(!moi){
     ecranConnexion('');
   } else {
-    $('quiSuisJe').textContent = moi.nom;
+    direQuiJeSuis(moi.nom);
     var b = lsj('brouillon');
     if(b && b.lignes && b.lignes.length){
       var cl = (b.client||{}).societe || (b.client||{}).contact || '';
@@ -300,7 +357,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v84';
+var VERSION_APP = 'v85';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -330,8 +387,13 @@ function basculerCode(){
 }
 
 function deconnexion(){
+  /* Un salarié n'a pas de devis sur son téléphone : lui parler des siens
+     l'inquiéterait pour rien. Ce qu'il doit savoir, c'est qu'il devra retaper
+     son code — ce qui, depuis la v85, n'arrive plus qu'ici. */
   demander('Se déconnecter ?',
-           'Les devis déjà enregistrés restent sur l\'appareil et partiront normalement.',
+           estAgent()
+             ? 'Il faudra retaper ton nom et ton code pour revenir.'
+             : 'Les devis déjà enregistrés restent sur l\'appareil et partiront normalement.',
            'Se déconnecter').then(function(oui){
     if(!oui) return;
     tracer('DECONNEXION', '');
@@ -370,6 +432,13 @@ function poster(corps, delai){
 
 function rangerConfig(cfg){
   if(!cfg || !cfg.reglages) return;
+  /* Le rôle est gardé dans la session, et la session dure trente jours. Un
+     commercial passé à l'administration ouvrirait donc l'outil d'hier pendant
+     un mois si on ne reprenait pas ici ce que le bureau vient de dire. */
+  var qui = session();
+  if(qui && cfg.role && cfg.role !== qui.role){
+    session({nom: qui.nom, code: qui.code, role: cfg.role});
+  }
   // La configuration d'un agent n'a pas de catalogue, et c'est voulu : elle
   // doit quand même être rangée, sinon il n'a ni nom de société ni texte
   // d'information.
@@ -948,7 +1017,7 @@ function verifierCommercial(btn){
     // décide de tout l'outil qui s'ouvre derrière.
     session({nom:r.nom, code:code, role:r.role || 'COMMERCIAL'});
     tracer('CONNEXION', navigator.onLine ? 'en ligne' : 'hors connexion');
-    $('quiSuisJe').textContent = r.nom;
+    direQuiJeSuis(r.nom);
     $('fCode').value = '';               // le code ne traîne pas à l'écran
     if($('fCode').type === 'text') basculerCode();
     apresConnexion();
@@ -1126,6 +1195,18 @@ function versionInformation(){
   return String(((CFG && CFG.reglages) || {}).version_information || '1').trim();
 }
 
+/* L'accord se gardait dans sessionStorage, donc le temps d'une ouverture. Tant
+   que la session mourait avec l'application, cela se confondait avec « une fois
+   par connexion » ; depuis la v85 la session dure trente jours, et redemander
+   le même accord chaque matin ne serait plus une information, mais une
+   corvée — et une ligne de journal par jour et par personne. Il est donc gardé
+   durablement, par personne et par version du texte : changer le texte le
+   redemande à tout le monde, et c'est bien ce qu'on veut. */
+function cleAccord(){
+  var m = session();
+  return versionInformation() + '|' + normNom((m && m.nom) || '');
+}
+
 function ecranAccord(){
   var t = texteInformation();
   // Rien à afficher : on ne bloque personne, mais chacun repart chez soi.
@@ -1144,7 +1225,7 @@ function ecranAccord(){
 
 function accepterInformation(btn){
   if(btn) occuper(btn, 'Enregistrement…');
-  try{ sessionStorage.setItem('accord', versionInformation()); }catch(e){}
+  ls('accord', cleAccord());
   tracer('INFORMATION ACCEPTEE', 'version ' + versionInformation()).then(function(){
     if(btn) libere(btn);
     if(estAdmin()){ ecranAdmin(); return chargerTableau(); }
@@ -1163,9 +1244,7 @@ function accepterInformation(btn){
 
 /* Passe par l'information si elle n'a pas encore été acceptée dans cette session. */
 function apresConnexion(){
-  var v = null;
-  try{ v = sessionStorage.getItem('accord'); }catch(e){}
-  if(v === versionInformation()){
+  if(ls('accord') === cleAccord()){
     if(estAdmin()) return ecranAdmin();
     if(estAgent()) return ecranPlanning();
     TYPE = null; PLUS2ANS = null; TAUX = null;
