@@ -413,6 +413,14 @@
   .prRes button.no{border-color:#b91c1c;color:#b91c1c}
   .prRes button.on{background:#fef3c7}
   .prRappel{grid-column:1/-1;background:#fef3c7;border-radius:12px;padding:12px}
+  /* Le bouton qui valide un rappel ou un rendez-vous est un bouton plein. Sans
+     ces deux lignes, « .prRes button » l'emporte sur « .btn » — un sélecteur de
+     plus — et lui pose un fond blanc sans toucher à la couleur du texte : le
+     bouton devient blanc sur blanc, invisible, et large de moitié. */
+  .prRes .prRappel .btn{background:var(--acc);color:#fff;border:0;width:100%;
+                        padding:14px 8px;border-radius:12px;font-size:15px}
+  .prRes .prRappel .btn:active{background:var(--acc-d);transform:scale(.97)}
+  .prRes .prRappel .btn:disabled{opacity:.7}
   .prQuand{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
   .prQuand button{border:1px solid var(--line);background:#fff;border-radius:999px;
                   padding:8px 12px;font-size:13.5px;font-weight:600;width:auto}
@@ -1226,11 +1234,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=80"></script>
-<script src="jspdf.umd.min.js?v=80"></script>
-<script src="police.js?v=80"></script>
-<script src="logo.js?v=80"></script>
-<script src="pdf.js?v=80"></script>
-<script src="app.js?v=80"></script>
+<script src="config.js?v=81"></script>
+<script src="jspdf.umd.min.js?v=81"></script>
+<script src="police.js?v=81"></script>
+<script src="logo.js?v=81"></script>
+<script src="pdf.js?v=81"></script>
+<script src="app.js?v=81"></script>
 </body>
 </html>
