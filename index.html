@@ -425,6 +425,40 @@
   .prQuand button{border:1px solid var(--line);background:#fff;border-radius:999px;
                   padding:8px 12px;font-size:13.5px;font-weight:600;width:auto}
   .prQuand button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+  /* ---- la semaine ----
+     Sept colonnes ne tiennent pas de front sur un téléphone : elles glissent
+     sous le doigt, et chacune se cale au passage. Sur un écran large, la
+     semaine entière tient d'un coup. */
+  .semBarre{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+  .semBarre .semTitre{flex:1;font-weight:600}
+  .semCompte{margin:0 0 10px}
+  .sem{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+       scroll-snap-type:x mandatory;padding-bottom:6px}
+  .semJ{flex:0 0 150px;scroll-snap-align:start;background:#fff;border:1px solid var(--line);
+        border-radius:12px;padding:8px;min-height:120px;display:flex;flex-direction:column;gap:6px}
+  .semJ.semVide{background:#f7f8fa}
+  .semJ.semAuj{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+  .semTete{display:flex;justify-content:space-between;align-items:baseline;
+           border-bottom:1px solid var(--line);padding-bottom:5px}
+  .semTete b{font-size:13px;text-transform:uppercase;letter-spacing:.4px;color:var(--mut)}
+  .semJ.semAuj .semTete b{color:var(--acc)}
+  .semTete span{font-size:17px;font-weight:700}
+  .semRien{color:var(--mut);font-size:13px;text-align:center;padding:14px 0}
+  .semEv{display:block;width:100%;text-align:left;border:0;border-left:4px solid var(--nT,#9aa3ad);
+         background:var(--nF,#eef1f4);color:var(--nI,#333);border-radius:8px;padding:7px 8px;
+         cursor:pointer;font:inherit}
+  .semEv b{display:block;font-size:13px}
+  /* Un nom trop long pour la colonne se coupe avec un trait d'union plutôt
+     qu'au hasard : « BOULAN-GERIE » se lit, « BOULANGE RIE » non. */
+  .semEv span{display:block;font-size:13.5px;font-weight:600;overflow-wrap:break-word;
+              hyphens:auto;-webkit-hyphens:auto}
+  .semEv em{display:block;font-style:normal;font-size:12px;opacity:.8;overflow-wrap:break-word}
+  .semEv:active{transform:scale(.98)}
+  @media (min-width:760px){
+    /* Les sept colonnes se partagent la largeur, sans jamais devenir si
+       étroites qu'un nom de client n'y tiendrait plus. */
+    .semJ{flex:1 1 0;min-width:128px}
+  }
   .prLigne{display:flex;justify-content:space-between;align-items:center;gap:10px;
            padding:12px 0;border-bottom:1px solid var(--line);width:100%;
            background:none;border-left:0;border-right:0;border-top:0;text-align:left}
@@ -1072,6 +1106,8 @@
     <div class="row hide" id="adActions" style="margin-top:10px;gap:8px">
       <button class="btn sec sm" style="flex:1" onclick="nouveauChantier()">+ Nouveau chantier</button>
       <button class="btn sec sm" style="flex:1" id="bAdSel" onclick="basculerSelection()">Sélectionner</button>
+      <button class="btn sec sm" style="flex:1" id="bAdSem"
+              onclick="basculerSemaine('admin')">Voir la semaine</button>
     </div>
     <div id="adLot" class="card hide" style="margin-top:10px;border-color:var(--acc-b)"></div>
     <div id="adFiltres" class="row" style="flex-wrap:wrap;gap:6px;margin-top:10px"></div>
@@ -1093,6 +1129,11 @@
       <div class="mini" id="agQuand">—</div>
       <button class="btn sec sm" style="margin-top:12px" id="bAgMaj"
               onclick="chargerPlanning(this)">Actualiser</button>
+      <!-- Réservé au commercial qui a aussi un planning : un salarié ne se
+           pose pas de rendez-vous à lui-même. C'est le classeur qui décide,
+           par CFG.planning, pas cet écran. -->
+      <button class="btn sec sm" style="margin-top:10px" id="bAgSem"
+              onclick="basculerSemaine('agent')">Voir la semaine</button>
       <!-- Réservé au commercial qui a aussi un planning : un salarié ne se
            pose pas de rendez-vous à lui-même. C'est le classeur qui décide,
            par CFG.planning, pas cet écran. -->
@@ -1248,11 +1289,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=82"></script>
-<script src="jspdf.umd.min.js?v=82"></script>
-<script src="police.js?v=82"></script>
-<script src="logo.js?v=82"></script>
-<script src="pdf.js?v=82"></script>
-<script src="app.js?v=82"></script>
+<script src="config.js?v=83"></script>
+<script src="jspdf.umd.min.js?v=83"></script>
+<script src="police.js?v=83"></script>
+<script src="logo.js?v=83"></script>
+<script src="pdf.js?v=83"></script>
+<script src="app.js?v=83"></script>
 </body>
 </html>

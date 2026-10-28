@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v82';
+var VERSION_APP = 'v83';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4206,6 +4206,128 @@ function verdictArchive(type){
   });
 }
 
+/* ====================== LA SEMAINE ======================
+   Le planning s'est toujours lu en liste : ce qui vient, du plus proche au
+   plus lointain. C'est le bon outil pour savoir où l'on va demain matin, mais
+   pas pour voir si la semaine tient debout — une journée vide, une autre à
+   quatre chantiers, un agent chargé et l'autre non. D'où cette vue : sept
+   colonnes, une par jour, les chantiers empilés dedans, colorés par nature.
+   Sur un téléphone les sept colonnes ne tiennent pas de front : on les fait
+   glisser, et chacune se cale sous le doigt. */
+var SEM_LUNDI = '';           // le lundi regardé ; vide = la semaine en cours
+var SEM_VUE = false;          // le gérant regarde-t-il la semaine ?
+var AG_SEM = false;           // et le salarié ?
+var SEM_JOURS = ['lundi','mardi','mercredi','jeudi','vendredi','samedi','dimanche'];
+
+/* Le lundi de la semaine qui contient ce jour. Dimanche appartient à la
+   semaine qui s'achève, pas à celle qui commence. */
+function lundiDe(iso){
+  var d = iso ? new Date(iso + 'T12:00:00') : new Date();
+  if(isNaN(d.getTime())) d = new Date();
+  d.setHours(12,0,0,0);
+  var j = d.getDay();                       // 0 = dimanche
+  d.setDate(d.getDate() - ((j + 6) % 7));
+  return isoJour(d);
+}
+function semaineVue(){ return SEM_LUNDI || lundiDe(); }
+function joursDe(lundi){
+  var out = [], d = new Date(lundi + 'T12:00:00');
+  for(var i = 0; i < 7; i++){
+    out.push(isoJour(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+/* « 13 — 19 octobre 2026 », ou « 29 septembre — 5 octobre 2026 » à cheval. */
+function libelleSemaine(lundi){
+  var j = joursDe(lundi);
+  var a = new Date(j[0] + 'T12:00:00'), b = new Date(j[6] + 'T12:00:00');
+  var mA = a.toLocaleDateString('fr-FR', {month:'long'});
+  var mB = b.toLocaleDateString('fr-FR', {month:'long'});
+  var an = b.getFullYear();
+  if(mA === mB && a.getFullYear() === an) return a.getDate() + ' — ' + b.getDate() + ' ' + mB + ' ' + an;
+  if(a.getFullYear() === an) return a.getDate() + ' ' + mA + ' — ' + b.getDate() + ' ' + mB + ' ' + an;
+  return a.getDate() + ' ' + mA + ' ' + a.getFullYear() + ' — ' + b.getDate() + ' ' + mB + ' ' + an;
+}
+
+/* Le rendu, commun au gérant et au salarié : ce sont les mêmes chantiers, vus
+   d'un côté ou de l'autre. « surClic » est le nom de la fonction à appeler
+   avec l'identifiant — chacun ouvre sa propre fiche. */
+function semaineHtml(chantiers, surClic){
+  var lundi = semaineVue(), jours = joursDe(lundi), auj = isoJour();
+  var par = {};
+  jours.forEach(function(j){ par[j] = []; });
+  (chantiers || []).forEach(function(c){
+    var d = String(c.date || '').slice(0,10);
+    if(par[d]) par[d].push(c);
+  });
+  jours.forEach(function(j){
+    par[j].sort(function(a,b){
+      var ha = String(a.heure || '99:99'), hb = String(b.heure || '99:99');
+      return ha < hb ? -1 : (ha > hb ? 1 : 0);
+    });
+  });
+
+  var total = jours.reduce(function(n, j){ return n + par[j].length; }, 0);
+
+  var h = '<div class="semBarre">' +
+    '<button class="btn sec sm" onclick="semaineBouger(-1)">◀</button>' +
+    '<button class="btn sec sm semTitre" onclick="semaineBouger(0)">' +
+      ech(libelleSemaine(lundi)) + '</button>' +
+    '<button class="btn sec sm" onclick="semaineBouger(1)">▶</button>' +
+    '</div>';
+
+  h += '<div class="mini semCompte">' + (total
+    ? total + ' chantier' + (total > 1 ? 's' : '') + ' cette semaine'
+    : 'Aucun chantier cette semaine') + '</div>';
+
+  h += '<div class="sem">';
+  jours.forEach(function(j, i){
+    var d = new Date(j + 'T12:00:00');
+    var liste = par[j];
+    h += '<div class="semJ' + (j === auj ? ' semAuj' : '') +
+         (liste.length ? '' : ' semVide') + '">' +
+         '<div class="semTete"><b>' + SEM_JOURS[i].slice(0,3) + '</b>' +
+         '<span>' + d.getDate() + '</span></div>';
+    if(!liste.length){
+      h += '<div class="semRien">—</div>';
+    } else {
+      liste.forEach(function(c){
+        var n = natureVue(c.nature);
+        h += '<button class="semEv" ' +
+             (n ? 'style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '"' : '') +
+             ' onclick="' + surClic + '(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\')">' +
+             (c.heure ? '<b>' + ech(c.heure) + '</b>' : '') +
+             '<span>' + ech(c.client || 'Chantier') + '</span>' +
+             (c.ville ? '<em>' + ech(c.ville) + '</em>' : '') +
+             (c.prestataire ? '<em>' + ech(c.prestataire) + '</em>' : '') +
+             '</button>';
+      });
+    }
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+/* -1 semaine, +1 semaine, ou 0 pour revenir à celle d'aujourd'hui. */
+function semaineBouger(n){
+  if(!n){ SEM_LUNDI = ''; }
+  else {
+    var d = new Date(semaineVue() + 'T12:00:00');
+    d.setDate(d.getDate() + 7 * n);
+    SEM_LUNDI = isoJour(d);
+  }
+  if(ECRAN_VU === 'eAg1') peindrePlanning(); else peindreTableau();
+}
+
+/* La bascule liste ↔ semaine. Le choix ne voyage pas d'un écran à l'autre :
+   le gérant et le salarié ne regardent pas la même chose. */
+function basculerSemaine(qui){
+  if(qui === 'agent'){ AG_SEM = !AG_SEM; SEM_LUNDI = ''; peindrePlanning(); }
+  else { SEM_VUE = !SEM_VUE; SEM_LUNDI = ''; peindreTableau(); }
+}
+
 /* ====================== ESPACE D'ADMINISTRATION ======================
    Ce que font les autres, vu d'en haut : les devis de chaque commercial, les
    chantiers de chaque prestataire, les chiffres. Tout arrive en un seul appel
@@ -4370,6 +4492,11 @@ function peindreTableau(){
   $('adActions').classList.toggle('hide', AD_ONGLET !== 'chantiers');
   $('adFact').classList.toggle('hide', AD_ONGLET !== 'factures');
   $('bAdSel').textContent = AD_SEL ? 'Terminer' : 'Sélectionner';
+  var bs = $('bAdSem');
+  if(bs){
+    bs.textContent = SEM_VUE ? 'Voir la liste' : 'Voir la semaine';
+    bs.classList.toggle('hide', AD_ONGLET !== 'chantiers');
+  }
   peindreLot();
 
   /* La facturation se peint à part : elle ne lit pas le tableau, et elle doit
@@ -4411,6 +4538,24 @@ function peindreTableau(){
              ech(n).replace(/'/g,'&#39;') + '\')">' + ech(n) + '</span>';
     })).join('');
 
+  if(AD_ONGLET === 'chantiers' && SEM_VUE){
+    /* Les chantiers sans date n'ont pas de colonne où se poser : ils restent
+       annoncés au-dessus de la semaine, sinon ils disparaîtraient de la vue. */
+    var vivants = (t.chantiers||[]).filter(function(c){
+      if(estAnnule(c)) return false;
+      if(!AD_QUI) return true;
+      if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
+      if(AD_QUI === '(annulés)') return false;
+      return c.prestataire === AD_QUI;
+    });
+    var sans = vivants.filter(function(c){ return !c.date || !c.prestataire; }).length;
+    $('adListe').innerHTML =
+      (sans ? '<div class="card" style="border-color:var(--warn);margin-bottom:10px"><b>' + sans +
+        ' chantier' + (sans>1?'s':'') + ' à planifier</b><div class="mini">Sans date ou sans ' +
+        'personne, ils n\'apparaissent dans aucune colonne.</div></div>' : '') +
+      semaineHtml(vivants, 'ficheChantier');
+    return;
+  }
   $('adListe').innerHTML = AD_ONGLET === 'devis' ? listeDevisAdmin(t) : listeChantiersAdmin(t);
 }
 
@@ -5099,6 +5244,8 @@ function peindrePlanning(){
   DB.cTous().then(function(l){
     l = l || [];
     var c = $('agListe');
+    var bs = $('bAgSem');
+    if(bs) bs.textContent = AG_SEM ? 'Voir la liste' : 'Voir la semaine';
     if(!l.length){
       c.innerHTML = '<div class="card"><div class="empty">Aucun chantier pour le moment.<br>' +
                     'Il apparaîtra ici dès que le bureau te l\'aura affecté.</div></div>';
@@ -5110,6 +5257,8 @@ function peindrePlanning(){
     $('agQuand').textContent = reste
       ? reste + ' chantier' + (reste>1?'s':'') + ' à venir'
       : 'Rien à venir pour l\'instant';
+
+    if(AG_SEM){ c.innerHTML = semaineHtml(l, 'ouvrirChantier'); return; }
 
     /* À venir d'abord, du plus proche au plus lointain : c'est ce qu'on ouvre
        son téléphone pour savoir. Le passé ensuite, du plus récent au plus
