@@ -177,6 +177,10 @@ function onOpen() {
     .addItem('19. Connecter Henrri (facturation)', 'connecterHenrri')
     .addItem('20. Tester la connexion Henrri', 'testerHenrri')
     .addItem('21. Oublier les clés Henrri', 'oublierHenrri')
+    .addSeparator()
+    .addItem('22. Connecter les notifications', 'connecterNotifications')
+    .addItem('23. Tester une notification', 'testerNotification')
+    .addItem('24. Oublier la clé des notifications', 'oublierNotifications')
     .addToUi();
 }
 
@@ -521,6 +525,10 @@ var REGLAGES_DEFAUT_ = [
   ['societe_rcs', 'RCS Vannes 000 000 000', ''],
   ['tva_defaut', '20', 'Taux de TVA par défaut en %'],
   ['remise_max', '20', 'Remise maximale que le commercial peut accorder, en % — 0 pour l\'interdire'],
+  /* L'App ID d'OneSignal. Public : il figure dans le code de l'application.
+     La clé d'API, elle, ne vit jamais ici — voir « 22. Connecter les
+     notifications ». */
+  ['onesignal_app_id', '', 'Notifications : App ID OneSignal — posé par le menu « 22 »'],
   ['passages_mois_defaut', '4', 'Contrat mensuel : nombre de passages créés par mois si le devis ne le précise pas'],
   ['recurrents_semaines', '8',
    'Contrats récurrents (onglet ' + 'RECURRENTS' + ') : combien de semaines de planning sont posées devant soi'],
@@ -1967,6 +1975,24 @@ function planifierChantier_(d, com) {
 
   var ligne = majChantier_(id, v);
   if (!ligne) return { ok: false, erreur: 'chantier introuvable' };
+
+  /* Le téléphone du salarié sonne : un chantier posé sur le planning ne lui
+     parvenait jusqu'ici que s'il pensait à ouvrir l'application. On prévient
+     à la prise comme au déplacement — une date qui change vaut bien un mot —
+     mais jamais quand ni la date ni la personne n'ont bougé. */
+  if (String(quiFinal || '').trim() && dateFinale &&
+      (v.PRESTATAIRE !== undefined || v.DATE !== undefined || v.HEURE !== undefined)) {
+    var neuf = normNom_(avant.PRESTATAIRE || '') !== normNom_(quiFinal) ||
+               !avant.DATE;
+    notifierChantier_(quiFinal, {
+      CLIENT: v.CLIENT !== undefined ? v.CLIENT : avant.CLIENT,
+      CP: v.CP !== undefined ? v.CP : avant.CP,
+      VILLE: v.VILLE !== undefined ? v.VILLE : avant.VILLE,
+      DATE: dateFinale,
+      HEURE: v.HEURE !== undefined ? v.HEURE : avant.HEURE,
+      NUMERO: avant.NUMERO
+    }, !neuf);
+  }
 
   tracerServeur_(com ? com.nom : '', 'CHANTIER PLANIFIE',
                  (v.PRESTATAIRE || quiFinal || '?') + ' \u00b7 ' +
@@ -4514,6 +4540,174 @@ function devisArchive_(d, com) {
     }
   }
   return res;
+}
+
+/* ====================== LES NOTIFICATIONS ======================
+   Un chantier posé sur le planning n'atteignait le salarié que s'il pensait à
+   ouvrir l'application. Ces notifications-là font sonner son téléphone, par
+   OneSignal — un service d'envoi, parce qu'un classeur Google ne sait pas
+   parler au système de notifications d'un téléphone.
+
+   Deux identifiants, et ils ne vivent pas au même endroit :
+   • l'App ID est PUBLIC — il figure dans le code de l'application, que
+     n'importe qui peut lire. Il est donc dans les réglages du classeur.
+   • la clé d'API est SECRÈTE — qui l'a peut écrire à tous les téléphones
+     inscrits. Elle ne doit jamais entrer ici : ce fichier est publié sur un
+     dépôt public. Elle vit dans les propriétés du script, posée par le gérant
+     lui-même avec « 22. Connecter les notifications ».
+
+   Le salarié est visé par son nom normalisé — « agent 1 » — que l'application
+   déclare à OneSignal en s'ouvrant. Le même calcul des deux côtés, sinon le
+   message part dans le vide. */
+var NOTIF_URL_ = 'https://api.onesignal.com/notifications?c=push';
+var NOTIF_CLE_ = 'ONESIGNAL_CLE';
+
+/** L'identifiant sous lequel un téléphone s'est annoncé. */
+function notifId_(nom) { return normNom_(nom); }
+
+function notifConfig_() {
+  var reg = lireReglages_();
+  return {
+    app: String(reg.onesignal_app_id || '').trim(),
+    cle: String(PropertiesService.getScriptProperties().getProperty(NOTIF_CLE_) || '').trim()
+  };
+}
+
+/**
+ * Fait sonner le téléphone d'une personne. Rend { ok, erreur } et ne lève
+ * jamais : une notification qui ne part pas ne doit pas empêcher un chantier
+ * d'être planifié. Un échec part au journal, pour qu'il ne passe pas inaperçu.
+ */
+function notifier_(nom, titre, texte, lien) {
+  var c = notifConfig_();
+  if (!c.app || !c.cle) return { ok: false, erreur: 'notifications non connectées' };
+  var qui = notifId_(nom);
+  if (!qui) return { ok: false, erreur: 'personne sans nom' };
+
+  var corps = {
+    app_id: c.app,
+    include_aliases: { external_id: [qui] },
+    target_channel: 'push',
+    headings: { en: String(titre || '') },
+    contents: { en: String(texte || '') }
+  };
+  if (lien) corps.url = String(lien);
+
+  try {
+    var r = UrlFetchApp.fetch(NOTIF_URL_, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Key ' + c.cle },
+      payload: JSON.stringify(corps),
+      muteHttpExceptions: true
+    });
+    var code = r.getResponseCode();
+    var rep = {};
+    try { rep = JSON.parse(r.getContentText() || '{}'); } catch (e) {}
+    /* OneSignal répond 200 même quand personne n'est visé : « recipients: 0 »
+       veut dire que ce salarié n'a pas encore accepté les notifications sur
+       son téléphone. Ce n'est pas une panne, mais ce n'est pas un envoi. */
+    if (code >= 200 && code < 300) {
+      var n = Number(rep.recipients || 0);
+      if (!n) return { ok: false, erreur: 'personne inscrit sous ce nom', aucun: true };
+      return { ok: true, recus: n, id: rep.id || '' };
+    }
+    var msg = (rep.errors && rep.errors[0]) ||
+              (rep.errors && rep.errors.invalid_aliases ? 'nom inconnu du service' : '') ||
+              ('refus ' + code);
+    return { ok: false, erreur: String(msg) };
+  } catch (e) {
+    return { ok: false, erreur: String(e && e.message || e) };
+  }
+}
+
+/* Le mot envoyé quand un chantier est posé ou déplacé. Il dit ce qu'il faut
+   pour s'organiser, et rien de plus : ni montant, ni code de portail. */
+function notifierChantier_(nom, ligne, deplace) {
+  if (!nom || !ligne) return;
+  var d = ligne.DATE ? new Date(ligne.DATE) : null;
+  var jour = (d && !isNaN(d.getTime()))
+    ? Utilities.formatDate(d, 'Europe/Paris', 'EEEE d MMMM')
+    : 'date à caler';
+  var h = heureTexte_(ligne.HEURE);
+  var ou = [String(ligne.CP || ''), String(ligne.VILLE || '')].filter(String).join(' ').trim();
+  var r = notifier_(nom,
+    deplace ? 'Chantier déplacé' : 'Nouveau chantier',
+    String(ligne.CLIENT || 'Chantier') + ' — ' + jour + (h ? ' à ' + h : '') +
+    (ou ? ' · ' + ou : ''));
+  if (!r.ok && !r.aucun) {
+    tracerServeur_(nom, 'NOTIFICATION RATEE', String(r.erreur || ''),
+                   String(ligne.NUMERO || ''), '');
+  }
+  return r;
+}
+
+/* ---- le menu ---- */
+function connecterNotifications() {
+  var ui = SpreadsheetApp.getUi();
+  var reg = lireReglages_();
+
+  var r1 = ui.prompt('Notifications (1/2) — l\'App ID',
+    'Colle l\'App ID de ton application OneSignal.\n\n' +
+    'Il se lit dans OneSignal : Paramètres → Clés et identifiants.\n' +
+    'Ce n\'est pas un secret : il figure déjà dans le code de l\'application.\n\n' +
+    (reg.onesignal_app_id ? 'Actuel : ' + reg.onesignal_app_id : ''),
+    ui.ButtonSet.OK_CANCEL);
+  if (r1.getSelectedButton() !== ui.Button.OK) return;
+  var app = String(r1.getResponseText() || '').trim();
+
+  var r2 = ui.prompt('Notifications (2/2) — la clé d\'API',
+    'Colle la clé d\'API REST (même page, « Clé API »).\n\n' +
+    'Celle-ci EST un secret : elle ne sera écrite ni dans le classeur ni dans ' +
+    'le code, mais dans les propriétés du script, que toi seul peux lire.',
+    ui.ButtonSet.OK_CANCEL);
+  if (r2.getSelectedButton() !== ui.Button.OK) return;
+  var cle = String(r2.getResponseText() || '').trim();
+
+  if (!app || !cle) { ui.alert('Il manque l\'un des deux. Rien n\'a été enregistré.'); return; }
+  ecrireReglage_('onesignal_app_id', app);
+  PropertiesService.getScriptProperties().setProperty(NOTIF_CLE_, cle);
+  ui.alert('Notifications connectées.\n\n' +
+    'Chaque personne doit encore ouvrir l\'application et accepter les ' +
+    'notifications sur son téléphone. Sur iPhone, l\'application doit d\'abord ' +
+    'être ajoutée à l\'écran d\'accueil.\n\n' +
+    'Essaie ensuite avec « 23. Tester une notification ».');
+}
+
+function testerNotification() {
+  var ui = SpreadsheetApp.getUi();
+  var c = notifConfig_();
+  if (!c.app || !c.cle) {
+    return ui.alert('Rien à essayer : lance d\'abord « 22. Connecter les notifications ».');
+  }
+  var r = ui.prompt('Tester une notification',
+    'À quel nom ? Écris-le comme dans l\'onglet COMMERCIAUX, PRESTATAIRES ou ADMINS.',
+    ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var nom = String(r.getResponseText() || '').trim();
+  if (!nom) return;
+
+  var res = notifier_(nom, 'Essai', 'Si tu lis ceci, les notifications marchent.');
+  if (res.ok) {
+    ui.alert('Partie à ' + res.recus + ' téléphone' + (res.recus > 1 ? 's' : '') + '.');
+  } else if (res.aucun) {
+    ui.alert('Personne n\'est inscrit sous « ' + nom + ' ».\n\n' +
+      'Cette personne doit ouvrir l\'application, se connecter sous ce nom, ' +
+      'puis accepter les notifications.\n' +
+      'Sur iPhone : ajouter d\'abord l\'application à l\'écran d\'accueil.');
+  } else {
+    ui.alert('Échec : ' + res.erreur);
+  }
+}
+
+function oublierNotifications() {
+  var ui = SpreadsheetApp.getUi();
+  var rep = ui.alert('Oublier la clé des notifications ?',
+    'Plus aucune notification ne partira tant que tu n\'auras pas reconnecté. ' +
+    'L\'App ID, lui, reste dans les réglages.', ui.ButtonSet.YES_NO);
+  if (rep !== ui.Button.YES) return;
+  PropertiesService.getScriptProperties().deleteProperty(NOTIF_CLE_);
+  ui.alert('Clé oubliée.');
 }
 
 /* ====================== LES COURRIELS ======================

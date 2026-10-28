@@ -300,7 +300,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v83';
+var VERSION_APP = 'v84';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -335,6 +335,7 @@ function deconnexion(){
            'Se déconnecter').then(function(oui){
     if(!oui) return;
     tracer('DECONNEXION', '');
+    debrancherNotifs();
     oublierArchive();
     session(null);
     ecranConnexion('');
@@ -1128,7 +1129,7 @@ function versionInformation(){
 function ecranAccord(){
   var t = texteInformation();
   // Rien à afficher : on ne bloque personne, mais chacun repart chez soi.
-  if(!t){ if(estAdmin()) ecranAdmin(); else if(estAgent()) ecranPlanning(); else etape(1); return; }
+  if(!t){ brancherNotifs(); if(estAdmin()) ecranAdmin(); else if(estAgent()) ecranPlanning(); else etape(1); return; }
   ETAPE = 0;
   montrer('eAccord');
   $('steps').classList.add('hide');
@@ -4206,6 +4207,155 @@ function verdictArchive(type){
   });
 }
 
+/* ====================== LES NOTIFICATIONS ======================
+   Le téléphone du salarié sonne quand le bureau lui pose un chantier. C'est
+   OneSignal qui porte le message : une page web ne sait pas réveiller un
+   téléphone toute seule.
+
+   Trois choses à savoir, qui expliquent la forme de ce code :
+   • Apple n'autorise les notifications web que si l'application a été ajoutée
+     à l'écran d'accueil. D'où le message qui le dit, plutôt qu'un bouton qui
+     ne ferait rien.
+   • l'autorisation ne se demande que sur un geste : un bouton, jamais à
+     l'ouverture. Un navigateur refuse sèchement une demande spontanée, et la
+     refuse alors pour toujours.
+   • chaque personne s'annonce sous son nom normalisé — « agent 1 ». Le
+     classeur vise le même. Un seul calcul des deux côtés, sinon le message
+     part dans le vide. */
+var NOTIF_ETAT = '';          // '', 'absent', 'ecran', 'refus', 'eteint', 'actif'
+
+function notifSdk(fn){
+  if(!window.OneSignalDeferred) return false;
+  window.OneSignalDeferred.push(fn);
+  return true;
+}
+/* Une application ouverte depuis l'écran d'accueil, et non dans l'onglet d'un
+   navigateur. Sur iPhone, c'est la condition d'Apple. */
+function surEcranAccueil(){
+  return window.matchMedia('(display-mode: standalone)').matches ||
+         window.navigator.standalone === true;
+}
+function estApplePhone(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/* L'état, en un mot, pour l'écran. */
+function notifCalculer(){
+  /* « absent » dit que ce navigateur ne sait pas recevoir de notifications,
+     pas que le SDK n'est pas encore arrivé : window.OneSignalDeferred existe
+     dès le premier octet de la page, et les appels poussés dedans attendent
+     sagement que le service soit là. */
+  if(!('Notification' in window) || !('serviceWorker' in navigator) || !window.isSecureContext){
+    NOTIF_ETAT = 'absent';
+  } else if(estApplePhone() && !surEcranAccueil()){
+    NOTIF_ETAT = 'ecran';
+  } else if(Notification.permission === 'denied'){
+    NOTIF_ETAT = 'refus';
+  } else if(Notification.permission === 'granted'){
+    NOTIF_ETAT = 'actif';
+  } else {
+    NOTIF_ETAT = 'eteint';
+  }
+  return NOTIF_ETAT;
+}
+
+function notifTexte(){
+  switch(notifCalculer()){
+    case 'absent': return 'Ce navigateur ne sait pas recevoir de notifications.';
+    case 'ecran':  return 'Pour être prévenu, ajoute d\'abord l\'application à ton écran ' +
+                          'd\'accueil : bouton Partager, puis « Sur l\'écran d\'accueil ».';
+    case 'refus':  return 'Les notifications sont bloquées pour cette application. ' +
+                          'Rouvre-les dans les réglages de ton téléphone.';
+    case 'actif':  return 'Tu es prévenu dès qu\'un chantier t\'est posé.';
+    default:       return 'Active les notifications pour être prévenu dès qu\'un ' +
+                          'chantier t\'est posé.';
+  }
+}
+
+/* Le nom sous lequel le classeur visera ce téléphone.
+   Volontairement PAS normNom() : celle-ci retire tous les signes
+   diacritiques par normalize('NFD'), là où normNom_ du classeur ne remplace
+   qu'une liste de lettres. « PEÑA » deviendrait « pena » ici et resterait
+   « peña » là-bas, et le message partirait dans le vide. On recopie donc la
+   liste du classeur, lettre pour lettre : les deux côtés doivent tomber sur
+   la même chaîne, toujours. */
+function idNotif(nom){
+  var s = String(nom == null ? '' : nom).trim().toLowerCase().replace(/\s+/g, ' ');
+  return s.replace(/[àáâäã]/g, 'a').replace(/[èéêë]/g, 'e').replace(/[ìíîï]/g, 'i')
+          .replace(/[òóôöõ]/g, 'o').replace(/[ùúûü]/g, 'u').replace(/[ç]/g, 'c');
+}
+
+/* À l'ouverture d'une session : on annonce qui est là, sans rien demander.
+   Tant que la personne n'a pas accepté, cela ne fait rien de visible. */
+function brancherNotifs(){
+  var moi = session();
+  if(!moi || !moi.nom) return;
+  notifSdk(async function(OneSignal){
+    try{ await OneSignal.login(idNotif(moi.nom)); }catch(e){}
+  });
+}
+/* À la déconnexion : ce téléphone ne parle plus pour cette personne. */
+function debrancherNotifs(){
+  notifSdk(async function(OneSignal){
+    try{ await OneSignal.logout(); }catch(e){}
+  });
+}
+
+/* Le bouton. C'est le geste qui autorise la demande. */
+function activerNotifs(btn){
+  var e = notifCalculer();
+  if(e === 'actif' || e === 'absent' || e === 'ecran' || e === 'refus'){
+    return peindreNotifs();
+  }
+  var moi = session();
+  if(btn) occuper(btn, 'Demande…');
+  /* Le SDK vit chez OneSignal : sans réseau il n'arrive jamais, et ce qu'on
+     pousse dans le tampon n'est jamais exécuté. Sans ce filet, le bouton
+     resterait à « Demande… » pour toujours. */
+  var repondu = false;
+  var secours = setTimeout(function(){
+    if(repondu) return;
+    repondu = true;
+    if(btn) libere(btn);
+    erreur('Le service de notifications n\'a pas répondu. Réessaie avec du réseau.');
+  }, 10000);
+  notifSdk(async function(OneSignal){
+    try{
+      await OneSignal.Notifications.requestPermission();
+      if(moi && moi.nom) await OneSignal.login(idNotif(moi.nom));
+      tracer('NOTIFICATIONS', Notification.permission);
+    }catch(err){
+      tracer('ERREUR NOTIFICATIONS', String(err && err.message || err));
+    }
+    if(repondu) return;
+    repondu = true;
+    clearTimeout(secours);
+    if(btn) libere(btn);
+    erreur('');
+    peindreNotifs();
+  });
+}
+
+/* La carte, posée sur le planning du salarié et sur le tableau du gérant. */
+function peindreNotifs(){
+  var z = $('notifZone');
+  if(!z) return;
+  var e = notifCalculer();
+  var bouton = (e === 'eteint')
+    ? '<button class="btn sec sm" style="margin-top:10px" onclick="activerNotifs(this)">' +
+      'Activer les notifications</button>'
+    : '';
+  z.innerHTML =
+    '<div style="display:flex;gap:10px;align-items:baseline">' +
+      '<b style="flex:1">Notifications</b>' +
+      '<span class="vb ' + (e === 'actif' ? 'vb-s' : e === 'refus' ? 'vb-x' : 'vb-a') + '">' +
+        (e === 'actif' ? 'ACTIVES' : e === 'refus' ? 'BLOQUÉES' : 'ÉTEINTES') + '</span>' +
+    '</div>' +
+    '<div class="mini" style="margin-top:4px">' + ech(notifTexte()) + '</div>' + bouton;
+  z.classList.toggle('hide', e === 'absent');
+}
+
 /* ====================== LA SEMAINE ======================
    Le planning s'est toujours lu en liste : ce qui vient, du plus proche au
    plus lointain. C'est le bon outil pour savoir où l'on va demain matin, mais
@@ -5119,6 +5269,7 @@ function ecranPlanning(){
   $('hTitre').textContent = 'Mon planning';
   erreur('');
   window.scrollTo(0,0);
+  peindreNotifs();
   peindrePlanning();
   if(navigator.onLine) chargerPlanning();
 }

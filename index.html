@@ -465,6 +465,31 @@
   .prLigne b{display:block;font-weight:600;overflow-wrap:anywhere}
   .prLigne span{font-size:13px;color:var(--mut)}
 </style>
+  <!-- Les notifications. Le SDK vit chez OneSignal : sans réseau il ne se
+       charge pas, et l'application s'en passe — le reste fonctionne hors
+       connexion comme avant. L'App ID n'est pas un secret : il figure dans
+       toute page qui reçoit des notifications. La clé d'API, elle, ne quitte
+       jamais les propriétés du script du classeur.
+       serviceWorkerParam met le travailleur d'OneSignal dans son propre
+       sous-dossier : sans cela il prendrait la place de sw.js, qui fait
+       marcher l'application hors connexion. -->
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+  <script>
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    OneSignalDeferred.push(async function(OneSignal){
+      try{
+        await OneSignal.init({
+          appId: "47a3997a-4804-4443-8755-634e62c10bad",
+          safari_web_id: "web.onesignal.auto.4345f3b9-0648-4376-838e-008c1d802430",
+          serviceWorkerPath: "push/onesignal/OneSignalSDKWorker.js",
+          serviceWorkerParam: { scope: "/devis/push/onesignal/" },
+          autoResubscribe: true,
+          notifyButton: { enable: false }
+        });
+      }catch(e){ /* pas de réseau, ou service indisponible : on s'en passe */ }
+      try{ if(window.peindreNotifs) peindreNotifs(); }catch(e){}
+    });
+  </script>
 </head>
 <body>
 
@@ -1129,9 +1154,6 @@
       <div class="mini" id="agQuand">—</div>
       <button class="btn sec sm" style="margin-top:12px" id="bAgMaj"
               onclick="chargerPlanning(this)">Actualiser</button>
-      <!-- Réservé au commercial qui a aussi un planning : un salarié ne se
-           pose pas de rendez-vous à lui-même. C'est le classeur qui décide,
-           par CFG.planning, pas cet écran. -->
       <button class="btn sec sm" style="margin-top:10px" id="bAgSem"
               onclick="basculerSemaine('agent')">Voir la semaine</button>
       <!-- Réservé au commercial qui a aussi un planning : un salarié ne se
@@ -1140,6 +1162,10 @@
       <button class="btn sec sm hide" style="margin-top:10px" id="bAgRdv"
               onclick="nouveauRdv()">+ Ajouter un rendez-vous</button>
     </div>
+    <!-- L'état des notifications, et le bouton qui les allume. Seul le
+         salarié en a besoin : c'est lui qu'on prévient, le gérant est celui
+         qui pose le chantier. -->
+    <div class="card hide" id="notifZone"></div>
     <div id="agListe"></div>
   </section>
 
@@ -1289,11 +1315,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=83"></script>
-<script src="jspdf.umd.min.js?v=83"></script>
-<script src="police.js?v=83"></script>
-<script src="logo.js?v=83"></script>
-<script src="pdf.js?v=83"></script>
-<script src="app.js?v=83"></script>
+<script src="config.js?v=84"></script>
+<script src="jspdf.umd.min.js?v=84"></script>
+<script src="police.js?v=84"></script>
+<script src="logo.js?v=84"></script>
+<script src="pdf.js?v=84"></script>
+<script src="app.js?v=84"></script>
 </body>
 </html>

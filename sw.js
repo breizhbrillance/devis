@@ -1,7 +1,7 @@
 /* Service worker : met l'application en cache pour qu'elle démarre sans réseau.
    Après toute modification des fichiers, incrémenter VERSION pour forcer la mise à jour. */
 
-var VERSION = 'devis-v83';
+var VERSION = 'devis-v84';
 
 var FICHIERS = [
   './',
@@ -44,6 +44,8 @@ self.addEventListener('fetch', function (e) {
   // Google Sheet et annuaire des entreprises : jamais de cache.
   if (url.indexOf('script.google.com') > -1 || url.indexOf('googleusercontent.com') > -1) return;
   if (url.indexOf('api.gouv.fr') > -1) return;
+  // Les notifications : leur travailleur et leurs appels ne nous regardent pas.
+  if (url.indexOf('onesignal.com') > -1 || url.indexOf('OneSignalSDK') > -1) return;
   if (e.request.method !== 'GET') return;
 
   // Fichiers de l'application : cache d'abord (démarrage instantané et hors ligne),
