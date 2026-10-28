@@ -724,15 +724,24 @@ var CATALOGUE_DEFAUT_ = [
    compare par REFERENCE et n'écrit que ce qui manque. C'est par elle que
    passent les ajouts au catalogue. */
 function completerCatalogue() {
-  var ui = SpreadsheetApp.getUi();
+  /* L'alerte n'est pas le travail : elle n'existe que depuis le menu du
+     classeur. Lancée depuis l'éditeur, SpreadsheetApp.getUi() lève, et une
+     fonction qui l'appelle en premier n'aurait alors rien fait du tout. On
+     fait donc le travail, et on en rend compte à la fin — à l'écran si
+     quelqu'un regarde, dans le journal d'exécution sinon. */
+  function dire(m) {
+    Logger.log(m);
+    try { SpreadsheetApp.getUi().alert(m); } catch (e) { /* lancé depuis l'éditeur */ }
+  }
+
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CATALOGUE);
-  if (!sh) return ui.alert('Onglet CATALOGUE introuvable. Lance d\'abord « 1. Initialiser le fichier ».');
+  if (!sh) return dire('Onglet CATALOGUE introuvable. Lance d\'abord « 1. Initialiser le fichier ».');
 
   var en = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0]
     .map(function (x) { return String(x).trim(); });
   var cRef = en.indexOf('REFERENCE');
-  if (cRef < 0) return ui.alert('Le CATALOGUE n\'a pas de colonne REFERENCE.\n\n' +
-                                'Lance « 6. Mettre à jour la structure du fichier », puis réessaie.');
+  if (cRef < 0) return dire('Le CATALOGUE n\'a pas de colonne REFERENCE.\n\n' +
+                            'Lance « 6. Mettre à jour la structure du fichier », puis réessaie.');
 
   var deja = {};
   if (sh.getLastRow() > 1) {
@@ -747,7 +756,7 @@ function completerCatalogue() {
   var manque = grilleComplete_().filter(function (l) {
     return !deja[String(l[ENTETES_CATALOGUE_.indexOf('REFERENCE')]).trim()];
   });
-  if (!manque.length) return ui.alert('Le catalogue est déjà complet : aucune prestation à ajouter.');
+  if (!manque.length) return dire('Le catalogue est déjà complet : aucune prestation à ajouter.');
 
   var large = Math.max(en.length, 1);
   var rows = manque.map(function (l) {
@@ -762,9 +771,9 @@ function completerCatalogue() {
     return '• ' + l[ENTETES_CATALOGUE_.indexOf('REFERENCE')] + ' — ' +
            l[ENTETES_CATALOGUE_.indexOf('DESIGNATION')];
   }).join('\n');
-  ui.alert(manque.length + ' prestation' + (manque.length > 1 ? 's ajoutées' : ' ajoutée') +
-           ' à la fin du catalogue :\n\n' + noms +
-           '\n\nAucune ligne existante n\'a été touchée.');
+  dire(manque.length + ' prestation' + (manque.length > 1 ? 's ajoutées' : ' ajoutée') +
+       ' à la fin du catalogue :\n\n' + noms +
+       '\n\nAucune ligne existante n\'a été touchée.');
 }
 
 function chargerGrillePrix() {
