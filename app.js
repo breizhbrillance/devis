@@ -358,7 +358,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v88';
+var VERSION_APP = 'v89';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4322,14 +4322,27 @@ function estApplePhone(){
 
 /* L'état, en un mot, pour l'écran. */
 function notifCalculer(){
-  /* « absent » dit que ce navigateur ne sait pas recevoir de notifications,
+  /* L'ORDRE DE CES TESTS COMPTE, et il a coûté un essai en vrai.
+
+     Sur un iPhone ouvert dans Safari — c'est-à-dire pas depuis l'icône de
+     l'écran d'accueil — `Notification` n'existe tout simplement pas. Le
+     premier test attrapait donc ce cas et répondait « absent », ce qui CACHE
+     la carte : le salarié ne voyait rien du tout, pas même la phrase qui lui
+     dit quoi faire. Maxime s'est connecté le 29 octobre, OneSignal a bien
+     enregistré sa session sous « maxime », mais sans jeton de notification —
+     et aucun message n'a pu lui parvenir.
+
+     L'iPhone passe donc en premier : sur un iPhone, « il faut l'ajouter à
+     l'écran d'accueil » est toujours la bonne réponse, et elle doit se lire.
+
+     « absent » dit que ce navigateur ne sait pas recevoir de notifications,
      pas que le SDK n'est pas encore arrivé : window.OneSignalDeferred existe
      dès le premier octet de la page, et les appels poussés dedans attendent
      sagement que le service soit là. */
-  if(!('Notification' in window) || !('serviceWorker' in navigator) || !window.isSecureContext){
-    NOTIF_ETAT = 'absent';
-  } else if(estApplePhone() && !surEcranAccueil()){
+  if(estApplePhone() && !surEcranAccueil()){
     NOTIF_ETAT = 'ecran';
+  } else if(!('Notification' in window) || !('serviceWorker' in navigator) || !window.isSecureContext){
+    NOTIF_ETAT = 'absent';
   } else if(Notification.permission === 'denied'){
     NOTIF_ETAT = 'refus';
   } else if(Notification.permission === 'granted'){
@@ -4343,8 +4356,10 @@ function notifCalculer(){
 function notifTexte(){
   switch(notifCalculer()){
     case 'absent': return 'Ce navigateur ne sait pas recevoir de notifications.';
-    case 'ecran':  return 'Pour être prévenu, ajoute d\'abord l\'application à ton écran ' +
-                          'd\'accueil : bouton Partager, puis « Sur l\'écran d\'accueil ».';
+    case 'ecran':  return 'Sur iPhone, les notifications ne marchent que depuis l\'écran ' +
+                          'd\'accueil. Appuie sur le bouton Partager, puis « Sur l\'écran ' +
+                          'd\'accueil » — et rouvre l\'application par son icône : le bouton ' +
+                          'pour les activer apparaîtra ici.';
     case 'refus':  return 'Les notifications sont bloquées pour cette application. ' +
                           'Rouvre-les dans les réglages de ton téléphone.';
     case 'actif':  return 'Tu es prévenu dès qu\'un chantier t\'est posé.';
