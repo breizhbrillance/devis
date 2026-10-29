@@ -279,6 +279,24 @@
   .semJ.glCible{background:var(--acc-f)}
   .jBloc.glCible .jBand{border-left-color:var(--acc)}
 
+  /* Où en est le travail d'un devis : vert posé, orange à poser, blanc pas
+     encore signé. Le trait de gauche porte la couleur et le fond la rappelle
+     sans écraser le texte, qui reste à pleine encre. */
+  .card.dvV{border-left:5px solid var(--ok);background:#e9f7ee}
+  .card.dvO{border-left:5px solid var(--warn);background:#fdf1e3}
+  .card.dvB{border-left:5px solid var(--line)}
+  .dvMot{font-weight:600;color:var(--txt);margin-top:4px}
+  /* La légende : sans elle, trois couleurs ne veulent rien dire la première
+     fois qu'on ouvre l'écran. */
+  .dvLeg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mut);
+         margin:2px 2px 10px}
+  .dvLeg span{display:flex;align-items:center;gap:5px}
+  .dvP{display:inline-block;width:11px;height:11px;border-radius:3px;
+       border:1px solid var(--line)}
+  .dvP.dvV{background:#e9f7ee;border-color:var(--ok)}
+  .dvP.dvO{background:#fdf1e3;border-color:var(--warn)}
+  .dvP.dvB{background:var(--card)}
+
   /* L'en-tête repliable des chiffres. */
   .adPli{flex:1;display:flex;align-items:center;gap:8px;background:none;border:0;
          padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
@@ -1403,11 +1421,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=87"></script>
-<script src="jspdf.umd.min.js?v=87"></script>
-<script src="police.js?v=87"></script>
-<script src="logo.js?v=87"></script>
-<script src="pdf.js?v=87"></script>
-<script src="app.js?v=87"></script>
+<script src="config.js?v=88"></script>
+<script src="jspdf.umd.min.js?v=88"></script>
+<script src="police.js?v=88"></script>
+<script src="logo.js?v=88"></script>
+<script src="pdf.js?v=88"></script>
+<script src="app.js?v=88"></script>
 </body>
 </html>

@@ -358,7 +358,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v87';
+var VERSION_APP = 'v88';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4818,6 +4818,53 @@ function peindreTableau(){
   $('adListe').innerHTML = AD_ONGLET === 'devis' ? listeDevisAdmin(t) : listeChantiersAdmin(t);
 }
 
+/* ---- OÙ EN EST LE TRAVAIL D'UN DEVIS ----
+
+   Trois états, et trois couleurs, demandés par Simon : vert quand tout est
+   posé au planning, orange quand il reste du travail à placer, blanc quand le
+   devis n'est pas encore signé et qu'il n'y a donc rien à placer.
+
+   Quand un devis est dans deux cas à la fois — pas encore signé, mais des
+   chantiers déjà posés et incomplets — c'est l'orange qui l'emporte : ce qui
+   demande un geste passe devant ce qui attend une signature.
+
+   La couleur ne porte jamais l'information toute seule : chaque carte écrit
+   son état en toutes lettres, et une légende l'explique en tête de liste. */
+function etatDevis(d){
+  var poses = Number(d.poses || 0), reste = Number(d.aPoser || 0);
+  var st = String(d.statut || '').toUpperCase();
+  if(reste > 0) return 'aPoser';
+  if(poses > 0) return 'pose';
+  if(st === 'SIGNE') return 'aPoser';     // signé, et pas un seul chantier posé
+  return 'attente';
+}
+
+var ETATS_DEVIS = {
+  pose:    {classe:'dvV', mot:'Travail posé'},
+  aPoser:  {classe:'dvO', mot:'À poser au planning'},
+  attente: {classe:'dvB', mot:'Pas encore signé'}
+};
+
+function motEtatDevis(d){
+  var e = ETATS_DEVIS[etatDevis(d)];
+  var n = Number(d.aPoser || 0), p = Number(d.poses || 0);
+  if(etatDevis(d) === 'aPoser' && n > 0){
+    return n + ' intervention' + (n>1?'s':'') + ' à poser';
+  }
+  if(etatDevis(d) === 'pose' && p > 0){
+    return p + ' intervention' + (p>1?'s':'') + ' posée' + (p>1?'s':'');
+  }
+  return e.mot;
+}
+
+function legendeDevis(){
+  return '<div class="dvLeg">' +
+    '<span><i class="dvP dvV"></i>posé</span>' +
+    '<span><i class="dvP dvO"></i>à poser</span>' +
+    '<span><i class="dvP dvB"></i>pas signé</span>' +
+  '</div>';
+}
+
 function listeDevisAdmin(t){
   var l = (t.devis||[]).filter(function(d){ return !AD_QUI || d.commercial === AD_QUI; });
   if(!l.length) return '<div class="card"><div class="empty">Aucun devis sur la période.</div></div>';
@@ -4827,8 +4874,9 @@ function listeDevisAdmin(t){
       parCom[0].nb + ' devis · ' + parCom[0].signes + ' signés · ' +
       eur(parCom[0].htSigne) + ' HT signés</div></div>'
     : '';
-  return tete + l.map(function(d){
-    return '<div class="card" style="cursor:pointer;margin-bottom:10px" onclick="ficheDevis(\'' +
+  return tete + legendeDevis() + l.map(function(d){
+    return '<div class="card ' + ETATS_DEVIS[etatDevis(d)].classe +
+      '" style="cursor:pointer;margin-bottom:10px" onclick="ficheDevis(\'' +
       ech(d.numero) + '\')">' +
       '<div style="display:flex;gap:10px;align-items:baseline">' +
         '<b style="flex:1;font-size:15.5px">' + ech(d.client||'—') + '</b>' + badgeDevis(d.statut) +
@@ -4836,6 +4884,9 @@ function listeDevisAdmin(t){
       '<div class="mini" style="margin-top:4px">' + ech(d.numero) + ' · ' + jjmmaa(d.date) +
         ' · ' + eur(d.ttc) + ' TTC</div>' +
       '<div class="mini">' + ech(d.commercial) + (d.ville ? ' · ' + ech(d.ville) : '') + '</div>' +
+      /* La couleur ne dit rien toute seule : un écran en plein soleil, un œil
+         qui distingue mal le vert de l'orange, et il ne resterait rien. */
+      '<div class="mini dvMot">' + ech(motEtatDevis(d)) + '</div>' +
       (d.statut === 'REFUSE' && d.motif ? '<div class="mini">Refus : ' + ech(d.motif) + '</div>' : '') +
       (d.statut === 'A RELANCER' && d.relance ? '<div class="mini">Relance le ' + jjmmaa(d.relance) + '</div>' : '') +
     '</div>';
@@ -5394,12 +5445,13 @@ function ficheDevis(numero){
 
 function peindreFicheDevis(d){
   $('adFiche').innerHTML =
-    '<div class="card">' +
+    '<div class="card ' + ETATS_DEVIS[etatDevis(d)].classe + '">' +
       '<div style="display:flex;gap:10px;align-items:baseline">' +
         '<b style="flex:1;font-size:17px">' + ech(d.client||'—') + '</b>' + badgeDevis(d.statut) +
       '</div>' +
       '<div class="mini" style="margin-top:6px">' + ech(d.numero) + ' · ' + jjmmaa(d.date) + '</div>' +
       '<div class="mini">Établi par ' + ech(d.commercial) + (d.ville ? ' · ' + ech(d.ville) : '') + '</div>' +
+      '<div class="mini dvMot">' + ech(motEtatDevis(d)) + '</div>' +
       '<div class="ch" style="margin-top:10px"><span style="color:var(--mut)">Total HT</span><b>' +
         eur(d.ht) + '</b></div>' +
       '<div class="ch gros"><span>Total TTC</span><span>' + eur(d.ttc) + '</span></div>' +

@@ -1917,14 +1917,24 @@ function tableauAdmin_() {
   var loin = new Date(); loin.setDate(loin.getDate() + 90);
   var natures = naturesParDevis_();
   var chantiers = [];
-  /* Combien de chantiers chaque devis a-t-il déjà ? Compté avant le filtre de
-     dates, sinon un devis dont les passages tombent hors de la fenêtre
-     passerait pour n'en avoir aucun, et l'écran proposerait de les reposer. */
-  var parDevis = {};
+  /* Combien de chantiers chaque devis a-t-il déjà, et combien lui restent à
+     poser ? Compté avant le filtre de dates, sinon un devis dont les passages
+     tombent hors de la fenêtre passerait pour n'en avoir aucun, et l'écran
+     proposerait de les reposer.
+
+     Les annulés ne comptent ni d'un côté ni de l'autre : ce n'est plus du
+     travail. Un chantier « à poser » est un chantier sans date ou sans
+     personne — dans les deux cas il n'apparaît sur aucun téléphone. */
+  var parDevis = {}, aPoser = {};
   objetsDe_(SH.CHANTIERS).forEach(function (o) {
     if (!String(o.ID || '').trim()) return;
     var nd = String(o.NUMERO || '').trim();
-    if (nd) parDevis[nd] = (parDevis[nd] || 0) + 1;
+    if (nd && String(o.STATUT || '').toUpperCase().trim() !== 'ANNULE') {
+      parDevis[nd] = (parDevis[nd] || 0) + 1;
+      if (!o.DATE || !String(o.PRESTATAIRE || '').trim()) {
+        aPoser[nd] = (aPoser[nd] || 0) + 1;
+      }
+    }
     /* Une fiche annulée part quand même au gérant, avec son statut : l'écran
        la range derrière sa propre pastille, hors du travail à faire, et c'est
        de là qu'il peut la rétablir. Sans cela, une annulation par erreur ne se
@@ -1960,7 +1970,10 @@ function tableauAdmin_() {
 
   /* Le compte ne peut se poser qu'ici : parDevis vient d'être rempli en lisant
      les chantiers, et la liste des devis, elle, a été dressée plus haut. */
-  devis.forEach(function (x) { x.poses = parDevis[x.numero] || 0; });
+  devis.forEach(function (x) {
+    x.poses = parDevis[x.numero] || 0;
+    x.aPoser = aPoser[x.numero] || 0;
+  });
 
   var liste = [];
   for (var k in par) if (par.hasOwnProperty(k)) liste.push(par[k]);
