@@ -110,7 +110,16 @@ var ENTETES_CHANTIERS_ = [
   /* NATURE : entretien, vitrages, fin de chantier, remise en état, façade.
      Elle vivait sur le devis seul ; un chantier récurrent n'en avait donc
      aucune. Recopiée ici à la création, elle sert à colorer le planning. */
-  'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT', 'NATURE'
+  /* AVANT_SIGNATURE : « OUI » sur un chantier que le gérant a posé sans
+     attendre que le devis soit déclaré signé. Un commercial ne déclare pas
+     toujours la signature le jour même, et le client, lui, attend sa date.
+     Cette marque ne change rien pour le salarié — il voit un chantier comme un
+     autre, savoir si le papier est signé n'est pas son affaire. Elle sert au
+     gérant, qui voit d'un coup d'œil ce qui n'est pas encore fermé, et elle
+     retient l'annulation automatique : un devis refusé emporte les chantiers
+     nés d'une signature, jamais ceux-là, que le gérant décide lui-même de
+     garder ou non. Effacée le jour où le devis est enfin signé. */
+  'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT', 'NATURE', 'AVANT_SIGNATURE'
 ];
 
 /* La série récurrente. JOUR vaut LUNDI..DIMANCHE pour les fréquences
@@ -933,7 +942,8 @@ function doPost(e) {
                    'rdvNeuf', 'monChantier',
                    'prospects', 'appel', 'historique',
                    'facturation', 'facturer', 'facturesMois',
-                   'mesDevis', 'devisArchive'];
+                   'mesDevis', 'devisArchive',
+                   'poserDevis'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -977,6 +987,10 @@ function doPost(e) {
             seul. Un commercial qui les appelle se voit refusé, et le refus
             part au journal. */
          'facturation', 'facturer', 'facturesMois',
+         /* Poser le travail d'un devis que le commercial n'a pas encore
+            déclaré signé : c'est un engagement pris sur la parole du client,
+            il revient au gérant seul. */
+         'poserDevis',
          'mesDevis', 'devisArchive']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
@@ -1019,6 +1033,7 @@ function doPost(e) {
     }
     if (d.action === 'tableau') return reponse_(tableauAdmin_());
     if (d.action === 'planifier') return reponse_(planifierChantier_(d, com));
+    if (d.action === 'poserDevis') return reponse_(poserAvantSignature_(d, com));
     if (d.action === 'chantierNeuf') return reponse_(creerChantier_(d, com));
     if (d.action === 'lotChantiers') return reponse_(lotChantiers_(d, com));
     if (d.action === 'rdvNeuf') return reponse_(rdvCommercial_(d, com));
@@ -1462,6 +1477,10 @@ function signerDevisRecu_(ligne, col, d, devis, reg, com) {
       tracerServeur_(devis.commercial || com.nom, 'CHANTIERS CREES',
                      nes + ' à planifier', numero, d.appareil || '');
     }
+    /* Le devis est signé pour de bon : ce qui avait été posé d'avance n'a plus
+       rien de provisoire. Les dates et les salariés déjà posés, eux, ne bougent
+       pas — planifierDevis_ ne touche jamais une ligne déjà datée. */
+    marquerAvantSignature_(numero, false);
     poserPlanning_(numero, devis.commercial || com.nom, d.appareil || '');
   } catch (eC) {
     tracerServeur_('SYSTEME', 'CHANTIERS ECHEC', String(eC && eC.message || eC), numero, '');
@@ -1796,6 +1815,7 @@ function enregistrerStatut_(d, com) {
         tracerServeur_(com ? com.nom : (d.nom || ''), 'CHANTIERS CREES',
                        nes + ' à planifier', num, d.appareil || '');
       }
+      marquerAvantSignature_(num, false);
       poserPlanning_(num, com ? com.nom : (d.nom || ''), d.appareil || '');
     } catch (eC) {
       tracerServeur_('SYSTEME', 'CHANTIERS ECHEC', String(eC && eC.message || eC),
@@ -1897,8 +1917,14 @@ function tableauAdmin_() {
   var loin = new Date(); loin.setDate(loin.getDate() + 90);
   var natures = naturesParDevis_();
   var chantiers = [];
+  /* Combien de chantiers chaque devis a-t-il déjà ? Compté avant le filtre de
+     dates, sinon un devis dont les passages tombent hors de la fenêtre
+     passerait pour n'en avoir aucun, et l'écran proposerait de les reposer. */
+  var parDevis = {};
   objetsDe_(SH.CHANTIERS).forEach(function (o) {
     if (!String(o.ID || '').trim()) return;
+    var nd = String(o.NUMERO || '').trim();
+    if (nd) parDevis[nd] = (parDevis[nd] || 0) + 1;
     /* Une fiche annulée part quand même au gérant, avec son statut : l'écran
        la range derrière sa propre pastille, hors du travail à faire, et c'est
        de là qu'il peut la rétablir. Sans cela, une annulation par erreur ne se
@@ -1919,7 +1945,10 @@ function tableauAdmin_() {
       arrivee: Number(o.ARRIVEE) || 0, depart: Number(o.DEPART) || 0,
       minutes: Number(o.MINUTES) || 0,
       signalement: String(o.SIGNALEMENT || ''), note: String(o.NOTE || ''),
-      nature: natureChantier_(o, natures)
+      nature: natureChantier_(o, natures),
+      /* Seul le gérant le reçoit : le planning du salarié, lui, n'en sait
+         rien et n'a pas à en savoir. */
+      avantSignature: String(o.AVANT_SIGNATURE || '').trim().toUpperCase() === 'OUI'
     });
   });
   chantiers.sort(function (a, b) {
@@ -1928,6 +1957,10 @@ function tableauAdmin_() {
     return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
   });
   if (chantiers.length > 300) chantiers = chantiers.slice(0, 300);
+
+  /* Le compte ne peut se poser qu'ici : parDevis vient d'être rempli en lisant
+     les chantiers, et la liste des devis, elle, a été dressée plus haut. */
+  devis.forEach(function (x) { x.poses = parDevis[x.numero] || 0; });
 
   var liste = [];
   for (var k in par) if (par.hasOwnProperty(k)) liste.push(par[k]);
@@ -2268,7 +2301,7 @@ function prochainNumChantier_(sh, cId) {
 /* Pose le planning d'un devis et prévient le gérant. On ne laisse jamais une
    planification se faire en silence : ce sont des rendez-vous chez des clients,
    et le gérant doit pouvoir les contester le jour même. */
-function poserPlanning_(numero, qui, appareil) {
+function poserPlanning_(numero, qui, appareil, avantSignature) {
   var bilan;
   try {
     reactiverChantiers_(numero);
@@ -2298,7 +2331,10 @@ function poserPlanning_(numero, qui, appareil) {
   }
 
   var dest = String(reg.recap_email || '').trim() || Session.getEffectiveUser().getEmail();
-  var corps = 'Devis ' + numero + ' signé.\n\n' +
+  var corps = (avantSignature
+      ? 'Devis ' + numero + ' — travail posé sans attendre la signature.\n' +
+        'Le devis garde son statut : rien d\'autre que le planning n\'a bougé.\n\n'
+      : 'Devis ' + numero + ' signé.\n\n') +
     (bilan.poses.length
       ? bilan.poses.length + ' intervention(s) posée(s) :\n' + dates + '\n'
       : 'Aucune intervention n\'a pu être posée.\n') +
@@ -2970,13 +3006,23 @@ function annulerChantiers_(numero, motif, qui, appareil) {
   var iNum = en.indexOf('NUMERO'), iDate = en.indexOf('DATE'), iHeure = en.indexOf('HEURE');
   var iQui = en.indexOf('PRESTATAIRE'), iStatut = en.indexOf('STATUT');
   var iArr = en.indexOf('ARRIVEE'), iNote = en.indexOf('NOTE'), iId = en.indexOf('ID');
+  var iAv = en.indexOf('AVANT_SIGNATURE');
   if (iNum < 0 || iStatut < 0) return [];
-  var annules = [];
+  var annules = [], laisses = [];
   for (var i = 1; i < v.length; i++) {
     if (String(v[i][iNum]).trim() !== String(numero).trim()) continue;
     var st = String(v[i][iStatut]).toUpperCase().trim();
     if (st !== 'A PLANIFIER' && st !== 'PLANIFIE' && st !== '') continue;
     if (iArr >= 0 && v[i][iArr]) continue;           // il y est allé
+    /* Posé par le gérant avant la signature : ce n'est pas la signature qui le
+       tenait, ce n'est donc pas son absence qui doit l'emporter. Il reste au
+       planning, et le gérant est prévenu qu'il a une décision à prendre. */
+    if (iAv >= 0 && String(v[i][iAv] || '').trim().toUpperCase() === 'OUI') {
+      laisses.push({ id: iId >= 0 ? String(v[i][iId]) : '',
+                     date: iDate >= 0 && v[i][iDate] instanceof Date ? v[i][iDate] : null,
+                     nom: iQui >= 0 ? String(v[i][iQui] || '').trim() : '' });
+      continue;
+    }
     var d = iDate >= 0 && v[i][iDate] instanceof Date ? v[i][iDate] : null;
     var nom = iQui >= 0 ? String(v[i][iQui] || '').trim() : '';
     var trace = MARQUE_ANNULATION_ + (motif || 'non signé') + ') le ' +
@@ -2993,6 +3039,30 @@ function annulerChantiers_(numero, motif, qui, appareil) {
     }
     annules.push({ id: iId >= 0 ? String(v[i][iId]) : '', date: d, nom: nom });
   }
+
+  if (laisses.length) {
+    tracerServeur_(qui || 'SYSTEME', 'CHANTIERS LAISSES',
+                   laisses.length + ' posé(s) avant signature, gardé(s) au planning — ' +
+                   'devis ' + (motif || 'non signé') + ' : à annuler toi-même si besoin',
+                   numero, appareil || '');
+    var regL = lireReglages_();
+    var destL = String(regL.recap_email || '').trim() || Session.getEffectiveUser().getEmail();
+    var corpsL = 'Le devis ' + numero + ' est passé à « ' + (motif || 'non signé') + ' ».\n\n' +
+      laisses.length + ' intervention(s) avaient été posée(s) avant la signature. ' +
+      'Elles sont RESTÉES au planning, parce que ce n\'est pas la signature qui les ' +
+      'tenait :\n' +
+      laisses.map(function (a) {
+        return '  · ' + (a.date ? Utilities.formatDate(a.date, 'Europe/Paris', 'dd/MM/yyyy')
+                                : '(sans date)') +
+               (a.nom ? ' — ' + a.nom : '') + (a.id ? ' (' + a.id + ')' : '');
+      }).join('\n') +
+      '\n\nÀ toi de décider : si le client se retire pour de bon, annule-les depuis ' +
+      'ton tableau.\n' + SpreadsheetApp.getActive().getUrl();
+    try { envoyerMail_({ to: destL, subject: 'Planning — devis ' + numero +
+                         ' : interventions gardées', body: corpsL }, regL); }
+    catch (eL) { /* le classeur reste la source */ }
+  }
+
   if (!annules.length) return annules;
 
   tracerServeur_(qui || 'SYSTEME', 'CHANTIERS ANNULES',
@@ -3017,6 +3087,69 @@ function annulerChantiers_(numero, motif, qui, appareil) {
     catch (e) { /* le classeur reste la source */ }
   }
   return annules;
+}
+
+/* Pose ou retire la marque « posé avant signature » sur tous les chantiers
+   d'un devis. Rend le nombre de lignes réellement changées : une marque déjà
+   bonne ne se réécrit pas, pour ne pas faire travailler le classeur pour rien. */
+function marquerAvantSignature_(numero, oui) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return 0;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var iNum = en.indexOf('NUMERO'), iAv = en.indexOf('AVANT_SIGNATURE');
+  if (iNum < 0 || iAv < 0) return 0;
+  var vise = oui ? 'OUI' : '';
+  var n = 0;
+  for (var i = 1; i < v.length; i++) {
+    if (String(v[i][iNum]).trim() !== String(numero).trim()) continue;
+    if (String(v[i][iAv] || '').trim().toUpperCase() === vise) continue;
+    sh.getRange(i + 1, iAv + 1).setValue(vise);
+    n++;
+  }
+  return n;
+}
+
+/* Le travail posé sans attendre la signature.
+
+   Un chantier naît normalement d'un devis signé. Mais le commercial ne déclare
+   pas toujours la signature en temps et en heure, et pendant ce temps le client
+   attend sa date et le salarié n'a rien à faire. Le gérant peut donc poser le
+   planning d'un devis qui n'est pas encore marqué signé.
+
+   Ce n'est pas une signature : le devis garde son statut, son numéro, et son
+   absence de preuve. Rien d'autre ne bouge que les chantiers. */
+function poserAvantSignature_(d, com) {
+  var num = String(d.numero || '').trim();
+  if (!num) return { ok: false, erreur: 'numéro de devis manquant' };
+
+  var devis = null;
+  lireDevis_().forEach(function (x) {
+    if (String(x.NUMERO).trim() === num) devis = x;
+  });
+  if (!devis) return { ok: false, erreur: 'devis introuvable' };
+
+  var st = String(devis.STATUT || '').toUpperCase().trim();
+  if (st === 'SIGNE') {
+    return { ok: false, erreur: 'ce devis est signé : son planning est déjà posé' };
+  }
+  if (st === 'REFUSE') {
+    return { ok: false, erreur: 'ce devis a été refusé — corrige d\'abord son résultat' };
+  }
+
+  /* genererChantiers_ ne fait rien si les lignes existent déjà : on peut donc
+     rappeler cette action pour compléter un planning laissé à moitié posé. */
+  var nes = genererChantiers_(num);
+  marquerAvantSignature_(num, true);
+  var bilan = poserPlanning_(num, com.nom, d.appareil || '', true);
+
+  tracerServeur_(com.nom, 'CHANTIERS POSES AVANT SIGNATURE',
+                 nes + ' créé(s), ' + bilan.poses.length + ' planifié(s)' +
+                 (bilan.motif ? ' — ' + bilan.motif : ''),
+                 num, d.appareil || '');
+
+  return { ok: true, crees: nes, poses: bilan.poses.length,
+           refuses: bilan.refuses.length, motif: bilan.motif || '' };
 }
 
 /* Un devis refusé puis finalement signé : ses fiches annulées par l'appli

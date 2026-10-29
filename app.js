@@ -271,6 +271,7 @@ window.addEventListener('load', function(){
   }
 
   chargerRepertoire();
+  brancherGlisser();
   /* Ici se trouvait « ls('moi', null) », qui effaçait la session à chaque
      démarrage : c'était la règle d'hier, celle d'une connexion qui ne survivait
      pas à la fermeture. Depuis la v85 elle tient trente jours, et c'est session()
@@ -357,7 +358,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v85';
+var VERSION_APP = 'v87';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4482,7 +4483,7 @@ function libelleSemaine(lundi){
 /* Le rendu, commun au gérant et au salarié : ce sont les mêmes chantiers, vus
    d'un côté ou de l'autre. « surClic » est le nom de la fonction à appeler
    avec l'identifiant — chacun ouvre sa propre fiche. */
-function semaineHtml(chantiers, surClic){
+function semaineHtml(chantiers, surClic, glisser){
   var lundi = semaineVue(), jours = joursDe(lundi), auj = isoJour();
   var par = {};
   jours.forEach(function(j){ par[j] = []; });
@@ -4515,7 +4516,8 @@ function semaineHtml(chantiers, surClic){
     var d = new Date(j + 'T12:00:00');
     var liste = par[j];
     h += '<div class="semJ' + (j === auj ? ' semAuj' : '') +
-         (liste.length ? '' : ' semVide') + '">' +
+         (liste.length ? '' : ' semVide') + '"' +
+         (glisser ? ' data-jour="' + ech(j) + '"' : '') + '>' +
          '<div class="semTete"><b>' + SEM_JOURS[i].slice(0,3) + '</b>' +
          '<span>' + d.getDate() + '</span></div>';
     if(!liste.length){
@@ -4524,6 +4526,7 @@ function semaineHtml(chantiers, surClic){
       liste.forEach(function(c){
         var n = natureVue(c.nature);
         h += '<button class="semEv" ' +
+             (glisser ? 'data-ch="' + ech(String(c.id)) + '" ' : '') +
              (n ? 'style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '"' : '') +
              ' onclick="' + surClic + '(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\')">' +
              (c.heure ? '<b>' + ech(c.heure) + '</b>' : '') +
@@ -4710,6 +4713,25 @@ function ongletAdmin(quoi){
 }
 function filtreAdmin(nom){ AD_QUI = nom; peindreTableau(); }
 
+/* Les chiffres repliés, et le souvenir de ce choix. On ouvre le tableau pour
+   savoir qui va où : le chiffre d'affaires a sa place, mais pas la première. */
+var AD_PLIE = ls('adPlie') !== 'non';
+function plierChiffres(){
+  AD_PLIE = !AD_PLIE;
+  ls('adPlie', AD_PLIE ? 'oui' : 'non');
+  peindreTableau();
+}
+
+/* Ce que dit la ligne repliée : de quoi savoir s'il faut la déplier. */
+function resumeChiffres(t){
+  var c = (t && t.chiffres) || null;
+  if(!c || !c.nb) return 'Le tableau';
+  /* Court exprès : la ligne repliée doit tenir sur une seule, même sur un
+     petit téléphone. Le détail est à un appui. */
+  return c.nb + ' devis · ' + (c.signes||0) + ' signé' + ((c.signes||0)>1?'s':'') +
+         ' · ' + Math.round(c.htSigne||0).toLocaleString('fr-FR') + ' €';
+}
+
 function peindreTableau(){
   var t = TABLEAU;
   $('adMaj').textContent = (t && t.maj)
@@ -4718,6 +4740,12 @@ function peindreTableau(){
   $('bOngDevis').classList.toggle('on', AD_ONGLET === 'devis');
   $('bOngChantiers').classList.toggle('on', AD_ONGLET === 'chantiers');
   $('bOngFactures').classList.toggle('on', AD_ONGLET === 'factures');
+  $('adResume').textContent = AD_PLIE ? resumeChiffres(t) : 'Le tableau';
+  $('adDetail').classList.toggle('hide', AD_PLIE);
+  $('bAdPli').setAttribute('aria-expanded', AD_PLIE ? 'false' : 'true');
+  /* Un devis neuf se commence depuis l'onglet des devis. Au-dessus du planning
+     il ne servait qu'à repousser le travail plus bas. */
+  $('bAdDevisNeuf').classList.toggle('hide', AD_ONGLET !== 'devis');
   $('adActions').classList.toggle('hide', AD_ONGLET !== 'chantiers');
   $('adFact').classList.toggle('hide', AD_ONGLET !== 'factures');
   $('bAdSel').textContent = AD_SEL ? 'Terminer' : 'Sélectionner';
@@ -4782,7 +4810,9 @@ function peindreTableau(){
       (sans ? '<div class="card" style="border-color:var(--warn);margin-bottom:10px"><b>' + sans +
         ' chantier' + (sans>1?'s':'') + ' à planifier</b><div class="mini">Sans date ou sans ' +
         'personne, ils n\'apparaissent dans aucune colonne.</div></div>' : '') +
-      semaineHtml(vivants, 'ficheChantier');
+      /* Le gérant déplace ; le salarié regarde. C'est le même tableau de
+         semaine, mais on ne lui donne pas de prise. */
+      semaineHtml(vivants, 'ficheChantier', true);
     return;
   }
   $('adListe').innerHTML = AD_ONGLET === 'devis' ? listeDevisAdmin(t) : listeChantiersAdmin(t);
@@ -4814,6 +4844,307 @@ function listeDevisAdmin(t){
 
 function estAnnule(c){ return String(c.statut||'').toUpperCase() === 'ANNULE'; }
 
+/* ---- DÉPLACER UN CHANTIER SANS QUITTER LA LISTE ----
+
+   Reporter un chantier au lendemain demandait d'ouvrir sa fiche, de trouver le
+   champ de date, de taper la date, d'enregistrer, puis de revenir. Cinq gestes
+   pour l'opération la plus courante de la journée.
+
+   Un appui sur « Déplacer » ouvre un panneau sous la carte : une pastille, et
+   c'est fait. Le filet est l'annulation — un geste aussi rapide se trompe de
+   carte de temps en temps, et il faut pouvoir le défaire sans réfléchir. */
+
+var AD_VITE = null;      // l'identifiant du chantier dont le panneau est ouvert
+var AD_DEFAIRE = null;   // { id, avant: {date, heure, prestataire}, mot }
+var AD_MINUTEUR = null;
+
+function deplierVite(id, ev){
+  if(ev && ev.stopPropagation) ev.stopPropagation();
+  AD_VITE = (AD_VITE === id) ? null : id;
+  peindreTableau();
+}
+
+/* Les reports proposés. Le point de départ est la date du chantier, ou
+   aujourd'hui s'il n'en a pas : reporter « au lendemain » un chantier sans
+   date n'aurait aucun sens. */
+function reportsVite(c){
+  var base = c.date || isoJour();
+  return [
+    {lib:'Demain', iso:dansNJours(isoJour(), 1)},
+    {lib:'Dans 2 jours', iso:dansNJours(isoJour(), 2)},
+    {lib:'+ 1 semaine', iso:dansNJours(base, 7)}
+  ];
+}
+
+function dansNJours(iso, n){
+  var p = String(iso||'').split('-');
+  var d = new Date(Number(p[0]), Number(p[1])-1, Number(p[2]));
+  if(isNaN(d.getTime())) d = new Date();
+  d.setDate(d.getDate() + n);
+  return isoJour(d);
+}
+
+function blocDeplacerVite(c){
+  // En mode sélection, l'appui coche : deux gestes rapides se marcheraient dessus.
+  if(AD_SEL || estAnnule(c)) return '';
+  if(AD_VITE !== c.id){
+    return '<button class="adRap" onclick="deplierVite(\'' + ech(c.id) +
+           '\', event)">Déplacer</button>';
+  }
+  var gens = ((TABLEAU||{}).prestataires||[]);
+  return '<div class="adVite" onclick="event.stopPropagation()">' +
+    '<div class="lab">Reporter</div>' +
+    '<div class="row">' +
+      reportsVite(c).map(function(r){
+        return '<span class="puce" onclick="reporterVite(\'' + ech(c.id) + '\',\'' +
+               r.iso + '\')">' + ech(r.lib) + '</span>';
+      }).join('') +
+      '<span class="puce" onclick="ficheChantier(\'' + ech(c.id) + '\')">Autre date…</span>' +
+    '</div>' +
+    '<div class="lab">Confier à</div>' +
+    '<div class="row">' +
+      gens.map(function(g){
+        return '<span class="puce' + (c.prestataire === g ? ' on' : '') +
+               '" onclick="confierVite(\'' + ech(c.id) + '\',\'' +
+               ech(g).replace(/'/g,'&#39;') + '\')">' + ech(g) + '</span>';
+      }).join('') +
+      '<span class="puce' + (!c.prestataire ? ' on' : '') +
+        '" onclick="confierVite(\'' + ech(c.id) + '\',\'\')">Personne</span>' +
+    '</div>' +
+  '</div>';
+}
+
+/* ---- FAIRE GLISSER UN CHANTIER D'UN JOUR À L'AUTRE ----
+
+   Le doigt reste posé sur la carte, elle se décolle, on la promène, on la
+   lâche sur une journée. C'est le geste d'un agenda de papier, et c'est le
+   seul qui se passe de lire quoi que ce soit.
+
+   Trois difficultés, et ce qui les règle :
+
+   · Un appui posé est AUSSI le début d'un défilement. On attend donc d'être
+     resté immobile un bon moment (GL_TENU) avant de décoller quoi que ce soit ;
+     un doigt qui bouge avant la fin de ce délai défile, comme d'habitude.
+
+   · Une fois la carte décollée, il faut au contraire EMPÊCHER le défilement,
+     sinon la page part sous le doigt. D'où l'écouteur « touchmove » non
+     passif : lui seul peut appeler preventDefault, et il ne le fait que
+     pendant un glissement.
+
+   · Après un glissement, le navigateur envoie quand même un « click » sur la
+     carte, qui ouvrirait sa fiche. On avale ce clic-là.
+
+   Tout passe par les événements « pointer » : la souris et le doigt tiennent
+   le même discours, et l'essai peut donc jouer le geste sans téléphone. */
+
+var GL = null;             // { id, el, fantome, cible, dx, dy }
+var GL_MINUTEUR = null;
+var GL_DEPART = null;      // { x, y, el } tant que rien n'est décollé
+var GL_FINI = 0;           // l'instant du dernier lâcher, pour avaler le clic
+var GL_TENU = 420;         // ms de doigt immobile avant de décoller
+var GL_BOUGE = 10;         // px au-delà desquels c'est un défilement, pas un appui
+
+function glisserPossible(el){
+  // Le gérant déplace. En mode sélection, l'appui coche : les deux gestes se
+  // marcheraient dessus.
+  return !!el && !AD_SEL && estAdmin();
+}
+
+function surPointeurBas(e){
+  if(e.button !== undefined && e.button !== 0) return;
+  var el = e.target && e.target.closest ? e.target.closest('[data-ch]') : null;
+  if(!glisserPossible(el)) return;
+  glAnnulerAttente();
+  GL_DEPART = {x:e.clientX, y:e.clientY, el:el};
+  GL_MINUTEUR = setTimeout(function(){ glDecoller(e.clientX, e.clientY); }, GL_TENU);
+}
+
+function glAnnulerAttente(){
+  if(GL_MINUTEUR){ clearTimeout(GL_MINUTEUR); GL_MINUTEUR = null; }
+  GL_DEPART = null;
+}
+
+function glDecoller(x, y){
+  GL_MINUTEUR = null;
+  var d = GL_DEPART;
+  GL_DEPART = null;
+  if(!d || !d.el || !d.el.isConnected) return;
+  var r = d.el.getBoundingClientRect();
+  var f = d.el.cloneNode(true);
+  f.className = (d.el.className || '') + ' glFantome';
+  f.style.width = r.width + 'px';
+  f.style.left = r.left + 'px';
+  f.style.top = r.top + 'px';
+  f.removeAttribute('onclick');
+  document.body.appendChild(f);
+  d.el.classList.add('glParti');
+  document.body.classList.add('glEnCours');
+  GL = {id:d.el.getAttribute('data-ch'), el:d.el, fantome:f, cible:null,
+        dx:x - r.left, dy:y - r.top};
+  vibrer(18);
+  glDeplacer(x, y);
+}
+
+function glDeplacer(x, y){
+  if(!GL) return;
+  GL.fantome.style.left = (x - GL.dx) + 'px';
+  GL.fantome.style.top = (y - GL.dy) + 'px';
+
+  // Le fantôme ne doit pas se désigner lui-même : il est en pointer-events:none.
+  var sous = document.elementFromPoint(x, y);
+  var cible = sous && sous.closest ? sous.closest('[data-jour]') : null;
+  if(cible !== GL.cible){
+    if(GL.cible) GL.cible.classList.remove('glCible');
+    GL.cible = cible;
+    if(cible) cible.classList.add('glCible');
+  }
+  glBordure(x, y);
+}
+
+/* Près d'un bord, on avance tout seul : sans cela, un chantier ne pourrait
+   jamais rejoindre une journée qui n'est pas déjà à l'écran. */
+function glBordure(x, y){
+  var h = window.innerHeight;
+  if(y < 90) window.scrollBy(0, -12);
+  else if(y > h - 90) window.scrollBy(0, 12);
+  var sem = document.querySelector('.sem');
+  if(sem){
+    var r = sem.getBoundingClientRect();
+    if(y > r.top && y < r.bottom){
+      if(x < r.left + 46) sem.scrollLeft -= 14;
+      else if(x > r.right - 46) sem.scrollLeft += 14;
+    }
+  }
+}
+
+function surPointeurHaut(e){
+  if(GL_DEPART) glAnnulerAttente();
+  if(!GL) return;
+  var id = GL.id, cible = GL.cible;
+  glRanger();
+  GL_FINI = Date.now();
+  if(!cible) return;
+  var iso = cible.getAttribute('data-jour') || '';
+  var c = chantierDuTableau(id);
+  if(!c) return;
+  if((c.date || '') === iso) return;      // lâché là où il était déjà
+  if(iso) reporterVite(id, iso);
+  else gesteVite(id, {date:'', heure:''}, 'Retiré du planning');
+}
+
+function glRanger(){
+  if(GL){
+    if(GL.cible) GL.cible.classList.remove('glCible');
+    if(GL.fantome && GL.fantome.parentNode) GL.fantome.parentNode.removeChild(GL.fantome);
+    if(GL.el) GL.el.classList.remove('glParti');
+  }
+  GL = null;
+  document.body.classList.remove('glEnCours');
+}
+
+/* Branché une seule fois, au démarrage. Les écouteurs vivent sur le document :
+   les cartes sont redessinées à chaque peinture, pas lui. */
+function brancherGlisser(){
+  document.addEventListener('pointerdown', surPointeurBas, true);
+  document.addEventListener('pointermove', function(e){
+    if(GL){ glDeplacer(e.clientX, e.clientY); return; }
+    if(!GL_DEPART) return;
+    if(Math.abs(e.clientX - GL_DEPART.x) > GL_BOUGE ||
+       Math.abs(e.clientY - GL_DEPART.y) > GL_BOUGE) glAnnulerAttente();
+  }, true);
+  document.addEventListener('pointerup', surPointeurHaut, true);
+  document.addEventListener('pointercancel', function(){ glAnnulerAttente(); glRanger(); }, true);
+  /* Non passif, et c'est tout l'intérêt : pendant un glissement, lui seul
+     peut empêcher la page de défiler sous le doigt. */
+  document.addEventListener('touchmove', function(e){
+    if(GL && e.cancelable) e.preventDefault();
+  }, {passive:false});
+  // Le clic qui suit un glissement ouvrirait la fiche du chantier déplacé.
+  document.addEventListener('click', function(e){
+    if(Date.now() - GL_FINI < 400){ e.stopPropagation(); e.preventDefault(); }
+  }, true);
+}
+
+function chantierDuTableau(id){
+  return ((TABLEAU||{}).chantiers||[]).filter(function(x){ return x.id === id; })[0] || null;
+}
+
+/* Le seul endroit qui envoie un geste rapide. « avant » est relevé sur place :
+   c'est lui qui permettra de défaire, et il doit être pris avant d'écrire. */
+function gesteVite(id, champs, mot){
+  var c = chantierDuTableau(id);
+  if(!c) return;
+  if(!navigator.onLine) return erreur('Hors connexion : impossible de déplacer un chantier maintenant.');
+  var avant = {date:c.date||'', heure:c.heure||'', prestataire:c.prestataire||''};
+  var moi = session();
+  var env = {action:'planifier', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:id};
+  for(var k in champs) if(champs.hasOwnProperty(k)) env[k] = champs[k];
+  // L'écran dit tout de suite ce qui vient d'être demandé : sur un téléphone,
+  // attendre le bureau donnerait l'impression que l'appui n'a pas pris.
+  for(var k2 in champs) if(champs.hasOwnProperty(k2)) c[k2] = champs[k2];
+  AD_VITE = null;
+  armerDefaire(id, avant, mot);
+  peindreTableau();
+  erreur('');
+  poster(env).then(function(r){
+    if(!r || !r.ok){
+      // On remet ce qu'on avait montré : l'écran ne doit jamais raconter une
+      // modification que le bureau a refusée.
+      var c2 = chantierDuTableau(id);
+      if(c2){ c2.date = avant.date; c2.heure = avant.heure; c2.prestataire = avant.prestataire; }
+      AD_DEFAIRE = null;
+      peindreTableau();
+      return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    }
+    tracer('CHANTIER DEPLACE', mot, id);
+    chargerTableau();
+  }, function(){
+    var c3 = chantierDuTableau(id);
+    if(c3){ c3.date = avant.date; c3.heure = avant.heure; c3.prestataire = avant.prestataire; }
+    AD_DEFAIRE = null;
+    peindreTableau();
+    erreur(attenteLisible());
+  });
+}
+
+function reporterVite(id, iso){
+  gesteVite(id, {date:iso}, 'Reporté au ' + jourLisible(iso));
+}
+
+function confierVite(id, nom){
+  gesteVite(id, {prestataire:nom}, nom ? 'Confié à ' + nom : 'Retiré à son prestataire');
+}
+
+/* Le bandeau d'annulation vit dix secondes : le temps de voir qu'on s'est
+   trompé de carte, pas assez pour qu'il traîne au-dessus du planning. */
+function armerDefaire(id, avant, mot){
+  AD_DEFAIRE = {id:id, avant:avant, mot:mot};
+  if(AD_MINUTEUR) clearTimeout(AD_MINUTEUR);
+  AD_MINUTEUR = setTimeout(function(){
+    AD_DEFAIRE = null; AD_MINUTEUR = null;
+    var e = $('eAd1');
+    if(e && !e.classList.contains('hide')) peindreTableau();
+  }, 10000);
+}
+
+function bandeauAnnuler(){
+  if(!AD_DEFAIRE) return '';
+  return '<div class="adAnn"><span>' + ech(AD_DEFAIRE.mot) + '</span>' +
+         '<button onclick="defaireVite()">Annuler</button></div>';
+}
+
+function defaireVite(){
+  var d = AD_DEFAIRE;
+  if(!d) return;
+  AD_DEFAIRE = null;
+  if(AD_MINUTEUR){ clearTimeout(AD_MINUTEUR); AD_MINUTEUR = null; }
+  gesteVite(d.id, {date:d.avant.date, heure:d.avant.heure, prestataire:d.avant.prestataire},
+            'Remis comme avant');
+  // Le retour en arrière ne s'annule pas lui-même : sinon on tourne en rond.
+  AD_DEFAIRE = null;
+  peindreTableau();
+}
+
 /* Un chantier sans date n'est pas du passé : c'est justement celui qu'il faut
    planifier. Et la journée en cours reste entière, même ce qui y est déjà
    fait — on la relit encore à 17 h pour savoir ce qui a été fait le matin. */
@@ -4841,32 +5172,109 @@ function listeChantiersAdmin(t){
                 : 'Voir le passé (' + nPasses + ' chantier' + (nPasses>1?'s':'') + ')') +
       '</button>'
     : '';
-  if(!l.length) return '<div class="card"><div class="empty">Aucun chantier à venir.</div></div>' + pied;
+  if(!l.length) return bandeauAnnuler() +
+    '<div class="card"><div class="empty">Aucun chantier à venir.</div></div>' + pied;
   var aFaire = l.filter(function(c){ return !estAnnule(c) && (!c.date || !c.prestataire); }).length;
   var tete = aFaire
     ? '<div class="card" style="border-color:var(--warn)"><b>' + aFaire + ' chantier' +
       (aFaire>1?'s':'') + ' à planifier</b><div class="mini">Sans date ou sans personne, ' +
       'ils n\'apparaissent sur aucun téléphone.</div></div>'
     : '';
-  return tete + l.map(function(c){
-    var manque = !c.date || !c.prestataire;
-    var pris = !!AD_CHOIX[c.id];
-    return '<div class="card' + (pris ? ' adPris' : '') +
-      '" style="cursor:pointer;margin-bottom:10px" onclick="' +
-      (AD_SEL ? 'choisirChantier(\'' + ech(c.id) + '\')' : 'ficheChantier(\'' + ech(c.id) + '\')') + '">' +
-      '<div style="display:flex;gap:10px;align-items:baseline">' +
-        (AD_SEL ? '<span class="adCoche">' + (pris ? '\u2713' : '') + '</span>' : '') +
-        '<b style="flex:1;font-size:15.5px">' + ech(c.client||'Chantier') + '</b>' +
-        badgeChantier(c) +
-      '</div>' +
-      '<div class="mini" style="margin-top:4px">' +
-        (c.date ? jourLisible(c.date) + (c.heure ? ' · ' + ech(c.heure) : '') : 'Sans date') +
-        ' · ' + (c.prestataire ? ech(c.prestataire) : 'personne') + '</div>' +
-      (c.ville ? '<div class="mini">' + ech(c.ville) + '</div>' : '') +
-      (manque ? '<div class="mini" style="color:var(--warn)">À planifier</div>' : '') +
-      (c.signalement ? '<div class="mini" style="color:var(--rouge,#991b1b)">Problème signalé</div>' : '') +
-    '</div>';
-  }).join('') + pied;
+
+  /* Les journées se voient. Une liste plate oblige à lire la date de chaque
+     carte pour savoir où finit lundi : le salarié a ses journées séparées
+     depuis la v67, le gérant les avait perdues.
+
+     Le tri est refait ici plutôt que supposé : un en-tête de journée ne vaut
+     que si toutes les cartes d'un même jour se suivent, et une liste reçue
+     dans le désordre afficherait deux fois « Mardi 3 novembre ». */
+  l = l.slice().sort(function(x, y){
+    if(!x.date && y.date) return -1;
+    if(x.date && !y.date) return 1;
+    if(x.date !== y.date) return x.date < y.date ? -1 : 1;
+    return String(x.heure||'') < String(y.heure||'') ? -1
+         : (String(x.heure||'') > String(y.heure||'') ? 1 : 0);
+  });
+  /* null et non '' : un chantier sans date a justement la chaîne vide pour
+     date, et son en-tête « Sans date » ne serait jamais écrit. */
+  var jour = null, html = '', ouvert = false, dedans = 0;
+  function combien(iso){
+    return l.filter(function(x){ return (x.date || '') === iso; }).length;
+  }
+  l.forEach(function(c){
+    var j = c.date || '';
+    if(j !== jour){
+      jour = j;
+      if(ouvert) html += '</div></div>';
+      dedans = combien(j);
+      /* Le bloc entier porte la date : c'est lui qu'on vise en faisant glisser
+         une carte, et viser une journée est plus facile que viser sa bande. */
+      html += '<div class="jBloc" data-jour="' + ech(j) + '">' +
+              bandeJour(j, dedans) + '<div class="jCorps">';
+      ouvert = true;
+    }
+    html += carteChantierAdmin(c);
+  });
+  if(ouvert) html += '</div></div>';
+  return bandeauAnnuler() + tete + html + pied;
+}
+
+/* La bande d'une journée : le quantième en gros, le jour de la semaine, le
+   mois, et le nombre de chantiers. C'est elle qui fait qu'une suite de cartes
+   devient un planning. */
+function bandeJour(iso, nb){
+  var compte = '<span class="jNb">' + nb + ' chantier' + (nb>1?'s':'') + '</span>';
+  if(!iso){
+    return '<div class="jBand jSans"><span class="jNum">—</span>' +
+           '<span class="jJour"><b>Sans date</b>' +
+           '<span>à poser au planning</span></span>' + compte + '</div>';
+  }
+  var d = new Date(iso + 'T12:00:00');
+  if(isNaN(d.getTime())){
+    return '<div class="jBand"><span class="jNum">—</span>' +
+           '<span class="jJour"><b>' + ech(iso) + '</b></span>' + compte + '</div>';
+  }
+  var auj = isoJour() === iso;
+  var demain = dansNJours(isoJour(), 1) === iso;
+  var sem = d.toLocaleDateString('fr-FR', {weekday:'long'});
+  sem = sem.charAt(0).toUpperCase() + sem.slice(1);
+  var mois = d.toLocaleDateString('fr-FR', {month:'long', year:'numeric'});
+  return '<div class="jBand' + (auj ? ' jAuj' : '') + '">' +
+    '<span class="jNum">' + d.getDate() + '</span>' +
+    '<span class="jJour"><b>' + ech(sem) + (auj ? ' · aujourd\'hui' : (demain ? ' · demain' : '')) +
+      '</b><span>' + ech(mois) + '</span></span>' + compte + '</div>';
+}
+
+/* La carte d'un chantier sur l'écran du gérant. Elle porte les couleurs de sa
+   nature, comme sur le téléphone du salarié : c'est le même travail, il n'y a
+   pas de raison qu'il change d'aspect en changeant de lecteur. */
+function carteChantierAdmin(c){
+  var manque = !c.date || !c.prestataire;
+  var pris = !!AD_CHOIX[c.id];
+  var n = natureVue(c.nature);
+  return '<div class="card chC' + (pris ? ' adPris' : '') + '" ' +
+    'data-ch="' + ech(c.id) + '" ' +
+    (n ? 'style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '" ' : '') +
+    'onclick="' +
+    (AD_SEL ? 'choisirChantier(\'' + ech(c.id) + '\')' : 'ficheChantier(\'' + ech(c.id) + '\')') + '">' +
+    '<div class="chTete">' +
+      (AD_SEL ? '<span class="adCoche">' + (pris ? '\u2713' : '') + '</span>' : '') +
+      '<b style="flex:1">' + ech(c.client||'Chantier') + '</b>' +
+      badgeChantier(c) +
+    '</div>' +
+    '<div class="chSous">' +
+      (c.heure ? '<b class="chH">' + ech(c.heure) + '</b>' : '') +
+      (c.prestataire ? ech(c.prestataire) : 'personne') +
+      (c.ville ? ' · ' + ech(c.ville) : '') +
+    '</div>' +
+    (n ? '<span class="chNat">' + ech(n.nom) + '</span>' : '') +
+    (manque ? '<div class="mini" style="color:var(--warn)">À planifier</div>' : '') +
+    /* Posé avant que le devis soit déclaré signé. Le salarié ne le voit pas :
+       c'est du travail à faire, et l'état du papier n'est pas son affaire. */
+    (c.avantSignature ? '<div class="mini" style="color:var(--warn)">Devis pas encore signé</div>' : '') +
+    (c.signalement ? '<div class="mini" style="color:var(--danger)">Problème signalé</div>' : '') +
+    blocDeplacerVite(c) +
+  '</div>';
 }
 
 /* ---- agir sur plusieurs chantiers d'un coup ----
@@ -5016,12 +5424,80 @@ function peindreFicheDevis(d){
       '<input id="adMotif" placeholder="Trop cher, concurrent…" value="' + ech(d.motif||'') + '">' +
     '</div>' +
 
+    blocPoserTravail(d) +
+
     /* Repartir de ce devis : même client, mêmes prestations, un devis neuf à
        son nom. Le client rappelle souvent pour une autre adresse ou une autre
        date — le retaper serait du temps perdu. */
     '<button class="btn sec" style="margin-bottom:10px" onclick="devisDepuisFiche(this)">' +
       'Refaire un devis pour ce client</button>' +
     '<button class="btn sec" onclick="retourTableau()">Retour au tableau</button>';
+}
+
+/* ---- POSER LE TRAVAIL SANS ATTENDRE LA SIGNATURE ----
+
+   Un chantier naît normalement d'un devis signé. Mais le commercial ne déclare
+   pas toujours la signature en temps et en heure, et pendant ce temps le client
+   attend sa date et le salarié n'a rien à faire. Le gérant peut donc poser le
+   planning lui-même — ce qui n'est pas la même chose que déclarer le devis
+   signé : le devis garde son statut et son absence de preuve.
+
+   Réservé au gérant, et c'est le classeur qui le tient, pas cet écran. */
+function blocPoserTravail(d){
+  var st = String(d.statut || '').toUpperCase();
+  if(st === 'SIGNE'){
+    return '<div class="card"><h2>Le travail</h2>' +
+      '<div class="mini" style="margin-top:0">Ce devis est signé : son planning a été posé ' +
+      'tout seul.</div></div>';
+  }
+  if(st === 'REFUSE'){
+    return '<div class="card"><h2>Le travail</h2>' +
+      '<div class="mini" style="margin-top:0">Ce devis est refusé. Si le client revient, ' +
+      'corrige d\'abord son résultat ci-dessus.</div></div>';
+  }
+  var deja = Number(d.poses || 0);
+  return '<div class="card">' +
+    '<h2>Poser le travail sans attendre</h2>' +
+    '<div class="mini" style="margin-top:0">' +
+      (deja
+        ? deja + ' intervention' + (deja>1?'s':'') + ' déjà posée' + (deja>1?'s':'') +
+          ' pour ce devis. Tu peux relancer pour compléter ce qui n\'a pas encore de date.'
+        : 'Le client a dit oui mais le devis n\'est pas encore déclaré signé. ' +
+          'Tu peux poser ses interventions tout de suite : le salarié les verra ' +
+          'comme n\'importe quel chantier.') +
+    '</div>' +
+    '<div class="mini">Le devis, lui, ne bouge pas : il garde son statut et son numéro.</div>' +
+    '<button class="btn sec" style="margin-top:12px" onclick="poserTravail(this)">' +
+      (deja ? 'Compléter le planning' : 'Poser le travail maintenant') + '</button>' +
+  '</div>';
+}
+
+function poserTravail(btn){
+  var f = AD_FICHE;
+  if(!f || f.type !== 'devis') return;
+  if(!navigator.onLine) return erreur('Hors connexion : impossible de poser un planning maintenant.');
+  var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === f.cle; })[0] || {};
+  erreur('');
+  demander('Poser le travail de ce devis ?',
+           'Il n\'est pas déclaré signé. Les interventions seront posées et attribuées ' +
+           'comme pour un devis signé, et le devis gardera son statut actuel.',
+           'Poser le travail').then(function(oui){
+    if(!oui) return;
+    var moi = session();
+    if(btn) occuper(btn, 'Pose en cours…');
+    poster({action:'poserDevis', nom:moi.nom, code:moi.code, appareil:APPAREIL,
+            numero:f.cle}, 60000).then(function(r){
+      if(btn) libere(btn);
+      if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+      tracer('TRAVAIL POSE AVANT SIGNATURE', f.cle, f.cle);
+      var mot = r.poses
+        ? r.poses + ' intervention' + (r.poses>1?'s':'') + ' posée' + (r.poses>1?'s':'') + '.'
+        : 'Aucune intervention n\'a pu être posée' + (r.motif ? ' : ' + r.motif : '') + '.';
+      if(r.refuses) mot += ' ' + r.refuses + ' sans créneau, à poser à la main.';
+      erreur(mot);
+      chargerTableau();
+    }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+  });
 }
 
 function verdictAdmin(type){
@@ -5192,6 +5668,9 @@ function peindreFicheChantier(c, neuf){
           ech(c.signalement) + '</div>' : '') +
         (annule ? '<div class="err" style="margin-top:10px">Ce chantier est annulé. ' +
           'Il n\'apparaît sur aucun téléphone.</div>' : '') +
+        (c.avantSignature ? '<div class="mini" style="margin-top:10px;color:var(--warn)">' +
+          'Posé avant que le devis soit déclaré signé. Le salarié le voit comme un ' +
+          'chantier ordinaire ; un refus ne l\'enlèvera pas tout seul.</div>' : '') +
       '</div>') +
 
     '<div class="card">' +

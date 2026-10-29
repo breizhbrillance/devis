@@ -243,6 +243,72 @@
   .adCoche{display:inline-flex;align-items:center;justify-content:center;
            width:22px;height:22px;flex:0 0 22px;border:2px solid var(--line);
            border-radius:6px;font-size:14px;font-weight:700;color:var(--acc-t)}
+  /* La bande d'une journée. Un petit titre en majuscules ne faisait pas un
+     planning : on voyait des cartes à la file sans savoir où finissait lundi.
+     La bande porte le quantième en gros, le jour de la semaine, et combien de
+     chantiers tombent dedans — de quoi se repérer d'un coup d'œil, comme sur
+     un agenda de papier. Volontairement NON collante : l'en-tête de
+     l'application l'est déjà, et deux bandes collées l'une sur l'autre se
+     recouvrent. */
+  .jBand{display:flex;align-items:center;gap:11px;margin:18px 0 9px;padding:9px 11px;
+         background:var(--card);border:1px solid var(--line);border-radius:12px;
+         border-left:5px solid var(--mut)}
+  .jBand .jNum{font-size:23px;font-weight:800;line-height:1;min-width:34px;text-align:center}
+  .jBand .jJour{flex:1;line-height:1.2}
+  /* Pas de text-transform ici : il écrirait « Sans Date ». La majuscule du
+     jour de la semaine est mise à la main, là où on sait de quoi il s'agit. */
+  .jBand .jJour b{display:block;font-size:14.5px}
+  .jBand .jJour span{font-size:12px;color:var(--mut)}
+  .jBand .jNb{font-size:12px;color:var(--mut);white-space:nowrap}
+  .jBand.jAuj{border-left-color:var(--acc);background:var(--acc-f);color:var(--acc-t)}
+  .jBand.jAuj .jJour span, .jBand.jAuj .jNb{color:var(--acc-t)}
+  .jBand.jSans{border-left-color:var(--warn)}
+  .jBand.jSans .jNum{font-size:17px}
+  /* Les cartes d'une journée sont en retrait : la bande les tient ensemble. */
+  .jCorps{padding-left:7px}
+  .jBloc{border-radius:14px}
+
+  /* Faire glisser une carte d'un jour à l'autre. Le fantôme suit le doigt et
+     ne se laisse jamais désigner lui-même, sans quoi il masquerait la journée
+     qu'on vise. */
+  .glFantome{position:fixed;z-index:60;pointer-events:none;margin:0;
+             box-shadow:0 12px 26px rgba(0,0,0,.28);transform:scale(1.02);opacity:.96}
+  .glParti{opacity:.3}
+  body.glEnCours{user-select:none;-webkit-user-select:none;cursor:grabbing}
+  .glCible{outline:3px solid var(--acc);outline-offset:2px}
+  .semJ.glCible{background:var(--acc-f)}
+  .jBloc.glCible .jBand{border-left-color:var(--acc)}
+
+  /* L'en-tête repliable des chiffres. */
+  .adPli{flex:1;display:flex;align-items:center;gap:8px;background:none;border:0;
+         padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
+  .adPli #adResume{flex:1;font-size:15px}
+  .adChev{color:var(--mut);transition:transform .15s}
+  .adPli[aria-expanded="true"] .adChev{transform:rotate(180deg)}
+
+  /* Les filtres : une seule ligne qui glisse sous le pouce, plutôt que trois
+     rangées de pastilles qui repoussent le planning hors de l'écran. */
+  .adFil{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+         padding-bottom:4px;scrollbar-width:none}
+  .adFil::-webkit-scrollbar{display:none}
+  .adFil .puce{flex:0 0 auto}
+
+  /* Déplacer un chantier sans quitter la liste : le panneau s'ouvre sous la
+     carte, et chaque pastille agit tout de suite. */
+  .adVite{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
+  .adVite .lab{font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+               color:var(--mut);margin:6px 0 4px}
+  .adVite .row{display:flex;flex-wrap:wrap;gap:6px}
+  .adRap{background:none;border:0;padding:2px 0;margin-top:8px;font:inherit;
+         font-size:13px;color:var(--acc-t);cursor:pointer;text-decoration:underline}
+  /* Le filet : tout geste rapide peut être défait, le temps de s'apercevoir
+     qu'on a tapé sur la mauvaise carte. */
+  .adAnn{display:flex;align-items:center;gap:10px;background:var(--acc);color:#fff;
+         border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:14px}
+  .adAnn span{flex:1}
+  .adAnn button{background:#fff;color:var(--acc);border:0;border-radius:8px;
+                padding:6px 10px;font:inherit;font-weight:600;cursor:pointer}
+
   .card.adPris{border-color:var(--acc-b);background:var(--acc-f)}
   .card.adPris .adCoche{border-color:var(--acc-b)}
   .vb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.3px;border-radius:5px;
@@ -1099,16 +1165,28 @@
        commercial, les chantiers de chaque prestataire, et les chiffres. -->
 
   <section id="eAd1" class="hide">
+    <!-- Les chiffres se replient. On ouvre cet écran pour savoir qui va où,
+         pas pour relire le chiffre d'affaires : replié, le planning commence
+         en haut de l'écran. Le résumé tient sur une ligne, et le choix est
+         gardé d'une fois sur l'autre. -->
     <div class="card">
-      <h2>Le tableau</h2>
-      <div class="mini" id="adMaj">—</div>
-      <div id="adChiffres" style="margin-top:12px"></div>
-      <button class="btn sec sm" style="margin-top:12px" onclick="chargerTableau(this)">Actualiser</button>
+      <div class="row" style="align-items:center;gap:8px">
+        <button class="adPli" id="bAdPli" onclick="plierChiffres()" aria-expanded="false">
+          <b id="adResume">Le tableau</b><span class="adChev" id="adChev">▾</span>
+        </button>
+        <button class="btn sec sm" style="flex:0 0 auto" onclick="chargerTableau(this)">Actualiser</button>
+      </div>
+      <div id="adDetail" class="hide">
+        <div class="mini" id="adMaj" style="margin-top:8px">—</div>
+        <div id="adChiffres" style="margin-top:10px"></div>
+      </div>
     </div>
 
     <!-- Le devis établi au bureau : même parcours que sur le terrain, au nom du
-         compte connecté. -->
-    <button class="btn" style="margin-top:12px" onclick="devisAdmin(this)">Nouveau devis</button>
+         compte connecté. Il n'a rien à faire au-dessus du planning : on ne le
+         montre que sur l'onglet des devis. -->
+    <button class="btn hide" id="bAdDevisNeuf" style="margin-top:12px"
+            onclick="devisAdmin(this)">Nouveau devis</button>
 
     <div class="row" style="margin-top:12px">
       <button class="btn sec sm" style="flex:1" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
@@ -1135,7 +1213,7 @@
               onclick="basculerSemaine('admin')">Voir la semaine</button>
     </div>
     <div id="adLot" class="card hide" style="margin-top:10px;border-color:var(--acc-b)"></div>
-    <div id="adFiltres" class="row" style="flex-wrap:wrap;gap:6px;margin-top:10px"></div>
+    <div id="adFiltres" class="row adFil" style="gap:6px;margin-top:10px"></div>
     <div id="adListe" style="margin-top:10px"></div>
     <div class="mini" style="text-align:center;margin-top:14px">
       Connecté : <b id="quiSuisJeAd">—</b> ·
@@ -1325,11 +1403,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=85"></script>
-<script src="jspdf.umd.min.js?v=85"></script>
-<script src="police.js?v=85"></script>
-<script src="logo.js?v=85"></script>
-<script src="pdf.js?v=85"></script>
-<script src="app.js?v=85"></script>
+<script src="config.js?v=87"></script>
+<script src="jspdf.umd.min.js?v=87"></script>
+<script src="police.js?v=87"></script>
+<script src="logo.js?v=87"></script>
+<script src="pdf.js?v=87"></script>
+<script src="app.js?v=87"></script>
 </body>
 </html>
