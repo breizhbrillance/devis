@@ -358,7 +358,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v89';
+var VERSION_APP = 'v90';
 
 function ecranConnexion(msg){
   ETAPE = 0;

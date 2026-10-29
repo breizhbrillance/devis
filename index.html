@@ -556,7 +556,12 @@
        jamais les propriétés du script du classeur.
        serviceWorkerParam met le travailleur d'OneSignal dans son propre
        sous-dossier : sans cela il prendrait la place de sw.js, qui fait
-       marcher l'application hors connexion. -->
+       marcher l'application hors connexion.
+       Attention au chemin : OneSignal le compte depuis la racine du domaine,
+       pas depuis cette page. Le site vit dans /devis/, d'ou le « devis/ » en
+       tete. Sans lui le SDK va chercher le fichier a la racine, tombe sur un
+       404, et le telephone n'obtient jamais de jeton : l'abonnement existe
+       mais reste « jamais abonne », et aucune notification n'arrive. -->
   <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
   <script>
     window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -565,7 +570,7 @@
         await OneSignal.init({
           appId: "47a3997a-4804-4443-8755-634e62c10bad",
           safari_web_id: "web.onesignal.auto.4345f3b9-0648-4376-838e-008c1d802430",
-          serviceWorkerPath: "push/onesignal/OneSignalSDKWorker.js",
+          serviceWorkerPath: "devis/push/onesignal/OneSignalSDKWorker.js",
           serviceWorkerParam: { scope: "/devis/push/onesignal/" },
           autoResubscribe: true,
           notifyButton: { enable: false }
@@ -1421,11 +1426,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=89"></script>
-<script src="jspdf.umd.min.js?v=89"></script>
-<script src="police.js?v=89"></script>
-<script src="logo.js?v=89"></script>
-<script src="pdf.js?v=89"></script>
-<script src="app.js?v=89"></script>
+<script src="config.js?v=90"></script>
+<script src="jspdf.umd.min.js?v=90"></script>
+<script src="police.js?v=90"></script>
+<script src="logo.js?v=90"></script>
+<script src="pdf.js?v=90"></script>
+<script src="app.js?v=90"></script>
 </body>
 </html>
