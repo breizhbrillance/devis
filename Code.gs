@@ -201,6 +201,10 @@ function onOpen() {
     .addItem('22. Connecter les notifications', 'connecterNotifications')
     .addItem('23. Tester une notification', 'testerNotification')
     .addItem('24. Oublier la clé des notifications', 'oublierNotifications')
+    .addSeparator()
+    .addItem('25. Connecter Pennylane (facturation)', 'connecterPennylane')
+    .addItem('26. Tester la connexion Pennylane', 'testerPennylane')
+    .addItem('27. Oublier la clé Pennylane', 'oublierPennylane')
     .addToUi();
 }
 
@@ -5648,6 +5652,152 @@ function oublierNotifications() {
     'L\'App ID, lui, reste dans les réglages.', ui.ButtonSet.YES_NO);
   if (rep !== ui.Button.YES) return;
   PropertiesService.getScriptProperties().deleteProperty(NOTIF_CLE_);
+  ui.alert('Clé oubliée.');
+}
+
+/* ====================== PENNYLANE ======================
+   Décision de Simon, 7 novembre 2026 : les factures se feront désormais dans
+   Pennylane, plus dans Henrri. Le plan Essentiel ouvre l'API de la société
+   (jeton « Company API », v2).
+
+   Ce bloc ne pose que la liaison : brancher le jeton, l'essayer, l'oublier.
+   Il ne crée ni client ni facture. Le jeton est un secret : il vit dans les
+   propriétés du script, jamais dans ce fichier (le dépôt GitHub est public),
+   jamais dans une cellule, jamais au journal. */
+
+var PENNYLANE_CLE_ = 'PENNYLANE_JETON';
+var PENNYLANE_API_ = 'https://app.pennylane.com/api/external/v2';
+
+function pennylaneJeton_() {
+  return String(PropertiesService.getScriptProperties().getProperty(PENNYLANE_CLE_) || '').trim();
+}
+
+/**
+ * Un appel à l'API Pennylane. Rend toujours un objet, ne lève jamais :
+ * { ok, code, data, erreur }. Le jeton ne ressort dans aucune réponse.
+ */
+function pennylaneAppel_(methode, chemin, corps) {
+  var jeton = pennylaneJeton_();
+  if (!jeton) return { ok: false, code: 0, data: null, erreur: 'Pennylane n\'est pas connecté' };
+  var opt = {
+    method: String(methode || 'get').toLowerCase(),
+    muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + jeton, Accept: 'application/json' }
+  };
+  if (corps !== undefined && corps !== null) {
+    opt.contentType = 'application/json';
+    opt.payload = JSON.stringify(corps);
+  }
+  var rep;
+  try {
+    rep = UrlFetchApp.fetch(PENNYLANE_API_ + chemin, opt);
+  } catch (e) {
+    return { ok: false, code: 0, data: null,
+             erreur: 'Pennylane ne répond pas (' + String(e && e.message || e).replace(jeton, '…') + ')' };
+  }
+  var code = rep.getResponseCode(), txt = rep.getContentText() || '', data = null;
+  try { data = txt ? JSON.parse(txt) : null; } catch (eJ) { data = null; }
+  if (code >= 200 && code < 300) return { ok: true, code: code, data: data, erreur: '' };
+  var msg = (data && (data.message || data.error || (data.errors && JSON.stringify(data.errors)))) ||
+            txt.slice(0, 200);
+  if (code === 401) msg = 'jeton refusé (expiré, supprimé ou mal copié)';
+  if (code === 403) msg = 'le jeton n\'a pas le droit de faire cela (portée manquante)' +
+                          (msg ? ' — ' + msg : '');
+  if (code === 429) msg = 'trop de demandes d\'un coup, réessaie dans quelques secondes';
+  return { ok: false, code: code, data: data, erreur: String(msg || ('erreur ' + code)).replace(jeton, '…') };
+}
+
+/** Ce que l'API dit d'elle-même : la société, l'utilisateur, les portées. */
+function pennylaneQuiSuisJe_() {
+  var r = pennylaneAppel_('get', '/me');
+  if (!r.ok) return r;
+  var d = r.data || {};
+  var soc = d.company || {}, u = d.user || {};
+  return { ok: true, societe: String(soc.name || ''), idSociete: soc.id || '',
+           siren: String(soc.reg_no || ''), utilisateur: [u.first_name, u.last_name].filter(String).join(' ') ||
+           String(u.email || ''), portees: d.scopes || [] };
+}
+
+function connecterPennylane() {
+  var ui = SpreadsheetApp.getUi();
+  var r = ui.prompt('Connecter Pennylane',
+    'Dans Pennylane : Paramètres → Connectivité → Développeurs → « Générer un token API ».\n' +
+    'Nom conseillé : « Appli devis BB ». Coche en lecture ET écriture au moins : ' +
+    'clients (customers), factures clients (customer invoices) et produits ; ' +
+    'pas de date d\'expiration.\n\n' +
+    'Pennylane ne montre le jeton qu\'une fois : colle-le ici.\n' +
+    'Il sera rangé dans les propriétés du script, que toi seul peux lire — ' +
+    'ni dans le classeur, ni dans le code.',
+    ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var jeton = String(r.getResponseText() || '').replace(/^Bearer\s+/i, '').trim();
+  if (!jeton) { ui.alert('Rien n\'a été collé. Rien n\'a été enregistré.'); return; }
+
+  var props = PropertiesService.getScriptProperties();
+  var ancien = props.getProperty(PENNYLANE_CLE_);
+  props.setProperty(PENNYLANE_CLE_, jeton);
+  var q = pennylaneQuiSuisJe_();
+  if (!q.ok) {
+    /* Un jeton refusé n'écrase pas celui qui marchait. */
+    if (ancien) props.setProperty(PENNYLANE_CLE_, ancien); else props.deleteProperty(PENNYLANE_CLE_);
+    ui.alert('Pennylane a refusé ce jeton : ' + q.erreur + '.\n\nRien n\'a été changé.');
+    return;
+  }
+  tracerServeur_('SYSTEME', 'PENNYLANE CONNECTE', q.societe, '', '');
+  ui.alert('Pennylane est connecté.\n\nSociété : ' + q.societe +
+    (q.siren ? ' (SIREN ' + q.siren + ')' : '') +
+    '\n\nLance « 26. Tester la connexion Pennylane » pour voir ce que le jeton a le droit de faire.');
+}
+
+/**
+ * L'essai : qui suis-je, puis une lecture des clients et des factures. Ne
+ * crée rien et n'envoie rien.
+ */
+function essaiPennylane_() {
+  var out = { ok: false, lignes: [] };
+  if (!pennylaneJeton_()) { out.lignes.push('Pennylane n\'est pas connecté : lance d\'abord le menu 25.'); return out; }
+  var q = pennylaneQuiSuisJe_();
+  if (!q.ok) { out.lignes.push('Connexion refusée : ' + q.erreur); return out; }
+  out.ok = true;
+  out.lignes.push('Connecté à : ' + q.societe + (q.siren ? ' (SIREN ' + q.siren + ')' : ''));
+  if (q.utilisateur) out.lignes.push('Jeton créé par : ' + q.utilisateur);
+  if (q.portees && q.portees.length) out.lignes.push('Droits : ' + q.portees.join(', '));
+
+  var essais = [
+    { mot: 'Clients', chemin: '/customers?limit=3' },
+    { mot: 'Factures clients', chemin: '/customer_invoices?limit=3' },
+    { mot: 'Produits', chemin: '/products?limit=3' }
+  ];
+  essais.forEach(function (e) {
+    var r = pennylaneAppel_('get', e.chemin);
+    if (!r.ok) { out.lignes.push('✗ ' + e.mot + ' : ' + r.erreur); out.manque = true; return; }
+    var items = (r.data && (r.data.items || r.data.data)) || [];
+    out.lignes.push('✓ ' + e.mot + ' : lecture possible' +
+      (items.length ? ' (ex. ' + items.slice(0, 3).map(function (x) {
+        return String(x.label || x.name || x.invoice_number || x.id || '');
+      }).filter(String).join(', ') + ')' : ' (aucun pour l\'instant)'));
+  });
+  return out;
+}
+
+function testerPennylane() {
+  var ui = SpreadsheetApp.getUi();
+  var r = essaiPennylane_();
+  ui.alert(r.ok ? 'Pennylane répond' : 'Pennylane ne répond pas comme prévu',
+    r.lignes.join('\n') +
+    (r.manque ? '\n\nUne lecture refusée veut dire qu\'une case manquait à la création du jeton : ' +
+      'regénère-en un avec ces droits, puis relance le menu 25.' : '') +
+    '\n\nCet essai ne crée et n\'envoie rien.', ui.ButtonSet.OK);
+}
+
+function oublierPennylane() {
+  var ui = SpreadsheetApp.getUi();
+  var rep = ui.alert('Oublier la clé Pennylane ?',
+    'Le classeur ne pourra plus rien préparer dans Pennylane tant que tu n\'auras pas reconnecté. ' +
+    'Pour couper vraiment le jeton, supprime-le aussi dans Pennylane (Développeurs).', ui.ButtonSet.YES_NO);
+  if (rep !== ui.Button.YES) return;
+  PropertiesService.getScriptProperties().deleteProperty(PENNYLANE_CLE_);
+  tracerServeur_('SYSTEME', 'PENNYLANE OUBLIE', '', '', '');
   ui.alert('Clé oubliée.');
 }
 
