@@ -106,6 +106,9 @@ const FauxMaps = {
    changé dans le code. Appelée avant charger(), elle fige le jour vu par le
    script ; non appelée, rien ne change pour les autres suites. */
 let instantFige = null;
+/* Sans interface : getUi() lève, comme dans un déclencheur ou un appel web. */
+let sansUi = false;
+export function sansInterface(v){ sansUi = !!v; }
 export function horloge(d){ instantFige = d ? new Date(d).getTime() : null; }
 function DateDuBureau(){
   if(instantFige === null) return Date;
@@ -123,7 +126,7 @@ export function charger(chemin){
   const ctx = {
     SpreadsheetApp:{ getActive:()=>ss,
       openById:(id)=>{ if(idsExt.indexOf(String(id))<0) throw new Error('Vous n\'avez pas l\'autorisation requise pour accéder à ce document : '+id); return ssExt; },
-      getUi:()=>({alert:(m)=>{ctx.__alert=m;},prompt:()=>({getSelectedButton:()=>'x'}),createMenu:()=>({addItem(){return this;},addSeparator(){return this;},addToUi(){}})}),
+      getUi:()=>{ if(sansUi) throw new Error('Cannot call SpreadsheetApp.getUi() from this context.'); return ({alert:(m)=>{ctx.__alert=m;},prompt:()=>({getSelectedButton:()=>'x'}),createMenu:()=>({addItem(){return this;},addSeparator(){return this;},addToUi(){}})}); },
       newDataValidation:()=>({requireCheckbox(){return this;},requireValueInList(){return this;},setAllowInvalid(){return this;},build(){return {};}}),
       Charts:{}, newConditionalFormatRule:()=>({whenTextEqualTo(){return this;},setBackground(){return this;},setRanges(){return this;},build(){return {};}}) },
     Utilities:{ formatDate:(d,tz,f)=>{ const p=n=>('0'+n).slice(-2); const x=new Date(d);
