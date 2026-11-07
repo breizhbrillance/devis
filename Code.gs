@@ -205,6 +205,11 @@ function onOpen() {
     .addItem('25. Connecter Pennylane (facturation)', 'connecterPennylane')
     .addItem('26. Tester la connexion Pennylane', 'testerPennylane')
     .addItem('27. Oublier la clé Pennylane', 'oublierPennylane')
+    .addItem('28. Remplir l\'onglet CONTRATS (depuis RECURRENTS)', 'menuConstruireContrats')
+    .addItem('29. Brouillons Pennylane : les contrats du mois', 'menuBrouillonsContrats')
+    .addItem('30. Brouillons Pennylane : les chantiers terminés', 'menuBrouillonsPonctuels')
+    .addItem('31. Activer la préparation automatique des brouillons', 'activerPreparationAuto')
+    .addItem('32. Arrêter la préparation automatique', 'arreterPreparationAuto')
     .addToUi();
 }
 
@@ -5801,6 +5806,549 @@ function oublierPennylane() {
   ui.alert('Clé oubliée.');
 }
 
+/* ====================== LES BROUILLONS DE FACTURE DANS PENNYLANE ======================
+   Demande de Simon, 7 novembre 2026. Ce que le module fait, et ne fait pas :
+
+   — un chantier ponctuel terminé (tous ses passages pointés FAIT) devient une
+     facture BROUILLON dans Pennylane, avec les lignes du devis signé ;
+   — chaque contrat d'entretien devient, une fois par mois, une facture
+     BROUILLON au forfait lissé sur 52 semaines, avec la phrase qui l'explique
+     au client (« 1 passage par semaine × 52 semaines ÷ 12 mois = 4,33
+     passages par mois en moyenne ») ;
+   — rien n'est finalisé, rien n'est envoyé. Simon relit et valide dans
+     Pennylane. L'envoi automatique n'existe pas dans ce code : il viendra
+     quand ses associés seront prévenus.
+
+   Les contrats se lisent dans l'onglet CONTRATS, une ligne par prestation
+   facturée (LE LOCAL en a trois : les locaux du lundi, ceux du jeudi, les
+   vitrages). Le menu 28 le remplit à partir des notes de RECURRENTS, sans
+   jamais écraser ce que Simon y a corrigé.
+
+   Un doublon est impossible deux fois : la ligne de FACTURES, et la
+   référence externe (BB-…) que Pennylane refuse de voir deux fois et qu'on
+   cherche avant de créer. */
+
+var SH_CONTRATS_ = 'CONTRATS';
+var ENTETES_CONTRATS_ = [
+  'CONTRAT', 'LIGNE', 'MENSUEL_HT', 'TVA', 'RYTHME', 'SERIES', 'ACTIF',
+  'CLIENT_FACTURE', 'SIREN', 'EMAIL', 'ADRESSE', 'CP', 'VILLE', 'PARTICULIER',
+  'ID_PENNYLANE', 'NOTE'
+];
+
+/** Le taux de TVA tel que Pennylane le nomme. */
+function pennylaneTva_(taux) {
+  var t = Math.round((Number(String(taux).replace(',', '.')) || 0) * 10) / 10;
+  if (t === 20) return 'FR_200';
+  if (t === 10) return 'FR_100';
+  if (t === 5.5) return 'FR_55';
+  if (t === 2.1) return 'FR_21';
+  if (t === 0) return 'exempt';
+  throw new Error('taux de TVA inconnu : ' + taux + ' %');
+}
+
+/** Un nombre écrit à la française, deux décimales au plus : 4,33. */
+function nbFr_(x) {
+  var n = Math.round(Number(x) * 100) / 100;
+  return String(n).replace('.', ',');
+}
+function prixApi_(x) { return (Math.round(Number(x) * 100) / 100).toFixed(2); }
+function sansAccent_(s) {
+  return String(s || '').toUpperCase()
+    .replace(/[ÀÂÄ]/g, 'A').replace(/[ÉÈÊË]/g, 'E').replace(/[ÎÏ]/g, 'I')
+    .replace(/[ÔÖ]/g, 'O').replace(/[ÙÛÜ]/g, 'U').replace(/Ç/g, 'C');
+}
+function slugRef_(s) {
+  return sansAccent_(s).replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
+}
+
+/** Une liste Pennylane, filtrée : [{field, operator, value}]. */
+function pennylaneListe_(chemin, filtre, limite) {
+  var q = '?limit=' + (limite || 20) +
+          (filtre ? '&filter=' + encodeURIComponent(JSON.stringify(filtre)) : '');
+  var r = pennylaneAppel_('get', chemin + q);
+  if (!r.ok) throw new Error('Pennylane : ' + r.erreur);
+  return (r.data && r.data.items) || [];
+}
+
+/**
+ * Retrouve le client dans Pennylane, ou le crée. L'ordre : l'identifiant déjà
+ * connu, puis le SIREN (deux sociétés peuvent avoir le même nom, jamais le
+ * même SIREN), puis le nom exact, puis le nom sans accents ni casse.
+ * c = { nom, siren, email, adresse, cp, ville, particulier, idConnu }
+ */
+function pennylaneClient_(c) {
+  var nom = String(c.nom || '').trim();
+  if (!nom) throw new Error('le client n\'a pas de nom');
+  if (c.idConnu) return { id: Number(c.idConnu), neuf: false };
+  var siren = String(c.siren || '').replace(/\D/g, '').slice(0, 9);
+
+  if (siren.length === 9) {
+    var parSiren = pennylaneListe_('/customers', [{ field: 'reg_no', operator: 'eq', value: siren }], 5);
+    if (parSiren.length) return { id: Number(parSiren[0].id), neuf: false };
+  }
+  var exact = pennylaneListe_('/customers', [{ field: 'name', operator: 'eq', value: nom }], 5);
+  if (exact.length) return { id: Number(exact[0].id), neuf: false };
+  /* Le nom sans accents ni casse : « ÉTANCHÉITÉ » au classeur, « ETANCHEITE »
+     chez le comptable. On cherche par le premier mot, écrit des deux façons. */
+  var debut = nom.split(/\s+/)[0];
+  if (debut.length >= 3) {
+    var cible = sansAccent_(nom).replace(/[^A-Z0-9]/g, '');
+    var essais = [debut];
+    if (sansAccent_(debut) !== debut) essais.push(sansAccent_(debut));
+    for (var e = 0; e < essais.length; e++) {
+      var proches = pennylaneListe_('/customers', [{ field: 'name', operator: 'start_with', value: essais[e] }], 50);
+      for (var i = 0; i < proches.length; i++) {
+        if (sansAccent_(proches[i].name).replace(/[^A-Z0-9]/g, '') === cible) {
+          return { id: Number(proches[i].id), neuf: false };
+        }
+      }
+    }
+  }
+
+  var adresse = String(c.adresse || '').trim(), cp = String(c.cp || '').trim(), ville = String(c.ville || '').trim();
+  if (!adresse || !cp || !ville) {
+    throw new Error('il manque l\'adresse de facturation de ' + nom + ' (adresse, code postal et ville)');
+  }
+  var corps = { billing_address: { address: adresse, postal_code: cp, city: ville, country_alpha2: 'FR' },
+                payment_conditions: 'upon_receipt' };
+  var mail = String(c.email || '').trim();
+  if (mail) corps.emails = [mail];
+  var r;
+  if (c.particulier) {
+    var mots = nom.replace(/^(M\.|MME|MR|MONSIEUR|MADAME)\s+/i, '').split(/\s+/);
+    corps.first_name = mots.length > 1 ? mots[0] : '-';
+    corps.last_name = mots.length > 1 ? mots.slice(1).join(' ') : mots[0];
+    r = pennylaneAppel_('post', '/individual_customers', corps);
+  } else {
+    corps.name = nom;
+    if (siren.length === 9) corps.reg_no = siren;
+    r = pennylaneAppel_('post', '/company_customers', corps);
+  }
+  if (!r.ok || !r.data || !r.data.id) throw new Error('création du client refusée : ' + r.erreur);
+  return { id: Number(r.data.id), neuf: true };
+}
+
+/** Le texte de bas de facture : comment payer. */
+function piedFacture_() {
+  var reg = lireReglages_();
+  var iban = String(reg.banque_iban || '').trim(), bic = String(reg.banque_bic || '').trim();
+  return 'Règlement par chèque ou par virement' +
+    (iban ? ' — IBAN ' + iban + (bic ? ' · BIC ' + bic : '') : '') + '.';
+}
+
+/**
+ * Crée un brouillon de facture, ou rend celui qui existe déjà sous cette
+ * référence. o = { client:{…}, ref, sujet, description, lignes:[{libelle,
+ * prix, tva, qte, detail}] }
+ */
+function pennylaneBrouillon_(o) {
+  var deja = pennylaneListe_('/customer_invoices', [{ field: 'external_reference', operator: 'eq', value: o.ref }], 1);
+  if (deja.length) return { deja: true, facture: deja[0], client: null };
+  var client = pennylaneClient_(o.client);
+  var reg = lireReglages_();
+  var jours = Number(reg.delai_paiement_jours);
+  if (!(jours >= 0)) jours = 30;
+  var auj = new Date();
+  var corps = {
+    draft: true, customer_id: client.id,
+    date: iso10_(auj), deadline: iso10_(new Date(auj.getTime() + jours * 86400000)),
+    external_reference: o.ref, currency: 'EUR', language: 'fr_FR', sale_type: 'services',
+    pdf_invoice_subject: o.sujet, pdf_invoice_free_text: piedFacture_(),
+    invoice_lines: o.lignes.map(function (l) {
+      var x = { label: String(l.libelle).slice(0, 500), quantity: Number(l.qte) || 1,
+                raw_currency_unit_price: prixApi_(l.prix), unit: 'piece', vat_rate: pennylaneTva_(l.tva) };
+      if (l.detail) x.description = String(l.detail).slice(0, 2000);
+      return x;
+    })
+  };
+  if (o.description) corps.pdf_description = String(o.description).slice(0, 5000);
+  var r = pennylaneAppel_('post', '/customer_invoices', corps);
+  if (!r.ok || !r.data || !r.data.id) throw new Error('facture refusée par Pennylane : ' + r.erreur);
+  return { deja: false, facture: r.data, client: client };
+}
+
+function totauxPennylane_(f) {
+  var ht = Number(f.currency_amount_before_tax || f.amount_before_tax || 0);
+  var tva = Number(f.currency_tax || f.tax || 0);
+  var ttc = Number(f.currency_amount || f.amount || 0);
+  return { ht: ht, tva: tva, ttc: ttc };
+}
+
+/* ---------------- le ponctuel ---------------- */
+
+function preparerFacturePennylane_(d, com) {
+  var num = String(d.numero || '').trim();
+  var devis = null;
+  lireDevis_().forEach(function (x) { if (String(x.NUMERO || '').trim() === num) devis = x; });
+  if (!devis) return { ok: false, erreur: 'Devis ' + num + ' introuvable.' };
+  if (String(devis.STATUT || '').toUpperCase() !== 'SIGNE') {
+    return { ok: false, erreur: 'Le devis ' + num + ' n\'est pas signé.' };
+  }
+  if (recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS)) {
+    return { ok: false, erreur: 'C\'est un contrat d\'entretien : il se facture chaque mois depuis ' +
+                                'l\'onglet CONTRATS (menu 29), pas ici.' };
+  }
+  if ((facturesFaites_()[num] || {})['']) {
+    var dj = facturesFaites_()[num][''];
+    return { ok: false, deja: true, erreur: 'Déjà préparée (brouillon Pennylane ' +
+             String(dj.ID_PENNYLANE || dj.ID_HENRRI) + ').' };
+  }
+  var vu = null;
+  etatFacturation_('').ponctuels.forEach(function (x) { if (x.numero === num) vu = x; });
+  if (vu && !vu.pret && !d.force) {
+    return { ok: false, pasPret: true,
+             erreur: vu.chantiers === 0 ? 'Aucun passage n\'est encore posé au planning pour ce devis.'
+               : 'Il reste ' + (vu.chantiers - vu.faits) + ' passage(s) non terminé(s) sur ' + vu.chantiers + '.' };
+  }
+  var lignes = (lignesParDevis_()[num] || []).slice().sort(function (a, b) {
+    return (Number(a.ORDRE) || 0) - (Number(b.ORDRE) || 0);
+  });
+  if (!lignes.length) return { ok: false, erreur: 'Ce devis n\'a aucune ligne de prestation.' };
+  var attendu = 0;
+  lignes.forEach(function (l) { attendu += Number(l.TOTAL_HT) || 0; });
+  attendu = Math.round(attendu * 100) / 100;
+
+  var res = null, erreur = '';
+  try {
+    res = pennylaneBrouillon_({
+      ref: 'BB-' + num,
+      client: { nom: String(devis.CLIENT || ''), siren: devis.SIRET_CLIENT, email: devis.EMAIL,
+                adresse: devis.ADRESSE, cp: devis.CP, ville: devis.VILLE,
+                particulier: String(devis.TYPE_CLIENT || '').toUpperCase().indexOf('PART') === 0 },
+      sujet: 'Facture — ' + String(devis.OBJET || 'prestation de nettoyage').slice(0, 120),
+      description: 'Prestation réalisée selon le devis ' + num +
+        (devis.SIGNATAIRE ? ', signé par ' + String(devis.SIGNATAIRE) : '') + '.',
+      lignes: lignes.map(function (l) {
+        return { libelle: libelleFacture_(l, false, ''), prix: Number(l.TOTAL_HT) || 0, tva: Number(l.TVA) || 0, qte: 1 };
+      })
+    });
+  } catch (e) { erreur = String(e && e.message || e); }
+  return finirFacturePennylane_(res, erreur, {
+    num: num, client: String(devis.CLIENT || ''), type: 'PONCTUEL', periode: '', passages: 1,
+    attendu: attendu, com: com, appareil: d.appareil, force: d.force && vu && !vu.pret
+  });
+}
+
+/** Écrit la ligne de FACTURES et le journal, et rend la réponse. */
+function finirFacturePennylane_(res, erreur, x) {
+  var f = res && res.facture || {}, tot = res ? totauxPennylane_(f) : { ht: 0, tva: 0, ttc: 0 };
+  var ecart = (res && tot.ht && Math.abs(tot.ht - x.attendu) >= 0.01)
+    ? 'Pennylane compte ' + nb_(tot.ht) + ' € HT, attendu ' + nb_(x.attendu) + ' €' : '';
+  if (!(res && res.deja)) {
+    ecrireFacture_({
+      CREE_LE: new Date(), NUMERO_DEVIS: x.num, CLIENT: x.client, TYPE: x.type, PERIODE: x.periode,
+      PASSAGES: x.passages, TOTAL_HT: tot.ht || x.attendu, TOTAL_TVA: tot.tva, TOTAL_TTC: tot.ttc,
+      ID_PENNYLANE: f.id || '', ID_CLIENT_PENNYLANE: res && res.client ? res.client.id : '',
+      NUMERO_FACTURE: f.invoice_number || '',
+      ETAT: erreur ? 'ECHEC' : 'BROUILLON PENNYLANE', ECART: ecart,
+      CREE_PAR: x.com ? x.com.nom : 'AUTOMATIQUE',
+      NOTE: erreur ? erreur.slice(0, 400) : (x.force ? 'préparée avant la fin du chantier' : '')
+    });
+  }
+  if (erreur) {
+    tracerServeur_(x.com ? x.com.nom : 'SYSTEME', 'FACTURE EN ECHEC', x.client + ' · ' + erreur.slice(0, 200),
+                   x.num, x.appareil || '');
+    return { ok: false, erreur: erreur };
+  }
+  if (res.deja) {
+    return { ok: false, deja: true, erreur: 'Un brouillon existe déjà dans Pennylane sous la référence de ' +
+             x.num + (x.periode ? ' pour ' + moisLisible_(x.periode) : '') + '.', idPennylane: f.id };
+  }
+  tracerServeur_(x.com ? x.com.nom : 'SYSTEME', 'BROUILLON PENNYLANE',
+                 x.client + (x.periode ? ' · ' + moisLisible_(x.periode) : '') + ' · ' + nb_(tot.ht || x.attendu) +
+                 ' € HT · facture ' + f.id + (ecart ? ' · ÉCART : ' + ecart : '') +
+                 (res.client && res.client.neuf ? ' · client créé' : ''), x.num, x.appareil || '');
+  return { ok: true, numero: x.num, idPennylane: f.id, idHenrri: f.id, lien: '',
+           periode: x.periode, ht: tot.ht || x.attendu, tva: tot.tva, ttc: tot.ttc, ecart: ecart,
+           clientNeuf: !!(res.client && res.client.neuf), idClient: res.client ? res.client.id : '' };
+}
+
+/* ---------------- les contrats ---------------- */
+
+/**
+ * Le rythme d'une ligne de contrat, et la phrase qui explique le forfait au
+ * client. « 2/semaine », « 1/semaine », « quinzaine », « mensuel ».
+ */
+function phraseLissage_(rythme) {
+  var r = String(rythme || '').toLowerCase().trim();
+  var m = r.match(/^(\d+(?:[.,]\d+)?)\s*\/\s*semaine/);
+  if (m) {
+    var k = Number(m[1].replace(',', '.'));
+    return 'Forfait mensuel lissé sur l\'année : ' + nbFr_(k) + ' passage' + (k > 1 ? 's' : '') +
+      ' par semaine × 52 semaines ÷ 12 mois = ' + nbFr_(k * 52 / 12) +
+      ' passages par mois en moyenne. Le montant est le même chaque mois, que le mois compte 4 ou 5 semaines.';
+  }
+  if (/quinz|2 semaines/.test(r)) {
+    return 'Forfait mensuel lissé sur l\'année : 1 passage toutes les 2 semaines, soit 26 passages par an ÷ 12 mois = ' +
+      nbFr_(26 / 12) + ' passages par mois en moyenne. Le montant est le même chaque mois.';
+  }
+  if (/mens|mois/.test(r)) return 'Forfait mensuel : 1 passage par mois.';
+  return 'Forfait mensuel, identique chaque mois.';
+}
+
+/** Les lignes de l'onglet CONTRATS, en objets, avec leur rang. */
+function lireContrats_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH_CONTRATS_);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var out = [];
+  for (var i = 1; i < v.length; i++) {
+    var o = { _rang: i + 1 };
+    en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
+    if (String(o.CONTRAT || '').trim()) out.push(o);
+  }
+  return out;
+}
+
+/** Ce que la note d'une série dit du contrat : nom, prestation, montant. */
+function contratDeNote_(note, client) {
+  var s = String(note || '');
+  var m = s.match(/Contrat\s+([^:]+?)\s*:\s*(.*?)\s*(\d[\d\s ]*(?:[.,]\d+)?)\s*€\s*HT\s*\/\s*mois/i);
+  if (m) {
+    return { contrat: m[1].trim().replace(/\s*\/.*$/, ''), ligne: m[2].replace(/[—–-]\s*$/, '').trim(),
+             montant: Number(m[3].replace(/[\s ]/g, '').replace(',', '.')) };
+  }
+  var d = s.match(/Devis\s+(\S+)\s*[—–-]\s*(\d[\d\s ]*(?:[.,]\d+)?)\s*€\s*HT\s*par\s*mois/i);
+  if (d) return { contrat: String(client || '').trim(), ligne: '', montant: Number(d[2].replace(/[\s ]/g, '').replace(',', '.')),
+                  devis: d[1] };
+  return null;
+}
+
+/**
+ * Remplit l'onglet CONTRATS à partir de RECURRENTS. Une ligne par
+ * (contrat, prestation) ; une ligne déjà là n'est jamais réécrite — seules les
+ * nouvelles s'ajoutent, et les séries d'une ligne existante se complètent.
+ */
+function construireContrats_() {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(SH_CONTRATS_);
+  if (!sh) {
+    sh = ss.insertSheet(SH_CONTRATS_);
+    sh.getRange(1, 1, 1, ENTETES_CONTRATS_.length).setValues([ENTETES_CONTRATS_])
+      .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+    sh.setFrozenRows(1);
+  }
+  var existants = {};
+  lireContrats_().forEach(function (o) {
+    existants[sansAccent_(o.CONTRAT) + '|' + sansAccent_(o.LIGNE)] = o;
+  });
+
+  var groupes = {}, ordre = [], sansPrix = [];
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    var id = String(r.ID || '').trim();
+    if (!id || !estActif_(r.ACTIF)) return;
+    var fin = r.FIN ? new Date(r.FIN) : null;
+    if (fin && !isNaN(fin.getTime()) && fin < new Date()) return;
+    var c = contratDeNote_(r.NOTE, r.CLIENT);
+    if (!c || !c.montant) { sansPrix.push(id + ' ' + String(r.CLIENT || '')); return; }
+    c.ligne = c.ligne || 'Entretien des locaux';
+    var k = sansAccent_(c.contrat) + '|' + sansAccent_(c.ligne);
+    if (!groupes[k]) {
+      groupes[k] = { c: c, series: [], freq: {}, adresse: String(r.ADRESSE || ''), cp: String(r.CP || ''),
+                     ville: String(r.VILLE || '') };
+      ordre.push(k);
+    }
+    var g = groupes[k];
+    g.series.push(id);
+    var f = String(r.FREQUENCE || '').toUpperCase().trim();
+    g.freq[f] = (g.freq[f] || 0) + 1;
+  });
+
+  var ajoutes = 0, completes = 0;
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim(); });
+  ordre.forEach(function (k) {
+    var g = groupes[k];
+    var rythme = g.freq.HEBDO ? g.freq.HEBDO + '/semaine'
+               : (g.freq.QUINZAINE ? 'quinzaine' : (g.freq.MENSUEL ? 'mensuel' : ''));
+    var ex = existants[k];
+    if (ex) {
+      var connues = String(ex.SERIES || '').split(/[,\s]+/).filter(String);
+      var manquent = g.series.filter(function (s) { return connues.indexOf(s) < 0; });
+      if (manquent.length && en.indexOf('SERIES') >= 0) {
+        sh.getRange(ex._rang, en.indexOf('SERIES') + 1).setValue(connues.concat(manquent).join(', '));
+        completes++;
+      }
+      return;
+    }
+    var v = { CONTRAT: g.c.contrat, LIGNE: g.c.ligne || 'Entretien des locaux', MENSUEL_HT: g.c.montant, TVA: 20,
+              RYTHME: rythme, SERIES: g.series.join(', '), ACTIF: 'OUI', CLIENT_FACTURE: g.c.contrat,
+              ADRESSE: g.adresse, CP: g.cp, VILLE: g.ville, PARTICULIER: 'NON',
+              NOTE: 'Repris des notes de RECURRENTS — à vérifier' };
+    sh.appendRow(en.map(function (h) { return v.hasOwnProperty(h) ? v[h] : ''; }));
+    ajoutes++;
+  });
+  return { ajoutes: ajoutes, completes: completes, sansPrix: sansPrix };
+}
+
+/** Le mois écoulé, « 2026-10 » le 7 novembre. */
+function moisEcoule_() {
+  var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  return moisDe_(d);
+}
+
+/**
+ * Les brouillons des contrats pour un mois. Une facture par CONTRAT, une ligne
+ * par prestation. Les lignes inactives ou sans montant sont sautées et
+ * nommées.
+ */
+function facturesContrats_(periode, com) {
+  var mois = String(periode || '').match(/^\d{4}-\d{2}$/) ? periode : moisEcoule_();
+  var parContrat = {}, ordre = [], sautes = [], faits = [], echecs = [];
+  lireContrats_().forEach(function (o) {
+    if (!estActif_(o.ACTIF)) return;
+    var nom = String(o.CONTRAT).trim();
+    if (!(Number(o.MENSUEL_HT) > 0)) { sautes.push({ client: nom, motif: 'pas de montant' }); return; }
+    if (!parContrat[nom]) { parContrat[nom] = []; ordre.push(nom); }
+    parContrat[nom].push(o);
+  });
+  var faites = facturesFaites_();
+  ordre.forEach(function (nom) {
+    var cle = 'CONTRAT ' + nom;
+    if ((faites[cle] || {})[mois]) { sautes.push({ client: nom, motif: 'déjà préparée' }); return; }
+    var ls = parContrat[nom];
+    var t = function (k) { for (var i = 0; i < ls.length; i++) if (String(ls[i][k] || '').trim()) return ls[i][k]; return ''; };
+    var attendu = 0;
+    ls.forEach(function (l) { attendu += Number(l.MENSUEL_HT) || 0; });
+    var res = null, erreur = '';
+    try {
+      res = pennylaneBrouillon_({
+        ref: 'BB-CT-' + slugRef_(nom) + '-' + mois,
+        client: { nom: String(t('CLIENT_FACTURE') || nom), siren: t('SIREN'), email: t('EMAIL'),
+                  adresse: t('ADRESSE'), cp: t('CP'), ville: t('VILLE'),
+                  particulier: /^O/i.test(String(t('PARTICULIER'))), idConnu: t('ID_PENNYLANE') },
+        sujet: 'Facture ' + moisLisible_(mois) + ' — contrat d\'entretien ' + nom,
+        description: 'Contrat d\'entretien — ' + moisLisible_(mois) + '.',
+        lignes: ls.map(function (l) {
+          return { libelle: String(l.LIGNE || 'Entretien des locaux') + ' — ' + moisLisible_(mois),
+                   prix: Number(l.MENSUEL_HT), tva: String(l.TVA) === '' ? 20 : Number(l.TVA), qte: 1,
+                   detail: phraseLissage_(l.RYTHME) };
+        })
+      });
+    } catch (e) { erreur = String(e && e.message || e); }
+    /* L'identifiant du client se garde sur la ligne : le mois prochain, plus
+       de recherche, plus de risque d'en créer un second. */
+    if (res && res.client && res.client.id) {
+      var sh = SpreadsheetApp.getActive().getSheetByName(SH_CONTRATS_);
+      var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim(); });
+      var cI = en.indexOf('ID_PENNYLANE');
+      if (cI >= 0) ls.forEach(function (l) { if (!String(l.ID_PENNYLANE || '').trim()) sh.getRange(l._rang, cI + 1).setValue(res.client.id); });
+    }
+    var r = finirFacturePennylane_(res, erreur, { num: cle, client: nom, type: 'CONTRAT', periode: mois,
+                                                    passages: '', attendu: Math.round(attendu * 100) / 100, com: com });
+    if (r.ok) faits.push({ client: nom, ht: r.ht, idPennylane: r.idPennylane, ecart: r.ecart });
+    else if (r.deja) sautes.push({ client: nom, motif: 'brouillon déjà dans Pennylane' });
+    else echecs.push({ client: nom, erreur: r.erreur });
+  });
+  tracerServeur_(com ? com.nom : 'SYSTEME', 'BROUILLONS CONTRATS',
+                 moisLisible_(mois) + ' · ' + faits.length + ' préparé(s), ' + sautes.length + ' sauté(s), ' +
+                 echecs.length + ' en échec', '', '');
+  return { ok: true, periode: mois, periodeNom: moisLisible_(mois), faits: faits, sautes: sautes, echecs: echecs };
+}
+
+/**
+ * Les ponctuels prêts : tous les passages FAIT, le dernier départ pointé il
+ * y a au moins deux heures, pas encore facturés. C'est ce que fera la
+ * préparation automatique ; le menu 30 le fait à la demande.
+ */
+function ponctuelsAPreparer_(maintenant) {
+  var t = (maintenant || new Date()).getTime();
+  return etatFacturation_('').ponctuels.filter(function (p) {
+    if (p.facturee || !p.pret) return false;
+    var fin = p.faitLe ? new Date(p.faitLe) : null;
+    return !fin || isNaN(fin.getTime()) || t - fin.getTime() >= 2 * 3600 * 1000;
+  });
+}
+
+function facturesPonctuels_(com) {
+  var faits = [], echecs = [], sautes = [];
+  ponctuelsAPreparer_().forEach(function (p) {
+    var r = preparerFacturePennylane_({ numero: p.numero }, com);
+    if (r.ok) faits.push({ client: p.client, ht: r.ht, idPennylane: r.idPennylane });
+    else if (r.deja) sautes.push({ client: p.client, motif: 'déjà préparée' });
+    else echecs.push({ client: p.client, erreur: r.erreur });
+  });
+  return { ok: true, faits: faits, sautes: sautes, echecs: echecs };
+}
+
+/**
+ * La préparation automatique, une fois par heure, quand elle est activée
+ * (menu 31) : les ponctuels terminés depuis deux heures, et du 1er au 5 du
+ * mois les contrats du mois écoulé. Que des brouillons.
+ */
+function preparationAutomatique() {
+  if (!pennylaneJeton_()) return;
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(30000); } catch (e) { return; }
+  try {
+    facturesPonctuels_(null);
+    if (new Date().getDate() <= 5) facturesContrats_(moisEcoule_(), null);
+  } catch (e2) {
+    tracerServeur_('SYSTEME', 'PREPARATION AUTO EN ECHEC', String(e2 && e2.message || e2).slice(0, 200), '', '');
+  } finally { lock.releaseLock(); }
+}
+
+function compteRendu_(titre, r) {
+  var l = [titre];
+  if (r.faits.length) l.push('', 'Brouillons créés dans Pennylane :');
+  r.faits.forEach(function (x) { l.push('  ✓ ' + x.client + ' — ' + nb_(x.ht) + ' € HT' + (x.ecart ? ' (' + x.ecart + ')' : '')); });
+  if (r.sautes.length) l.push('', 'Sautés :');
+  r.sautes.forEach(function (x) { l.push('  · ' + x.client + ' — ' + x.motif); });
+  if (r.echecs.length) l.push('', 'En échec :');
+  r.echecs.forEach(function (x) { l.push('  ✗ ' + x.client + ' — ' + x.erreur); });
+  if (!r.faits.length && !r.sautes.length && !r.echecs.length) l.push('', 'Rien à préparer.');
+  l.push('', 'Rien n\'a été envoyé : relis et valide dans Pennylane (Ventes → Factures, brouillons).');
+  return l.join('\n');
+}
+
+function menuConstruireContrats() {
+  var ui = SpreadsheetApp.getUi();
+  var r = construireContrats_();
+  ui.alert('Onglet CONTRATS',
+    r.ajoutes + ' ligne(s) ajoutée(s), ' + r.completes + ' complétée(s).\n\n' +
+    'À vérifier ligne par ligne : le montant mensuel, le nom de facturation (CLIENT_FACTURE), ' +
+    'le SIREN, l\'e-mail et l\'adresse. Une ligne passée à ACTIF = NON n\'est pas facturée.' +
+    (r.sansPrix.length ? '\n\nSéries sans prix dans leur note (non reprises) :\n' + r.sansPrix.join('\n') : ''),
+    ui.ButtonSet.OK);
+}
+
+function menuBrouillonsContrats() {
+  var ui = SpreadsheetApp.getUi();
+  if (!pennylaneJeton_()) return ui.alert('Pennylane n\'est pas connecté : lance d\'abord le menu 25.');
+  var def = moisEcoule_();
+  var q = ui.prompt('Brouillons des contrats',
+    'Quel mois facturer ? Écris-le comme ' + def + ' (par défaut : ' + moisLisible_(def) + ', le mois écoulé).',
+    ui.ButtonSet.OK_CANCEL);
+  if (q.getSelectedButton() !== ui.Button.OK) return;
+  var p = String(q.getResponseText() || '').trim() || def;
+  if (!/^\d{4}-\d{2}$/.test(p)) return ui.alert('Mois illisible : ' + p);
+  var r = facturesContrats_(p, { nom: 'CLASSEUR' });
+  ui.alert('Contrats — ' + moisLisible_(p), compteRendu_('', r), ui.ButtonSet.OK);
+}
+
+function menuBrouillonsPonctuels() {
+  var ui = SpreadsheetApp.getUi();
+  if (!pennylaneJeton_()) return ui.alert('Pennylane n\'est pas connecté : lance d\'abord le menu 25.');
+  ui.alert('Chantiers terminés', compteRendu_('', facturesPonctuels_({ nom: 'CLASSEUR' })), ui.ButtonSet.OK);
+}
+
+function activerPreparationAuto() {
+  var ui = SpreadsheetApp.getUi();
+  arreterPreparationAuto_(true);
+  ScriptApp.newTrigger('preparationAutomatique').timeBased().everyHours(1).create();
+  tracerServeur_('SYSTEME', 'PREPARATION AUTO ACTIVEE', '', '', '');
+  ui.alert('Préparation automatique activée.\n\nToutes les heures : les chantiers terminés depuis deux heures, ' +
+    'et du 1er au 5 du mois les contrats du mois écoulé, deviennent des BROUILLONS dans Pennylane.\n\n' +
+    'Rien n\'est envoyé aux clients.');
+}
+function arreterPreparationAuto_(sansMot) {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'preparationAutomatique') ScriptApp.deleteTrigger(t);
+  });
+  if (!sansMot) SpreadsheetApp.getUi().alert('Préparation automatique arrêtée.');
+}
+function arreterPreparationAuto() { arreterPreparationAuto_(false); }
+
 /* ====================== LES COURRIELS ======================
    Tout courriel de l'appli passe par ici, et par ici seulement : c'est ce qui
    garantit que la bannière de la maison est en bas de chacun, sans exception.
@@ -7974,7 +8522,8 @@ var ENTETES_FACTURES_ = [
   'CREE_LE', 'NUMERO_DEVIS', 'CLIENT', 'TYPE', 'PERIODE', 'PASSAGES',
   'TOTAL_HT', 'TOTAL_TVA', 'TOTAL_TTC',
   'ID_HENRRI', 'ID_CLIENT_HENRRI', 'LIEN_HENRRI',
-  'ETAT', 'ECART', 'CREE_PAR', 'NOTE'
+  'ETAT', 'ECART', 'CREE_PAR', 'NOTE',
+  'ID_PENNYLANE', 'ID_CLIENT_PENNYLANE', 'NUMERO_FACTURE'
 ];
 
 /** Les chantiers rangés par numéro de devis. */
@@ -8009,7 +8558,7 @@ function facturesFaites_() {
     if (!num) continue;
     /* Un échec ne barre pas la route : on doit pouvoir réessayer. Seule une
        facture réellement déposée chez Henrri compte comme faite. */
-    if (!String(o.ID_HENRRI || '').trim()) continue;
+    if (!String(o.ID_HENRRI || '').trim() && !String(o.ID_PENNYLANE || '').trim()) continue;
     var k = String(o.PERIODE || '').trim();
     (out[num] = out[num] || {})[k] = o;
   }
@@ -8098,8 +8647,12 @@ function etatFacturation_(periode) {
       pret: ch.length > 0 && faits.length === ch.length,
       facturee: !!dejaP, idHenrri: dejaP ? String(dejaP.ID_HENRRI || '') : '',
       lienHenrri: dejaP ? String(dejaP.LIEN_HENRRI || '') : '',
-      faitLe: faits.length ? isoDe_(faits[faits.length - 1].DEPART ||
-                                    faits[faits.length - 1].DATE) : ''
+      /* v94 : le DERNIER départ pointé, pas celui de la dernière ligne du
+         tableau — c'est de lui que partent les deux heures avant facture. */
+      faitLe: faits.length ? isoDe_(faits.reduce(function (m, c) {
+        var x = c.DEPART || c.DATE, t = x ? new Date(x).getTime() : 0;
+        return (!isNaN(t) && t > m.t) ? { t: t, v: x } : m;
+      }, { t: 0, v: faits[faits.length - 1].DEPART || faits[faits.length - 1].DATE }).v) : ''
     });
   });
 
@@ -8113,7 +8666,8 @@ function etatFacturation_(periode) {
     return String(a.client).localeCompare(String(b.client));
   });
   return { ok: true, periode: mois, periodeNom: moisLisible_(mois),
-           henrri: henrriConfigure_(), ponctuels: ponctuels, contrats: contrats };
+           henrri: henrriConfigure_(), pennylane: !!pennylaneJeton_(),
+           ponctuels: ponctuels, contrats: contrats };
 }
 
 /* ---------------------------------------------------------------- */
@@ -8224,6 +8778,8 @@ function henrriListe_(res) {
 function preparerFacture_(d, com) {
   var num = String(d.numero || '').trim();
   if (!num) return { ok: false, erreur: 'Numéro de devis manquant.' };
+  /* v94 : Pennylane d'abord. Henrri ne sert plus que s'il est seul connecté. */
+  if (pennylaneJeton_()) return preparerFacturePennylane_(d, com);
   if (!henrriConfigure_()) {
     return { ok: false, erreur: 'Henrri n\'est pas connecté. Dans le classeur : ' +
                                 'menu « Devis » → « Connecter Henrri ».' };
@@ -8412,6 +8968,14 @@ function ecrireFacture_(v) {
   /* Écriture par nom de colonne, jamais par position : une colonne ajoutée
      plus tard arrive à la fin de la feuille, et une ligne posée par position
      irait alors porter ses valeurs dans la mauvaise case. */
+  /* v94 : une colonne nouvelle (ID_PENNYLANE…) s'ajoute à la fin plutôt que
+     de laisser tomber sa valeur. */
+  for (var kk in v) {
+    if (v.hasOwnProperty(kk) && en.indexOf(kk) < 0 && ENTETES_FACTURES_.indexOf(kk) >= 0) {
+      sh.getRange(1, en.length + 1).setValue(kk).setFontWeight('bold');
+      en.push(kk);
+    }
+  }
   var ligne = [];
   for (var i = 0; i < en.length; i++) ligne.push('');
   for (var k in v) {
