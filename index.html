@@ -22,11 +22,18 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" href="icon-192.png" type="image/png">
 <title>Breizh Brillance</title>
+<script>
+  /* v93 : le mode sombre par défaut, posé avant le premier dessin pour que
+     l'écran ne flashe pas en blanc. « clair » se garde par appareil. */
+  try{ if(localStorage.getItem('theme') !== 'clair') document.documentElement.classList.add('sombre'); }
+  catch(e){ document.documentElement.classList.add('sombre'); }
+</script>
 <style>
   :root{
     --bg:#f4f5f7; --card:#fff; --txt:#111827; --mut:#6b7280; --line:#e2e5ea;
     --acc:#004C92; --acc-d:#003A70; --danger:#b91c1c; --warn:#b45309; --ok:#15803d;
     --acc-f:#EAF2FB; --acc-b:#B9D2EC; --acc-t:#00396E;
+    --sub:#eef1f5; --press:#eaeef3;
   }
   /* L'espace d'administration porte sa propre couleur. Ce n'est pas un
      ornement : le patron passe d'un outil à l'autre dans la même application,
@@ -52,7 +59,7 @@
   .lien{background:rgba(255,255,255,.18);color:#fff;font-size:12px;padding:6px 10px;border-radius:8px;border:0}
   .steps{display:flex;gap:6px;margin-top:10px}
   .steps div{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.3)}
-  .steps div.on{background:#fff}
+  .steps div.on{background:var(--card)}
   #reseau{font-size:12.5px;padding:8px 16px;text-align:center;display:none}
   #reseau.off{display:block;background:#fef3c7;color:#92400e}
   #reseau.att{display:block;background:#e0f2fe;color:#075985}
@@ -62,12 +69,12 @@
   h2{font-size:13px;text-transform:uppercase;letter-spacing:.7px;color:var(--mut);margin:0 0 12px}
   label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
   input,select,textarea{width:100%;padding:12px;font-size:16px;border:1px solid var(--line);
-    border-radius:9px;background:#fff;color:var(--txt);font-family:inherit}
+    border-radius:9px;background:var(--card);color:var(--txt);font-family:inherit}
   input:focus,select:focus,textarea:focus{outline:2px solid var(--acc);outline-offset:-1px}
   /* Une valeur qui vient du catalogue : elle se lit, elle ne se saisit pas.
      Volontairement sans bordure d'un champ, pour qu'on ne tente pas d'y écrire. */
   .fige{padding:12px;font-size:16px;border:1px solid transparent;border-radius:10px;
-        background:#f1f3f6;color:#374151;font-weight:600;white-space:nowrap;
+        background:var(--sub);color:var(--txt);font-weight:600;white-space:nowrap;
         overflow:hidden;text-overflow:ellipsis}
   /* Le rappel du plafond de remise. Il peut être montré au client : assez grand
      pour se lire à bout de bras, rouge pour dire « on est au bout ». */
@@ -80,8 +87,8 @@
   .btn{background:var(--acc);color:#fff;font-weight:600;width:100%}
   .btn:active{background:var(--acc-d);transform:scale(.97)}
   .btn:disabled{opacity:.7}
-  .btn.sec{background:#fff;color:var(--txt);border:1px solid var(--line)}
-  .btn.sec:active{background:#eaeef3;transform:scale(.97)}
+  .btn.sec{background:var(--card);color:var(--txt);border:1px solid var(--line)}
+  .btn.sec:active{background:var(--press);transform:scale(.97)}
   .x:active,.lien:active{transform:scale(.94)}
   /* petit rond qui tourne dans un bouton occupé */
   .spin{display:inline-block;width:15px;height:15px;margin-right:9px;vertical-align:-3px;
@@ -90,7 +97,7 @@
   .btn.sec .spin{border-color:rgba(0,76,146,.25);border-top-color:var(--acc)}
   @keyframes tourne{to{transform:rotate(360deg)}}
   .btn.sm{padding:10px 12px;font-size:14px;width:auto}
-  .bar{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);
+  .bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);
        padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px;z-index:30}
   .bar .tt{flex:1;display:flex;flex-direction:column;justify-content:center;line-height:1.25}
   .bar .tt b{font-size:17px}.bar .tt span{font-size:11px;color:var(--mut)}
@@ -102,7 +109,7 @@
      On garde donc un dégagement franc, que la barre système s'affiche ou non —
      sans quoi le trait du bas de l'iPhone coupe le mot « Mes devis ». */
   .ongl{position:fixed;left:0;right:0;bottom:0;z-index:31;display:flex;
-        background:#fff;border-top:1px solid var(--line);padding:6px 4px;
+        background:var(--card);border-top:1px solid var(--line);padding:6px 4px;
         padding-bottom:max(22px, calc(6px + env(safe-area-inset-bottom)))}
   .ongl button{flex:1;border:0;background:transparent;padding:4px 2px;cursor:pointer;
         display:flex;flex-direction:column;align-items:center;gap:3px;
@@ -124,7 +131,7 @@
   .empty{text-align:center;color:var(--mut);font-size:14px;padding:22px 10px}
   dialog{border:0;border-radius:14px 14px 0 0;padding:0;width:100%;max-width:820px;margin:auto auto 0;background:var(--card)}
   dialog::backdrop{background:rgba(0,0,0,.45)}
-  .dlg-h{position:sticky;top:0;background:#fff;padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px}
+  .dlg-h{position:sticky;top:0;background:var(--card);padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px}
   .dlg-b{max-height:65vh;overflow:auto;padding:8px 16px 16px}
   .cat{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--mut);margin:14px 0 6px}
   /* Le planning du salarié : toute la carte prend la teinte de sa nature,
@@ -145,11 +152,11 @@
   /* La pastille repasse en blanc : sur une carte teintée, c'est elle qui
      doit ressortir, et son liseré reprend la couleur de la nature. */
   .chNat{display:inline-block;margin-top:9px;padding:3px 10px;border-radius:999px;
-         background:#fff;color:var(--nI, var(--mut));
+         background:var(--card);color:var(--nI, var(--mut));
          border:1px solid var(--nT, var(--line));
          font-size:11px;font-weight:700;letter-spacing:.3px}
   /* « À FAIRE » est gris clair : sur une carte teintée il disparaîtrait. */
-  .chC .vb-a{background:#fff}
+  .chC .vb-a{background:var(--card)}
   #sigOverlay{position:fixed;inset:0;z-index:60;background:#fff;display:flex;flex-direction:column;
     padding:calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom))}
   #sigOverlay.hide{display:none}
@@ -160,7 +167,7 @@
   #pdfOverlay{position:fixed;inset:0;z-index:61;background:var(--bg);display:flex;flex-direction:column;
     padding:calc(10px + env(safe-area-inset-top)) 12px calc(10px + env(safe-area-inset-bottom))}
   #pdfOverlay.hide{display:none}
-  #poPages{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;background:#e9ecef;
+  #poPages{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;background:var(--sub);
     border:1px solid var(--line);border-radius:12px;padding:8px}
   .poPage{width:100%;height:auto;display:block;margin:0 auto 10px;background:#fff;
     box-shadow:0 1px 4px rgba(0,0,0,.18);border-radius:2px}
@@ -170,7 +177,7 @@
   .ch b{font-size:16px}
   .ch.gros{border-top:2px solid var(--txt);margin-top:6px;padding-top:10px;font-size:18px;font-weight:700}
   .puce{display:inline-block;padding:6px 12px;border:1px solid var(--line);border-radius:999px;
-    background:#fff;font-size:13px;color:var(--mut);cursor:pointer}
+    background:var(--card);font-size:13px;color:var(--mut);cursor:pointer}
   .puce.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
   /* Les deux onglets du tableau : celui qu'on regarde se voit. */
   .btn.sec.on{border-color:var(--acc);background:var(--acc-f);color:var(--acc-d);font-weight:700}
@@ -222,13 +229,13 @@
   .pw input{padding-right:50px}
   .pw button{position:absolute;right:3px;top:3px;bottom:3px;background:none;border:0;
              padding:0 11px;color:var(--mut);display:flex;align-items:center;border-radius:8px}
-  .pw button:active{transform:scale(.9);background:#eef1f5}
+  .pw button:active{transform:scale(.9);background:var(--sub)}
   /* choix professionnel / particulier */
-  .choix{display:block;width:100%;text-align:left;background:#fff;border:1.5px solid var(--line);
+  .choix{display:block;width:100%;text-align:left;background:var(--card);border:1.5px solid var(--line);
          border-radius:12px;padding:15px;margin-bottom:10px}
   .choix b{display:block;font-size:16.5px;color:var(--txt)}
   .choix span{display:block;font-size:12.5px;color:var(--mut);margin-top:3px;line-height:1.4}
-  .choix:active{transform:scale(.98);background:#f2f6fb}
+  .choix:active{transform:scale(.98);background:var(--press)}
   .choix.on{border-color:var(--acc);background:var(--acc-f);box-shadow:inset 0 0 0 1px var(--acc)}
   .choix.on b{color:var(--acc-d)}
   .choix.on b::after{content:' ✓';color:var(--acc)}
@@ -324,7 +331,7 @@
   .adAnn{display:flex;align-items:center;gap:10px;background:var(--acc);color:#fff;
          border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:14px}
   .adAnn span{flex:1}
-  .adAnn button{background:#fff;color:var(--acc);border:0;border-radius:8px;
+  .adAnn button{background:var(--card);color:var(--acc);border:0;border-radius:8px;
                 padding:6px 10px;font:inherit;font-weight:600;cursor:pointer}
 
   .card.adPris{border-color:var(--acc-b);background:var(--acc-f)}
@@ -334,13 +341,13 @@
   .vb-s{background:#E3F4E8;color:#14612F}
   .vb-r{background:#FFF3DC;color:#7A4E00}
   .vb-x{background:#FBE9E9;color:#8A1F1F}
-  .vb-a{background:#EEF1F5;color:#54606E}
+  .vb-a{background:var(--sub);color:#54606E}
   #rappels{background:#FFF3DC;border:1px solid #F0D79B;color:#7A4E00;border-radius:10px;
            padding:11px 12px;margin:2px 0 12px;font-size:13.5px;line-height:1.5}
   #rappels b{display:block;font-size:14px;margin-bottom:3px}
   figure figcaption.vb{position:absolute;left:5px;bottom:5px;margin:0}
   /* choix binaire compact — l'âge du logement, qui décide du taux de TVA */
-  .bsel{background:#fff;border:1.5px solid var(--line);color:var(--txt);font-size:13.5px;
+  .bsel{background:var(--card);border:1.5px solid var(--line);color:var(--txt);font-size:13.5px;
         padding:11px 6px;font-weight:500;line-height:1.3}
   .bsel.on{border-color:var(--acc);background:var(--acc-f);color:var(--acc-d);font-weight:700}
   .bsel:active{transform:scale(.97)}
@@ -353,7 +360,7 @@
      commercial ne choisit plus ce qu'il ajoute, il remplit ce qui le concerne. */
   .grp{background:var(--card);border:1px solid var(--line);border-radius:12px;
        margin-bottom:10px;overflow:hidden}
-  .grpT{display:flex;align-items:center;gap:10px;width:100%;background:#fff;border:0;
+  .grpT{display:flex;align-items:center;gap:10px;width:100%;background:var(--card);border:0;
         padding:14px;text-align:left;font:inherit;color:var(--txt);border-radius:0}
   .grpT .n{flex:1;font-weight:600;font-size:15px;line-height:1.3}
   .grpT .fl{color:var(--mut);font-size:15px;line-height:1;transition:transform .15s ease}
@@ -371,7 +378,7 @@
   .pres input.q{flex:0 0 78px;width:78px;padding:10px 8px;font-size:16px;text-align:right;margin:0}
   .pres .tt{flex:0 0 68px;text-align:right;font-weight:700;font-size:14px;color:var(--txt)}
   /* Une coche de forfait se vise au pouce : 44 px de haut, pas une case de 13. */
-  .coche{flex:0 0 78px;height:44px;border:1.5px solid var(--line);background:#fff;
+  .coche{flex:0 0 78px;height:44px;border:1.5px solid var(--line);background:var(--card);
          border-radius:11px;font-size:13.5px;font-weight:600;color:var(--mut);padding:0}
   .coche.on{border-color:var(--acc);background:var(--acc);color:#fff}
   /* Un forfait au devis se compte : quatre cuisines, quatre fois le prix. Le
@@ -402,7 +409,7 @@
   .libU{flex:1 1 56px;min-width:0;padding:9px 8px;font-size:14px}
   .libP{flex:0 0 80px;width:80px;padding:9px 6px;font-size:16px;text-align:right}
   .libT{flex:0 0 64px;text-align:right;font-weight:700;font-size:14px;color:var(--txt)}
-  .libX{flex:0 0 34px;height:38px;border:1.5px solid var(--line);background:#fff;
+  .libX{flex:0 0 34px;height:38px;border:1.5px solid var(--line);background:var(--card);
         color:var(--mut);font-size:14px;line-height:1;padding:0;border-radius:10px}
   .libX:active{border-color:var(--warn);color:var(--warn)}
   .libAdd{padding:11px 12px}
@@ -412,11 +419,11 @@
   .btnLib{width:100%;height:44px;border:1.5px dashed var(--acc);background:var(--acc-f);
           color:var(--acc);font-weight:600;font-size:14px;border-radius:11px}
   /* suggestions : clients déjà connus + annuaire des entreprises */
-  .sugg{border:1px solid var(--line);border-radius:10px;margin-top:5px;overflow:hidden;background:#fff}
-  .sugg button{display:block;width:100%;text-align:left;background:#fff;border:0;
+  .sugg{border:1px solid var(--line);border-radius:10px;margin-top:5px;overflow:hidden;background:var(--card)}
+  .sugg button{display:block;width:100%;text-align:left;background:var(--card);border:0;
                border-bottom:1px solid var(--line);padding:10px 12px;border-radius:0}
   .sugg button:last-child{border-bottom:0}
-  .sugg button:active{background:#eef3f9}
+  .sugg button:active{background:var(--press)}
   .sugg b{display:block;font-size:14.5px;color:var(--txt);font-weight:600}
   .sugg em{display:block;font-size:12px;color:var(--mut);margin-top:2px;font-style:normal}
   .sugg .src{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:.6px;
@@ -425,7 +432,7 @@
   /* photos du site */
   .photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
   .photos figure{position:relative;margin:0;width:78px;height:78px;border-radius:9px;
-                 overflow:hidden;border:1px solid var(--line);background:#eef1f5}
+                 overflow:hidden;border:1px solid var(--line);background:var(--sub)}
   .photos img{width:100%;height:100%;object-fit:cover;display:block}
   .photos figure button{position:absolute;top:2px;right:2px;width:22px;height:22px;padding:0;
     border-radius:99px;background:rgba(17,24,39,.72);color:#fff;font-size:13px;line-height:1}
@@ -438,10 +445,10 @@
   .piece .x{flex:0 0 auto;padding-bottom:9px}
 
   /* ---- PHONING ---- préfixe « pr » pour ne rien croiser avec les photos (« ph ») */
-  .prOng{display:flex;gap:4px;background:#e8ecf1;padding:4px;border-radius:999px;margin-bottom:14px}
+  .prOng{display:flex;gap:4px;background:var(--sub);padding:4px;border-radius:999px;margin-bottom:14px}
   .prOng button{flex:1;border:0;background:transparent;padding:9px 6px;border-radius:999px;
                 font-weight:600;color:var(--mut);font-size:14px;min-width:0}
-  .prOng button.on{background:#fff;color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .prOng button.on{background:var(--card);color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
   .bandModif{display:flex;align-items:center;justify-content:space-between;gap:10px;
              flex-wrap:wrap;background:var(--acc-f);border:1px solid var(--acc-b);
              color:var(--acc-t);border-radius:12px;padding:10px 14px;margin-bottom:14px;
@@ -466,7 +473,7 @@
   .prNom{font-size:21px;font-weight:700;line-height:1.2;margin:6px 0 0;overflow-wrap:anywhere}
   .prDir{color:var(--mut);font-size:14.5px;margin-top:2px}
   .prEtiq{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;
-          white-space:nowrap;letter-spacing:0;text-transform:none;background:#eef1f5;color:var(--mut)}
+          white-space:nowrap;letter-spacing:0;text-transform:none;background:var(--sub);color:var(--mut)}
   .prEtiq.ok{background:#dcfce7;color:#15803d}
   .prEtiq.att{background:#fef3c7;color:#92400e}
   .prEtiq.no{background:#fee2e2;color:#991b1b}
@@ -480,7 +487,7 @@
   .prAppel.sec{background:var(--acc-f);color:var(--acc-t);font-size:18px;padding:11px 12px;margin-top:8px}
   .prAppel svg{flex:none}
   .prSem{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:14px}
-  .prJour{background:#f1f4f8;border-radius:8px;padding:5px 2px;text-align:center;
+  .prJour{background:var(--sub);border-radius:8px;padding:5px 2px;text-align:center;
           font-size:10.5px;line-height:1.3;color:var(--mut);min-width:0;overflow:hidden}
   .prJour b{display:block;font-size:11px;color:var(--txt);letter-spacing:.04em}
   .prJour.auj{background:var(--acc-f);box-shadow:inset 0 0 0 1.5px var(--acc-b);color:var(--acc-t)}
@@ -490,7 +497,7 @@
   .prMeta dd{margin:0;min-width:0;overflow-wrap:anywhere}
   .prHist{font-size:13px;color:var(--mut);margin:12px 0 0;padding:0;list-style:none}
   .prRes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .prRes button{border:1.5px solid var(--line);background:#fff;border-radius:12px;
+  .prRes button{border:1.5px solid var(--line);background:var(--card);border-radius:12px;
                 padding:14px 8px;font-weight:600;font-size:15px;min-width:0;width:auto}
   .prRes button.ok{border-color:#15803d;color:#15803d}
   .prRes button.att{border-color:#b45309;color:#b45309}
@@ -506,7 +513,7 @@
   .prRes .prRappel .btn:active{background:var(--acc-d);transform:scale(.97)}
   .prRes .prRappel .btn:disabled{opacity:.7}
   .prQuand{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
-  .prQuand button{border:1px solid var(--line);background:#fff;border-radius:999px;
+  .prQuand button{border:1px solid var(--line);background:var(--card);border-radius:999px;
                   padding:8px 12px;font-size:13.5px;font-weight:600;width:auto}
   .prQuand button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
   /* ---- Nouvel événement, à la FamilyWall ---- */
@@ -518,27 +525,27 @@
   .ctBascule{display:flex;align-items:center;gap:10px;margin-top:12px;color:var(--txt);font-size:15px}
   .ctBascule input{width:20px;height:20px;accent-color:var(--acc)}
   .ctCouleurs{display:flex;flex-wrap:wrap;gap:6px}
-  .ctCoul{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;
+  .ctCoul{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);
     border-radius:999px;padding:6px 10px 6px 6px;font:inherit;font-size:13.5px;color:var(--txt)}
-  .ctCoul i{width:18px;height:18px;border-radius:50%;border:3px solid var(--nT);background:#fff;flex:none}
+  .ctCoul i{width:18px;height:18px;border-radius:50%;border:3px solid var(--nT);background:var(--card);flex:none}
   .ctCoul.on{background:var(--nF);border-color:var(--nT);color:var(--nI);font-weight:700}
   .ctCoul.on i{background:var(--nT)}
   .ctGens{display:flex;flex-wrap:wrap;gap:8px}
   .ctAva{display:flex;flex-direction:column;align-items:center;gap:4px;border:0;background:none;
     font:inherit;font-size:12px;color:var(--mut);padding:2px;min-width:58px}
-  .ctAva span{width:40px;height:40px;border-radius:50%;background:#e8ebf0;color:var(--txt);
+  .ctAva span{width:40px;height:40px;border-radius:50%;background:var(--sub);color:var(--txt);
     display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;
     text-transform:uppercase;border:2px solid transparent}
   .ctAva.on{color:var(--acc-d);font-weight:700}
   .ctAva.on span{background:var(--acc);color:#fff;border-color:var(--acc-d)}
   .ctJours{display:flex;gap:6px;margin-top:10px;justify-content:space-between}
-  .ctJ{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:#fff;
+  .ctJ{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:var(--card);
     font:inherit;font-weight:700;color:var(--txt)}
   .ctJ.on{background:var(--acc);border-color:var(--acc);color:#fff}
   .ctFiche{border-color:var(--acc-b);background:var(--acc-f)}
   .ctRond{width:26px;height:26px;border-radius:50%;background:var(--acc);color:#fff;display:flex;
     align-items:center;justify-content:center;font-weight:700}
-  select#ct_rec{width:100%;font:inherit;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  select#ct_rec{width:100%;font:inherit;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
   /* ---- la semaine ----
      Sept colonnes ne tiennent pas de front sur un téléphone : elles glissent
      sous le doigt, et chacune se cale au passage. Sur un écran large, la
@@ -548,9 +555,9 @@
   .semCompte{margin:0 0 10px}
   .sem{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;
        scroll-snap-type:x mandatory;padding-bottom:6px}
-  .semJ{flex:0 0 150px;scroll-snap-align:start;background:#fff;border:1px solid var(--line);
+  .semJ{flex:0 0 150px;scroll-snap-align:start;background:var(--card);border:1px solid var(--line);
         border-radius:12px;padding:8px;min-height:120px;display:flex;flex-direction:column;gap:6px}
-  .semJ.semVide{background:#f7f8fa}
+  .semJ.semVide{background:var(--sub)}
   .semJ.semAuj{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
   .semTete{display:flex;justify-content:space-between;align-items:baseline;
            border-bottom:1px solid var(--line);padding-bottom:5px}
@@ -559,7 +566,7 @@
   .semTete span{font-size:17px;font-weight:700}
   .semRien{color:var(--mut);font-size:13px;text-align:center;padding:14px 0}
   .semEv{display:block;width:100%;text-align:left;border:0;border-left:4px solid var(--nT,#9aa3ad);
-         background:var(--nF,#eef1f4);color:var(--nI,#333);border-radius:8px;padding:7px 8px;
+         background:var(--nF,var(--sub));color:var(--nI,var(--txt));border-radius:8px;padding:7px 8px;
          cursor:pointer;font:inherit}
   .semEv b{display:block;font-size:13px}
   /* Un nom trop long pour la colonne se coupe avec un trait d'union plutôt
@@ -578,6 +585,82 @@
            background:none;border-left:0;border-right:0;border-top:0;text-align:left}
   .prLigne b{display:block;font-weight:600;overflow-wrap:anywhere}
   .prLigne span{font-size:13px;color:var(--mut)}
+  /* ====== v93 — LE CALENDRIER DU MOIS ======
+     Sept colonnes qui tiennent de front, même sur un petit téléphone : une
+     case fait ~50 px, de quoi lire le quantième et deux ou trois barres. */
+  .cal{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:12px}
+  .calTete{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--line)}
+  .calTete span{text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--mut);padding:6px 0}
+  .calGrille{display:grid;grid-template-columns:repeat(7,1fr)}
+  .calJ{min-height:78px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+    padding:3px 2px 4px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-width:0}
+  .calJ:nth-child(7n){border-right:0}
+  .calJ:active{background:var(--press)}
+  .calJ.calHors{background:var(--sub)}
+  .calJ.calHors .calN{opacity:.45}
+  .calN{font-size:12.5px;font-weight:600;text-align:center;line-height:20px;width:22px;height:22px;
+    border-radius:50%;margin:0 auto 1px;font-variant-numeric:tabular-nums}
+  .calJ.calAuj .calN{background:var(--acc);color:#fff}
+  .calJ.calOn{box-shadow:inset 0 0 0 2px var(--acc)}
+  .calJ.glCible{background:var(--acc-f);outline:0;box-shadow:inset 0 0 0 2px var(--acc)}
+  .calEv{display:block;font-size:10.5px;line-height:1.25;padding:1px 3px;border-radius:4px;
+    border-left:3px solid var(--nT,#9aa3ad);background:var(--nF,var(--sub));color:var(--nI,var(--txt));
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+  .calEv i{font-style:normal;font-weight:500;opacity:.8}
+  /* Sur un téléphone, une case fait 50 px : le nom du client passe avant
+     l'heure, qu'on lit dans la journée ouverte. */
+  @media (max-width:520px){ .calEv i{display:none} .calEv{padding:1px 2px;font-size:10px} }
+  .calPlus{font-size:10.5px;color:var(--mut);text-align:center;font-weight:600}
+  .calBac{border-color:var(--warn)}
+  .calBacL{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .calBacEv{width:auto;max-width:100%;font-size:13px;padding:7px 10px;border-radius:8px;
+    border-top:0;border-right:0;border-bottom:0;cursor:grab;touch-action:pan-y}
+  .calJourne{border-color:var(--acc-b);margin-top:2px}
+  @media (min-width:760px){ .calJ{min-height:104px} .calEv{font-size:12px} }
+
+  /* ====== v93 — LE MODE SOMBRE ======
+     Demandé par Simon (« je trouve plus agréable »). Il est mis par défaut,
+     et chacun peut revenir au clair d'un appui, sous la ligne « Connecté ».
+     Ce qui reste blanc exprès : la feuille de signature (l'encre est noire)
+     et les pages du devis, qui sont du papier. */
+  html.sombre{color-scheme:dark;
+    --bg:#0f1216; --card:#181c22; --txt:#e7e9ec; --mut:#9aa3ad; --line:#2b313a;
+    --acc:#2f7bc9; --acc-d:#1f5f9f; --acc-f:#15263a; --acc-b:#28496f; --acc-t:#a9cdf3;
+    --danger:#f87171; --warn:#f0a43a; --ok:#3ccf8e;
+    --sub:#1f242b; --press:#262c35}
+  html.sombre body.admin{--acc:#b23a32; --acc-d:#8f2a24; --acc-f:#2c1716; --acc-b:#5b2723; --acc-t:#f3b0aa}
+  html.sombre header{background:#12161c;border-bottom:2px solid var(--acc)}
+  html.sombre .btn.sec.on, html.sombre .bsel.on, html.sombre .choix.on b,
+  html.sombre .ctAva.on{color:var(--acc-t)}
+  html.sombre .ctAva.on span{border-color:var(--acc-t)}
+  html.sombre #reseau.off{background:#3a2d0c;color:#f6d38a}
+  html.sombre #reseau.att{background:#0d2b3d;color:#9ad3f5}
+  html.sombre #reseau.err, html.sombre .err{background:#3a1416;color:#fca5a5;border-color:#5c2326}
+  html.sombre .x:active{background:#3a1416}
+  html.sombre .card.dvV, html.sombre .dvP.dvV{background:#12291e}
+  html.sombre .card.dvO, html.sombre .dvP.dvO{background:#2e2112}
+  html.sombre .vb-s, html.sombre .prEtiq.ok{background:#12291e;color:#7ee2b0}
+  html.sombre .vb-r, html.sombre #rappels, html.sombre .prEtiq.att, html.sombre .prRappel,
+  html.sombre .prRes button.on, html.sombre .hcat .grpT .cpt{background:#2e2410;color:#f3cf86;border-color:#5a4718}
+  html.sombre .vb-x, html.sombre .prEtiq.no{background:#3a1416;color:#fca5a5}
+  html.sombre .vb-a{color:var(--mut)}
+  html.sombre .prRes button.ok{border-color:var(--ok);color:var(--ok)}
+  html.sombre .prRes button.att{border-color:var(--warn);color:var(--warn)}
+  html.sombre .prRes button.no{border-color:var(--danger);color:var(--danger)}
+  /* Les couleurs de nature : la teinte vive reste en liseré, le fond devient
+     un voile de cette teinte, et le texte reste clair. */
+  html.sombre .card.chC, html.sombre .semEv, html.sombre .calEv, html.sombre .ctCoul.on{
+    background:color-mix(in srgb, var(--nT, #9aa3ad) 22%, var(--card));color:var(--txt)}
+  html.sombre .chH, html.sombre .chNat{color:var(--txt)}
+  /* La feuille de signature est du papier : on lui rend les couleurs du
+     clair, sinon son titre et ses boutons disparaîtraient sur le blanc. */
+  html.sombre #sigOverlay{color-scheme:light;--bg:#fff;--card:#fff;--txt:#111827;--mut:#6b7280;
+    --line:#e2e5ea;--sub:#eef1f5;--press:#eaeef3;color:var(--txt)}
+  html.sombre input[type=date]::-webkit-calendar-picker-indicator,
+  html.sombre input[type=time]::-webkit-calendar-picker-indicator{filter:invert(.85)}
+  html.sombre dialog{background:var(--card);color:var(--txt)}
+  html.sombre .ctAva span{background:var(--press)}
 </style>
   <!-- Les notifications. Le SDK vit chez OneSignal : sans réseau il ne se
        charge pas, et l'application s'en passe — le reste fonctionne hors
@@ -672,6 +755,8 @@
       reste ouverte, même en arrière-plan, et se referme dès qu'elle est fermée.</div>
     <div class="mini" id="versionApp"
          style="text-align:center;margin-top:14px;opacity:.65;letter-spacing:.04em"></div>
+    <div class="mini" style="text-align:center;margin-top:6px">
+      <a href="#" class="lienTheme" onclick="basculerTheme();return false;">mode clair</a></div>
   </section>
 
   <!-- INFORMATION SUR LE JOURNAL — à chaque ouverture de session -->
@@ -1030,7 +1115,8 @@
       Catalogue mis à jour le <span id="majCat">—</span> ·
       <a href="#" onclick="rafraichirConfig();return false;">actualiser</a><br>
       Connecté : <b id="quiSuisJe">—</b> ·
-      <a href="#" onclick="deconnexion();return false;">se déconnecter</a>
+      <a href="#" onclick="deconnexion();return false;">se déconnecter</a> ·
+      <a href="#" class="lienTheme" onclick="basculerTheme();return false;">mode clair</a>
     </div>
   </section>
 
@@ -1242,6 +1328,7 @@
             onclick="devisAdmin(this)">Nouveau devis</button>
 
     <div class="row" style="margin-top:12px">
+      <button class="btn sec sm" style="flex:1" id="bOngCal" onclick="ongletAdmin('calendrier')">Calendrier</button>
       <button class="btn sec sm" style="flex:1" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
       <button class="btn sec sm" style="flex:1" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Chantiers</button>
       <button class="btn sec sm" style="flex:1" id="bOngFactures" onclick="ongletAdmin('factures')">Facturer</button>
@@ -1266,12 +1353,19 @@
       <button class="btn sec sm" style="flex:1" id="bAdSem"
               onclick="basculerSemaine('admin')">Voir la semaine</button>
     </div>
+    <!-- v93 : trois façons de lire les chantiers. -->
+    <div class="prOng hide" id="adVues" role="group" aria-label="Affichage des chantiers" style="margin:10px 0 0">
+      <button id="bVue_liste" onclick="vueChantiers('liste')">Liste</button>
+      <button id="bVue_semaine" onclick="vueChantiers('semaine')">Semaine</button>
+      <button id="bVue_mois" onclick="vueChantiers('mois')">Mois</button>
+    </div>
     <div id="adLot" class="card hide" style="margin-top:10px;border-color:var(--acc-b)"></div>
     <div id="adFiltres" class="row adFil" style="gap:6px;margin-top:10px"></div>
     <div id="adListe" style="margin-top:10px"></div>
     <div class="mini" style="text-align:center;margin-top:14px">
       Connecté : <b id="quiSuisJeAd">—</b> ·
-      <a href="#" onclick="deconnexion();return false;">se déconnecter</a>
+      <a href="#" onclick="deconnexion();return false;">se déconnecter</a> ·
+      <a href="#" class="lienTheme" onclick="basculerTheme();return false;">mode clair</a>
     </div>
   </section>
 
@@ -1307,7 +1401,8 @@
          de sortir, et il doit être là où le salarié travaille. -->
     <div class="mini" style="text-align:center;margin-top:14px">
       Connecté : <b id="quiSuisJeAg">—</b> ·
-      <a href="#" onclick="deconnexion();return false;">se déconnecter</a>
+      <a href="#" onclick="deconnexion();return false;">se déconnecter</a> ·
+      <a href="#" class="lienTheme" onclick="basculerTheme();return false;">mode clair</a>
     </div>
   </section>
 
@@ -1457,11 +1552,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=92"></script>
-<script src="jspdf.umd.min.js?v=92"></script>
-<script src="police.js?v=92"></script>
-<script src="logo.js?v=92"></script>
-<script src="pdf.js?v=92"></script>
-<script src="app.js?v=92"></script>
+<script src="config.js?v=93"></script>
+<script src="jspdf.umd.min.js?v=93"></script>
+<script src="police.js?v=93"></script>
+<script src="logo.js?v=93"></script>
+<script src="pdf.js?v=93"></script>
+<script src="app.js?v=93"></script>
 </body>
 </html>

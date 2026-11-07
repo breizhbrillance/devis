@@ -272,6 +272,7 @@ window.addEventListener('load', function(){
 
   chargerRepertoire();
   brancherGlisser();
+  peindreLiensTheme();
   /* Ici se trouvait « ls('moi', null) », qui effaçait la session à chaque
      démarrage : c'était la règle d'hier, celle d'une connexion qui ne survivait
      pas à la fermeture. Depuis la v85 elle tient trente jours, et c'est session()
@@ -358,7 +359,24 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v92';
+var VERSION_APP = 'v93';
+
+/* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
+   dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
+   lien ce qu'un appui ferait. */
+function themeSombre(){ return document.documentElement.classList.contains('sombre'); }
+function peindreLiensTheme(){
+  var mot = themeSombre() ? 'mode clair' : 'mode sombre';
+  Array.prototype.forEach.call(document.querySelectorAll('.lienTheme'), function(a){ a.textContent = mot; });
+  var m = document.querySelector('meta[name="theme-color"]');
+  if(m) m.setAttribute('content', themeSombre() ? '#12161c' : (document.body.classList.contains('admin') ? '#8C1D18' : '#004C92'));
+}
+function basculerTheme(){
+  var sombre = !themeSombre();
+  document.documentElement.classList.toggle('sombre', sombre);
+  try{ localStorage.setItem('theme', sombre ? 'sombre' : 'clair'); }catch(e){}
+  peindreLiensTheme();
+}
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -546,7 +564,7 @@ function montrer(id){
   ECRANS.forEach(function(k){ $(k).classList.toggle('hide', k!==id); });
   // La couleur suit le métier, pas l'écran : on la pose ici, seul endroit par
   // lequel passent tous les changements d'écran.
-  try{ document.body.classList.toggle('admin', estAdmin()); }catch(e){}
+  try{ document.body.classList.toggle('admin', estAdmin()); peindreLiensTheme(); }catch(e){}
   majOnglets();
 }
 
@@ -4572,7 +4590,182 @@ function semaineBouger(n){
    le gérant et le salarié ne regardent pas la même chose. */
 function basculerSemaine(qui){
   if(qui === 'agent'){ AG_SEM = !AG_SEM; SEM_LUNDI = ''; peindrePlanning(); }
-  else { SEM_VUE = !SEM_VUE; SEM_LUNDI = ''; peindreTableau(); }
+  else vueChantiers(SEM_VUE ? 'liste' : 'semaine');
+}
+
+/* ====================== LE MOIS ======================
+   Demande de Simon, 7 novembre 2026 : « dans Chantiers je veux une vue
+   mensuelle du calendrier en plus », et sur le tableau « une vue du
+   calendrier où je peux directement y avoir accès et en placer si besoin ».
+
+   La grille d'un agenda de poche, lundi en tête : six semaines au plus, et
+   dans chaque case les chantiers du jour en petites barres de la couleur de
+   leur nature. Une case est trop petite pour qu'on y vise une barre du doigt :
+   un appui sur la case ouvre la journée sous la grille, en cartes entières,
+   avec de quoi y poser un chantier neuf. Un appui long sur une barre la
+   décolle, comme dans la semaine, et on la lâche sur un autre jour.
+
+   Au-dessus, le bac « à placer » : les chantiers qui n'ont pas encore de
+   date. On les fait glisser sur leur jour — c'est tout le geste. */
+var CAL_MOIS = '';            // « 2026-11 » ; vide = le mois en cours
+var CAL_JOUR = '';            // la journée ouverte sous la grille
+var AD_VUE = (function(){       // l'onglet Chantiers : liste, semaine ou mois
+  var v = ls('adVue');
+  return (v === 'semaine' || v === 'mois') ? v : 'liste';
+})();
+SEM_VUE = (AD_VUE === 'semaine');
+var CAL_PAR_CASE = 3;         // barres montrées dans une case avant « +n »
+
+function moisVu(){ return CAL_MOIS || isoJour().slice(0,7); }
+function libelleMoisCal(p){
+  var a = Number(p.slice(0,4)), m = Number(p.slice(5,7));
+  var s = new Date(a, m-1, 1, 12).toLocaleDateString('fr-FR', {month:'long', year:'numeric'});
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function moisBouger(n){
+  if(!n){ CAL_MOIS = ''; CAL_JOUR = isoJour(); }
+  else {
+    var p = moisVu(), d = new Date(Number(p.slice(0,4)), Number(p.slice(5,7)) - 1 + n, 1, 12);
+    CAL_MOIS = isoJour(d).slice(0,7);
+    CAL_JOUR = '';
+  }
+  peindreTableau();
+}
+function calChoisir(iso){
+  CAL_JOUR = (CAL_JOUR === iso) ? '' : iso;
+  peindreTableau();
+  if(CAL_JOUR){
+    var z = $('calJourne');
+    if(z && z.scrollIntoView) setTimeout(function(){ z.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 30);
+  }
+}
+
+/* Les chantiers du tableau qu'on montre dans le calendrier : vivants, et
+   filtrés par la pastille du prestataire choisi. */
+function chantiersDuCalendrier(t){
+  return (t.chantiers||[]).filter(function(c){
+    if(estAnnule(c)) return false;
+    if(!AD_QUI) return true;
+    if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
+    if(AD_QUI === '(annulés)') return false;
+    return c.prestataire === AD_QUI;
+  });
+}
+
+function moisHtml(chantiers, avecBac){
+  var p = moisVu(), auj = isoJour();
+  var premier = p + '-01';
+  var lundi = lundiDe(premier);
+  var a = Number(p.slice(0,4)), m = Number(p.slice(5,7));
+  var dernier = isoJour(new Date(a, m, 0, 12));
+  var par = {}, nbMois = 0;
+  (chantiers || []).forEach(function(c){
+    var d = String(c.date || '').slice(0,10);
+    if(!d) return;
+    (par[d] = par[d] || []).push(c);
+    if(d.slice(0,7) === p) nbMois++;
+  });
+  for(var k in par) if(par.hasOwnProperty(k)) par[k].sort(function(x, y){
+    var hx = String(x.heure || '99:99'), hy = String(y.heure || '99:99');
+    return hx < hy ? -1 : (hx > hy ? 1 : 0);
+  });
+
+  var h = '';
+  if(avecBac) h += bacAPlacer(chantiers);
+
+  h += '<div class="semBarre">' +
+    '<button class="btn sec sm" onclick="moisBouger(-1)" aria-label="Mois précédent">◀</button>' +
+    '<button class="btn sec sm semTitre" onclick="moisBouger(0)">' + ech(libelleMoisCal(p)) + '</button>' +
+    '<button class="btn sec sm" onclick="moisBouger(1)" aria-label="Mois suivant">▶</button>' +
+    '</div>';
+  h += '<div class="mini semCompte">' + (nbMois
+    ? nbMois + ' chantier' + (nbMois > 1 ? 's' : '') + ' ce mois-ci · appuie sur un jour pour l\'ouvrir'
+    : 'Aucun chantier ce mois-ci · appuie sur un jour pour y en poser un') + '</div>';
+
+  h += '<div class="cal"><div class="calTete">' +
+    ['lun','mar','mer','jeu','ven','sam','dim'].map(function(j){ return '<span>' + j + '</span>'; }).join('') +
+    '</div><div class="calGrille">';
+  var d = new Date(lundi + 'T12:00:00');
+  for(var i = 0; i < 42; i++){
+    var iso = isoJour(d);
+    if(i % 7 === 0 && i >= 28 && iso > dernier) break;   // la sixième semaine n'existe pas toujours
+    var dehors = iso.slice(0,7) !== p;
+    var l = par[iso] || [];
+    h += '<div class="calJ' + (dehors ? ' calHors' : '') + (iso === auj ? ' calAuj' : '') +
+         (iso === CAL_JOUR ? ' calOn' : '') + '" data-jour="' + iso + '" role="button" tabindex="0" ' +
+         'aria-label="' + ech(jourLisible(iso)) + ', ' + l.length + ' chantier' + (l.length > 1 ? 's' : '') + '" ' +
+         'onclick="calChoisir(\'' + iso + '\')"><b class="calN">' + d.getDate() + '</b>';
+    l.slice(0, CAL_PAR_CASE).forEach(function(c){
+      var n = natureVue(c.nature);
+      h += '<span class="calEv" data-ch="' + ech(String(c.id)) + '"' +
+           (n ? ' style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '"' : '') + '>' +
+           (c.heure ? '<i>' + ech(String(c.heure).replace(':00','h').replace(':','h')) + '</i> ' : '') +
+           ech(c.client || 'Chantier') + '</span>';
+    });
+    if(l.length > CAL_PAR_CASE) h += '<span class="calPlus">+' + (l.length - CAL_PAR_CASE) + '</span>';
+    h += '</div>';
+    d.setDate(d.getDate() + 1);
+  }
+  h += '</div></div>';
+
+  if(CAL_JOUR) h += journeeHtml(CAL_JOUR, par[CAL_JOUR] || []);
+  return h;
+}
+
+/* Le bac : ce qui n'a pas de date. Les barres se décollent d'un appui long
+   et se lâchent sur une case ; un appui court ouvre la fiche, pour qui
+   préfère choisir la date au clavier. */
+function bacAPlacer(chantiers){
+  var l = (chantiers || []).filter(function(c){ return !c.date; });
+  if(!l.length) return '';
+  var h = '<div class="card calBac"><div style="display:flex;align-items:baseline;gap:8px">' +
+    '<b style="flex:1">' + l.length + ' à placer</b>' +
+    '<span class="mini">appui long, puis lâcher sur un jour</span></div><div class="calBacL">';
+  l.slice(0, 40).forEach(function(c){
+    var n = natureVue(c.nature);
+    h += '<button class="calEv calBacEv" data-ch="' + ech(String(c.id)) + '"' +
+         (n ? ' style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '"' : '') +
+         ' onclick="ficheChantier(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\')">' +
+         ech(c.client || 'Chantier') + (c.ville ? ' · ' + ech(c.ville) : '') + '</button>';
+  });
+  if(l.length > 40) h += '<span class="mini">… et ' + (l.length - 40) + ' autres dans la liste</span>';
+  return h + '</div></div>';
+}
+
+/* La journée ouverte : ses chantiers en cartes entières, et de quoi en poser
+   un ce jour-là. */
+function journeeHtml(iso, l){
+  var h = '<div class="card calJourne" id="calJourne" data-jour="' + iso + '">' +
+    '<div style="display:flex;align-items:baseline;gap:8px">' +
+    '<b style="flex:1;font-size:16px">' + ech(jourLisible(iso)) + '</b>' +
+    '<span class="mini">' + (l.length ? l.length + ' chantier' + (l.length > 1 ? 's' : '') : 'rien de prévu') +
+    '</span></div>' +
+    '<div class="row" style="gap:8px;margin-top:10px">' +
+    '<button class="btn sm" style="flex:1" onclick="nouveauChantier(\'' + iso + '\')">+ Nouveau ce jour</button>' +
+    '<button class="btn sec sm" style="flex:1" onclick="semaineDuJour(\'' + iso + '\')">Voir la semaine</button>' +
+    '</div></div>';
+  l.forEach(function(c){ h += carteChantierAdmin(c); });
+  return h;
+}
+
+/* De la case d'un jour à la semaine qui le contient. */
+function semaineDuJour(iso){
+  AD_ONGLET = 'chantiers';
+  AD_VUE = 'semaine'; SEM_VUE = true;
+  SEM_LUNDI = lundiDe(iso);
+  try{ ls('adOnglet', 'chantiers'); ls('adVue', 'semaine'); }catch(e){}
+  peindreTableau();
+  window.scrollTo(0,0);
+}
+
+/* Liste, semaine ou mois, dans l'onglet Chantiers. Le choix se garde. */
+function vueChantiers(v){
+  AD_VUE = v;
+  SEM_VUE = (v === 'semaine');
+  SEM_LUNDI = '';
+  if(v === 'mois' && !CAL_MOIS) CAL_JOUR = CAL_JOUR || '';
+  try{ ls('adVue', v); }catch(e){}
+  peindreTableau();
 }
 
 /* ====================== ESPACE D'ADMINISTRATION ======================
@@ -4582,7 +4775,13 @@ function basculerSemaine(qui){
    clairement de quand il date — un chiffre périmé qui s'annonce vaut mieux
    qu'un écran vide. */
 var TABLEAU = null;           // le dernier tableau reçu du bureau
-var AD_ONGLET = 'devis';
+/* v93 : le tableau s'ouvre sur le calendrier, ou sur l'onglet quitté la
+   dernière fois. La facturation ne se rouvre pas d'elle-même : elle a sa
+   propre lecture, lancée en arrivant sur l'onglet. */
+var AD_ONGLET = (function(){
+  var o = ls('adOnglet');
+  return (o === 'devis' || o === 'chantiers' || o === 'calendrier') ? o : 'calendrier';
+})();
 var AD_QUI = '';              // filtre : un nom, ou vide pour tout le monde
 var AD_FICHE = null;          // la fiche ouverte
 var AD_PRESTA = '';           // le prestataire choisi dans la planification
@@ -4715,6 +4914,7 @@ function badgeDevis(st){
 
 function ongletAdmin(quoi){
   AD_ONGLET = quoi;
+  if(quoi !== 'factures') ls('adOnglet', quoi);
   AD_QUI = '';
   AD_PASSE = false;             // chaque retour sur l'onglet repart du travail à venir
   if(quoi === 'factures'){
@@ -4752,6 +4952,7 @@ function peindreTableau(){
   $('adMaj').textContent = (t && t.maj)
     ? 'Mis à jour le ' + quandLisible(t.maj)
     : 'Jamais rafraîchi sur cet appareil.';
+  $('bOngCal').classList.toggle('on', AD_ONGLET === 'calendrier');
   $('bOngDevis').classList.toggle('on', AD_ONGLET === 'devis');
   $('bOngChantiers').classList.toggle('on', AD_ONGLET === 'chantiers');
   $('bOngFactures').classList.toggle('on', AD_ONGLET === 'factures');
@@ -4761,14 +4962,21 @@ function peindreTableau(){
   /* Un devis neuf se commence depuis l'onglet des devis. Au-dessus du planning
      il ne servait qu'à repousser le travail plus bas. */
   $('bAdDevisNeuf').classList.toggle('hide', AD_ONGLET !== 'devis');
-  $('adActions').classList.toggle('hide', AD_ONGLET !== 'chantiers');
+  var planning = AD_ONGLET === 'chantiers' || AD_ONGLET === 'calendrier';
+  $('adActions').classList.toggle('hide', !planning);
+  $('adVues').classList.toggle('hide', AD_ONGLET !== 'chantiers');
+  ['liste','semaine','mois'].forEach(function(v){
+    var b = $('bVue_' + v);
+    if(b){ b.classList.toggle('on', AD_VUE === v); b.setAttribute('aria-pressed', AD_VUE === v ? 'true' : 'false'); }
+  });
+  /* Choisir plusieurs cartes ne se fait que dans la liste : dans une grille,
+     l'appui ouvre la journée. */
+  $('bAdSel').classList.toggle('hide', !(AD_ONGLET === 'chantiers' && AD_VUE === 'liste'));
+  if(AD_SEL && !(AD_ONGLET === 'chantiers' && AD_VUE === 'liste')){ AD_SEL = false; AD_CHOIX = {}; }
   $('adFact').classList.toggle('hide', AD_ONGLET !== 'factures');
   $('bAdSel').textContent = AD_SEL ? 'Terminer' : 'Sélectionner';
   var bs = $('bAdSem');
-  if(bs){
-    bs.textContent = SEM_VUE ? 'Voir la liste' : 'Voir la semaine';
-    bs.classList.toggle('hide', AD_ONGLET !== 'chantiers');
-  }
+  if(bs) bs.classList.add('hide');            // v93 : remplacé par Liste · Semaine · Mois
   peindreLot();
 
   /* La facturation se peint à part : elle ne lit pas le tableau, et elle doit
@@ -4803,12 +5011,27 @@ function peindreTableau(){
 
   var noms = (AD_ONGLET === 'devis' ? (t.commerciaux||[]) : (t.prestataires||[])).slice();
   if(AD_ONGLET === 'chantiers') { noms.unshift('(non affectés)'); noms.push('(annulés)'); }
+  if(AD_ONGLET === 'calendrier') noms.unshift('(non affectés)');
+  if(AD_QUI === '(annulés)' && AD_ONGLET === 'calendrier') AD_QUI = '';
   $('adFiltres').innerHTML = ['<span class="puce' + (AD_QUI===''?' on':'') +
       '" onclick="filtreAdmin(\'\')">Tout le monde</span>']
     .concat(noms.map(function(n){
       return '<span class="puce' + (AD_QUI===n?' on':'') + '" onclick="filtreAdmin(\'' +
              ech(n).replace(/'/g,'&#39;') + '\')">' + ech(n) + '</span>';
     })).join('');
+
+  /* Le calendrier : le mois, avec le bac de ce qui reste à placer. */
+  if(AD_ONGLET === 'calendrier' || (AD_ONGLET === 'chantiers' && AD_VUE === 'mois')){
+    var duMois = chantiersDuCalendrier(t);
+    var sansDate = duMois.filter(function(c){ return !c.date; }).length;
+    $('adListe').innerHTML = bandeauMot() + bandeauAnnuler() +
+      (AD_ONGLET === 'chantiers' && sansDate
+        ? '<div class="card" style="border-color:var(--warn);margin-bottom:10px"><b>' + sansDate +
+          ' chantier' + (sansDate>1?'s':'') + ' sans date</b><div class="mini">Ils sont dans le bac ' +
+          'de l\'onglet Calendrier, ou dans la liste.</div></div>' : '') +
+      moisHtml(duMois, AD_ONGLET === 'calendrier');
+    return;
+  }
 
   if(AD_ONGLET === 'chantiers' && SEM_VUE){
     /* Les chantiers sans date n'ont pas de colonne où se poser : ils restent
@@ -4831,7 +5054,7 @@ function peindreTableau(){
     $('adListe').innerHTML = bandeauMot() + $('adListe').innerHTML;
     return;
   }
-  $('adListe').innerHTML = AD_ONGLET === 'devis' ? listeDevisAdmin(t)
+  $('adListe').innerHTML = AD_ONGLET === 'devis' ? bandeauMot() + listeDevisAdmin(t)
                                                 : bandeauMot() + listeChantiersAdmin(t);
 }
 
@@ -4904,6 +5127,9 @@ function listeDevisAdmin(t){
       /* La couleur ne dit rien toute seule : un écran en plein soleil, un œil
          qui distingue mal le vert de l'orange, et il ne resterait rien. */
       '<div class="mini dvMot">' + ech(motEtatDevis(d)) + '</div>' +
+      (d.recurrent && d.statut === 'SIGNE' && !d.contrat
+        ? '<div class="mini" style="color:var(--warn);font-weight:600">Contrat à mettre au calendrier</div>' : '') +
+      (d.recurrent && d.contrat ? '<div class="mini">Contrat ' + ech(d.contrat) + '</div>' : '') +
       (d.statut === 'REFUSE' && d.motif ? '<div class="mini">Refus : ' + ech(d.motif) + '</div>' : '') +
       (d.statut === 'A RELANCER' && d.relance ? '<div class="mini">Relance le ' + jjmmaa(d.relance) + '</div>' : '') +
     '</div>';
@@ -5514,6 +5740,26 @@ function peindreFicheDevis(d){
    Réservé au gérant, et c'est le classeur qui le tient, pas cet écran. */
 function blocPoserTravail(d){
   var st = String(d.statut || '').toUpperCase();
+  /* v93 — un devis d'entretien devient un contrat au calendrier, d'un appui :
+     le formulaire s'ouvre rempli avec le client, l'adresse, la nature et le
+     rythme du devis. */
+  if(d.recurrent && st !== 'REFUSE'){
+    if(d.contrat){
+      return '<div class="card"><h2>Le contrat</h2>' +
+        '<div class="mini" style="margin-top:0">Ce devis est au calendrier : contrat <b>' + ech(d.contrat) +
+        '</b>. Ses passages se posent tout seuls, semaine après semaine.</div>' +
+        '<button class="btn sec" style="margin-top:12px" onclick="listeContrats()">Voir les contrats</button></div>';
+    }
+    return '<div class="card" style="border-color:var(--warn)"><h2>Mettre au calendrier</h2>' +
+      '<div class="mini" style="margin-top:0">Devis d\'entretien' +
+      (d.passagesMois ? ' · ' + d.passagesMois + ' passage' + (d.passagesMois > 1 ? 's' : '') + ' par mois' : '') +
+      (d.mensuel ? ' · ' + eur(d.mensuel) + ' HT par mois' : '') +
+      '. Pas encore de contrat : ses passages ne se répètent pas tout seuls.</div>' +
+      (st === 'SIGNE' ? '' : '<div class="mini">Il n\'est pas encore déclaré signé : le contrat peut ' +
+        'quand même être posé, le devis garde son statut.</div>') +
+      '<button class="btn" style="margin-top:12px" onclick="contratDepuisFiche()">Mettre au calendrier comme contrat</button>' +
+    '</div>';
+  }
   if(st === 'SIGNE'){
     return '<div class="card"><h2>Le travail</h2>' +
       '<div class="mini" style="margin-top:0">Ce devis est signé : son planning a été posé ' +
@@ -5965,6 +6211,49 @@ function modifierContrat(id, aPartirDe){
   ouvrirContrat('Modifier le contrat');
 }
 
+/* v93 — le contrat d'un devis d'entretien. Le rythme se déduit des passages
+   par mois du devis, comme au classeur : 1 → tous les mois, 2 ou 3 → toutes
+   les 2 semaines, au-delà → chaque semaine, sur autant de jours que de
+   passages par semaine (4,33 semaines par mois). Si des interventions sont
+   déjà posées, la première donne le jour, l'heure et la personne. */
+function contratDepuisFiche(){
+  var f = AD_FICHE;
+  if(!f || f.type !== 'devis') return;
+  var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === f.cle; })[0];
+  if(!d) return;
+  var n = Number(d.passagesMois || 0) || 4;
+  var rec = 'SEMAINE', nbJours = 1;
+  if(n <= 1) rec = 'MOIS';
+  else if(n <= 3) rec = 'QUINZAINE';
+  else { nbJours = Math.max(1, Math.min(5, Math.round(n / 4.33))); rec = nbJours > 1 ? 'PERSO' : 'SEMAINE'; }
+  var poses = ((TABLEAU||{}).chantiers||[]).filter(function(c){
+    return c.numero === d.numero && c.date && !estAnnule(c);
+  }).sort(function(a, b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+  var p0 = poses[0] || null;
+  var ordre = [1, 4, 2, 5, 3];                   // lundi, jeudi, mardi, vendredi, mercredi
+  var jours = p0 ? [jourDe(p0.date).getDay()] : [ordre[0]];
+  ordre.forEach(function(j){ if(jours.length < nbJours && jours.indexOf(j) < 0) jours.push(j); });
+  /* Le premier passage : celui déjà posé s'il vient, sinon le prochain jour
+     choisi à partir de demain. */
+  var debut;
+  if(p0 && p0.date >= isoJour()) debut = p0.date;
+  else {
+    var x = new Date(); x.setHours(12,0,0,0); x.setDate(x.getDate() + 1);
+    for(var i = 0; i < 14 && jours.indexOf(x.getDay()) < 0; i++) x.setDate(x.getDate() + 1);
+    debut = isoJour(x);
+  }
+  var hDeb = p0 && p0.heure ? p0.heure : '08:00';
+  var duree = p0 && p0.duree ? Number(p0.duree) : 60;
+  var ch = ((TABLEAU||{}).chantiers||[]).filter(function(c){ return c.numero === d.numero; })[0] || {};
+  CT = { mode:'neuf', devis:d.numero, mensuelDevis:d.mensuel || 0, passagesDevis:d.passagesMois || 0,
+         client:d.client || '', adresse:d.adresse || ch.adresse || '', cp:d.cp || ch.cp || '',
+         ville:d.ville || ch.ville || '', acces:ch.acces || d.note || '', note:'',
+         nature:d.nature || 'ENTRETIEN', prestataire:p0 ? (p0.prestataire || '') : '',
+         date:debut, heure:hDeb, fin:heureDe((minutesDe(hDeb) || 480) + duree), journee:false,
+         rec:rec, jours:jours, mensuel:'JOUR', jusquA:'' };
+  ouvrirContrat('Mettre au calendrier');
+}
+
 function ouvrirContrat(titre){
   AD_FICHE = {type:'contrat', cle: CT.id || ''};
   montrer('eAd2');
@@ -6040,6 +6329,13 @@ function peindreContrat(){
     ? minutesDe(c.fin) - minutesDe(c.heure) : null;
 
   var h = '';
+  if(c.devis){
+    h += '<div class="card" style="border-color:var(--acc-b)"><b>Contrat du devis ' + ech(c.devis) + '</b>' +
+      '<div class="mini">' + (c.mensuelDevis ? eur(c.mensuelDevis) + ' HT par mois · ' : '') +
+      (c.passagesDevis ? c.passagesDevis + ' passage' + (c.passagesDevis > 1 ? 's' : '') + ' par mois au devis · ' : '') +
+      'choisis le jour, l\'heure et la personne, puis enregistre. Les interventions de ce devis restées ' +
+      'sans date sont remplacées par la série ; celles déjà posées restent.</div></div>';
+  }
   if(c.mode === 'modif'){
     h += '<div class="card" style="border-color:var(--acc-b)"><b>Modifier ' + ech(c.id) + '</b>' +
       '<div class="mini">Les changements valent pour les passages à partir du <b>' +
@@ -6087,7 +6383,7 @@ function peindreContrat(){
 
     '<label for="ct_rec">Récurrence</label>' +
     '<select id="ct_rec" onchange="ctRec(this.value)">' +
-      RECURRENCES.filter(function(r){ return c.mode === 'neuf' || r.v !== 'JAMAIS'; }).map(function(r){
+      RECURRENCES.filter(function(r){ return (c.mode === 'neuf' && !c.devis) || r.v !== 'JAMAIS'; }).map(function(r){
         return '<option value="' + r.v + '"' + (c.rec === r.v ? ' selected' : '') + '>' + ech(r.l) + '</option>';
       }).join('') +
     '</select>' +
@@ -6153,7 +6449,8 @@ function envoiContrat(){
     jourMois: jourDe(c.date).getDate(),
     intervalle: c.rec === 'MOIS2' ? 2 : 1,
     debut:c.date, fin:c.jusquA || '',
-    heure: c.journee ? '' : c.heure, duree: duree > 0 ? duree : ''
+    heure: c.journee ? '' : c.heure, duree: duree > 0 ? duree : '',
+    devis: c.devis || ''
   };
 }
 
@@ -6190,7 +6487,9 @@ function enregistrerContrat(btn){
     AD_MOT_T = 0;
     AD_MOT = (c.mode === 'modif' ? 'Contrat modifié' : 'Contrat créé') +
       ((r.ids||[]).length ? ' (' + r.ids.join(', ') + ')' : '') +
-      ' · ' + (r.poses||0) + ' passage' + ((r.poses||0) > 1 ? 's' : '') + ' posé' + ((r.poses||0) > 1 ? 's' : '');
+      ' · ' + (r.poses||0) + ' passage' + ((r.poses||0) > 1 ? 's' : '') + ' posé' + ((r.poses||0) > 1 ? 's' : '') +
+      (r.retires ? ' · ' + r.retires + ' intervention' + (r.retires > 1 ? 's' : '') + ' sans date remplacée' +
+        (r.retires > 1 ? 's' : '') : '');
     CT = null;
     retourTableau();
     chargerTableau();

@@ -1942,7 +1942,14 @@ function tableauAdmin_() {
       relance: o.RELANCE_LE ? isoJour_(o.RELANCE_LE) : '',
       pdf: String(o.LIEN_PDF || ''), signe: String(o.SIGNE || '').toUpperCase() === 'OUI',
       preuve: String(o.PREUVE_SIGNATURE || '') ? true : false,
-      note: String(o.NOTE_COMMERCIAL || '')
+      note: String(o.NOTE_COMMERCIAL || ''),
+      /* v93 — de quoi mettre un devis d'entretien au calendrier comme contrat,
+         sans retaper le client : le rythme, l'adresse, la nature, le mensuel. */
+      recurrent: recurrentDevis_(o.NATURE, o.PASSAGES_MOIS),
+      passagesMois: Number(o.PASSAGES_MOIS) || 0,
+      mensuel: mens,
+      nature: natureOuVide_(o.NATURE),
+      adresse: String(o.ADRESSE || ''), cp: String(o.CP || '')
     });
   });
   devis.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
@@ -2006,13 +2013,21 @@ function tableauAdmin_() {
     if (a.date && !b.date) return 1;
     return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
   });
-  if (chantiers.length > 300) chantiers = chantiers.slice(0, 300);
+  /* v93 : le mois entier se lit dans le calendrier — 300 ne tenait plus avec
+     les contrats posés sur huit semaines. */
+  if (chantiers.length > 900) chantiers = chantiers.slice(0, 900);
 
   /* Le compte ne peut se poser qu'ici : parDevis vient d'être rempli en lisant
      les chantiers, et la liste des devis, elle, a été dressée plus haut. */
+  var contratDe = {};
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    var nd = String(r.DEVIS || '').trim(), id = String(r.ID || '').trim();
+    if (nd && id && !contratDe[nd]) contratDe[nd] = id;
+  });
   devis.forEach(function (x) {
     x.poses = parDevis[x.numero] || 0;
     x.aPoser = aPoser[x.numero] || 0;
+    x.contrat = contratDe[x.numero] || '';
   });
 
   var liste = [];
@@ -3944,7 +3959,8 @@ function recurrentsPourAdmin_() {
       fin: fin && !isNaN(fin.getTime()) ? isoJour_(fin) : '',
       actif: estActif_(r.ACTIF),
       nature: natureOuVide_(r.NATURE),
-      prestations: String(r.PRESTATIONS || r.NOTE || '')
+      prestations: String(r.PRESTATIONS || r.NOTE || ''),
+      devis: String(r.DEVIS || '').trim()
     };
   });
 }
@@ -4175,10 +4191,37 @@ function recurrentNeuf_(d, com) {
     if (jum) return { ok: false, erreur: 'ce contrat existe déjà (' + jum + ')', existe: jum };
   }
 
+  /* v93 — le contrat d'un devis signé, mis au calendrier depuis sa fiche. Un
+     devis ne fait qu'un contrat ; la série porte son numéro et son mensuel. */
+  var numDevis = String(d.devis || '').trim(), devisLu = null;
+  if (numDevis) {
+    var shR0 = SpreadsheetApp.getActive().getSheetByName(SH.RECURRENTS);
+    var en0 = shR0.getRange(1, 1, 1, shR0.getLastColumn()).getValues()[0]
+      .map(function (x) { return String(x).trim(); });
+    if (en0.indexOf('DEVIS') < 0) majStructure_();
+    var dejaR = objetsDe_(SH.RECURRENTS).filter(function (r) {
+      return String(r.DEVIS || '').trim() === numDevis;
+    })[0];
+    if (dejaR) return { ok: false, erreur: 'ce devis a déjà son contrat (' + String(dejaR.ID).trim() + ')',
+                        existe: String(dejaR.ID).trim() };
+    lireDevis_().forEach(function (x) {
+      var n = String(x.NUMERO || '').trim(), o = String(x.NUMERO_ORIGINE || '').trim();
+      if (n === numDevis || o === numDevis) devisLu = x;
+    });
+    if (!devisLu) return { ok: false, erreur: 'devis introuvable' };
+    var mens = Number(devisLu.TOTAL_HT_MENSUEL) || Number(devisLu.TOTAL_HT) || 0;
+    f.s.DEVIS = numDevis;
+    f.s.NOTE = 'Devis ' + numDevis +
+      (mens ? ' — ' + String(mens.toFixed(2)).replace('.', ',') + ' € HT par mois' : '');
+  }
+
   var ids = ecrireSeries_(f.s, f.jours);
+  var rattache = { retires: 0, relies: 0 };
+  if (devisLu) rattache = rattacherDevisAuContrat_(devisLu, ids);
   var b = genererRecurrents_();
   tracerServeur_(com ? com.nom : '', 'CONTRAT CREE',
-                 f.s.CLIENT + ' · ' + ids.join(', ') + ' · ' + f.s.FREQUENCE, '', d.appareil || '');
+                 f.s.CLIENT + ' · ' + ids.join(', ') + ' · ' + f.s.FREQUENCE +
+                 (numDevis ? ' (devis ' + numDevis + ')' : ''), numDevis, d.appareil || '');
   if (f.s.PRESTATAIRE) {
     try {
       notifier_(f.s.PRESTATAIRE, 'Nouveau contrat',
@@ -4186,7 +4229,65 @@ function recurrentNeuf_(d, com) {
                 ' · à partir du ' + Utilities.formatDate(f.s.DEBUT, 'Europe/Paris', 'dd/MM'), '');
     } catch (eN) {}
   }
-  return { ok: true, ids: ids, poses: b.poses || 0 };
+  return { ok: true, ids: ids, poses: b.poses || 0,
+           retires: rattache.retires, relies: rattache.relies };
+}
+
+/**
+ * Les interventions qu'un devis récurrent signé avait laissées dans CHANTIERS
+ * passent au contrat qu'on vient d'écrire :
+ * — sans date et jamais commencées : retirées, la série les remplace ;
+ * — datées un jour où la série passe : elles reçoivent la clé de la série,
+ *   pour que la génération ne pose pas un second passage le même jour ;
+ * — datées un autre jour : laissées telles quelles, ce sont de vraies
+ *   interventions prévues avec le client.
+ * Un passage commencé ou pointé n'est jamais touché.
+ */
+function rattacherDevisAuContrat_(devis, ids) {
+  var out = { retires: 0, relies: 0 };
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return out;
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cNum = en.indexOf('NUMERO'), cDate = en.indexOf('DATE'), cRec = en.indexOf('RECURRENT');
+  var cSt = en.indexOf('STATUT'), cArr = en.indexOf('ARRIVEE');
+  if (cNum < 0 || cRec < 0) return out;
+  var numeros = [String(devis.NUMERO || '').trim(), String(devis.NUMERO_ORIGINE || '').trim()]
+    .filter(function (x) { return x; });
+
+  /* Les jours de passage de chaque série, sur l'horizon déjà posable. */
+  var series = objetsDe_(SH.RECURRENTS).filter(function (r) {
+    return ids.indexOf(String(r.ID || '').trim()) >= 0;
+  });
+  var jusqua = new Date(); jusqua.setDate(jusqua.getDate() + 120);
+  var jours = {};
+  series.forEach(function (r) {
+    var deb = r.DEBUT ? new Date(r.DEBUT) : new Date();
+    occurrencesRecurrent_(r, deb, jusqua).forEach(function (dt) {
+      var k = isoJour_(dt);
+      if (!jours[k]) jours[k] = String(r.ID).trim();
+    });
+  });
+
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+  var aRetirer = [];
+  v.forEach(function (l, i) {
+    if (numeros.indexOf(String(l[cNum] || '').trim()) < 0) return;
+    if (String(l[cRec] || '').trim()) return;
+    var st = cSt >= 0 ? String(l[cSt] || '').toUpperCase().trim() : '';
+    if (st === 'ANNULE' || st === 'FAIT' || st === 'EN COURS') return;
+    if (cArr >= 0 && String(l[cArr] || '').trim()) return;
+    var dt = l[cDate] ? new Date(l[cDate]) : null;
+    if (!dt || isNaN(dt.getTime())) { aRetirer.push(i + 2); return; }
+    var k = isoJour_(dt);
+    if (jours[k]) {
+      sh.getRange(i + 2, cRec + 1).setValue(jours[k] + '|' + k);
+      out.relies++;
+    }
+  });
+  for (var j = aRetirer.length - 1; j >= 0; j--) sh.deleteRow(aRetirer[j]);
+  out.retires = aRetirer.length;
+  return out;
 }
 
 /**
