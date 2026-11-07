@@ -358,7 +358,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v90';
+var VERSION_APP = 'v92';
 
 function ecranConnexion(msg){
   ETAPE = 0;
@@ -4828,9 +4828,11 @@ function peindreTableau(){
       /* Le gérant déplace ; le salarié regarde. C'est le même tableau de
          semaine, mais on ne lui donne pas de prise. */
       semaineHtml(vivants, 'ficheChantier', true);
+    $('adListe').innerHTML = bandeauMot() + $('adListe').innerHTML;
     return;
   }
-  $('adListe').innerHTML = AD_ONGLET === 'devis' ? listeDevisAdmin(t) : listeChantiersAdmin(t);
+  $('adListe').innerHTML = AD_ONGLET === 'devis' ? listeDevisAdmin(t)
+                                                : bandeauMot() + listeChantiersAdmin(t);
 }
 
 /* ---- OÙ EN EST LE TRAVAIL D'UN DEVIS ----
@@ -5614,16 +5616,8 @@ function ficheChantier(id){
   peindreFicheChantier(c, false);
 }
 
-/* Un chantier posé à la main : un dépannage, un rattrapage, un petit travail
-   qui n'est jamais passé par un devis. */
-function nouveauChantier(){
-  AD_FICHE = {type:'chantierNeuf', cle:''};
-  AD_PRESTA = ''; AD_NATURE = '';
-  montrer('eAd2');
-  $('hTitre').textContent = 'Nouveau chantier';
-  erreur(''); window.scrollTo(0,0);
-  peindreFicheChantier({}, true);
-}
+/* Le nouveau chantier passe désormais par le formulaire « Nouvel événement »
+   (plus bas), qui pose un ponctuel quand la récurrence vaut « Jamais ». */
 
 function choisirNatureAd(v){
   AD_NATURE = v;
@@ -5739,6 +5733,7 @@ function peindreFicheChantier(c, neuf){
           'Posé avant que le devis soit déclaré signé. Le salarié le voit comme un ' +
           'chantier ordinaire ; un refus ne l\'enlèvera pas tout seul.</div>' : '') +
       '</div>') +
+    (neuf ? '' : blocContratFiche(c)) +
 
     '<div class="card">' +
       '<h2>' + (neuf ? 'Le nouveau chantier' : 'Le chantier') + '</h2>' +
@@ -5859,6 +5854,455 @@ function rouvrirFiche(){
 function retourTableau(){
   AD_FICHE = null;
   ecranAdmin();
+}
+
+
+/* ====================== NOUVEL ÉVÉNEMENT, À LA FAMILYWALL ======================
+   Demande de Simon, 7 novembre 2026 : « je veux juste pouvoir ajouter un
+   contrat récurrent comme sur FamilyWall, sur notre app ». Le formulaire
+   reprend celui de FamilyWall, dans son ordre : titre, de / à, toute la
+   journée, couleur, participant, récurrence, jusqu'au, où, description.
+
+   Un seul bouton « + Nouveau » : « Récurrence : Jamais » pose un chantier
+   ponctuel, comme avant ; tout autre choix crée un contrat (onglet RECURRENTS)
+   et ses passages des semaines qui viennent. C'est le geste de FamilyWall —
+   on ne choisit pas entre deux formulaires, on règle la répétition.
+
+   Le même formulaire sert à modifier un contrat « à partir de » un passage :
+   le passé reste tel qu'il a été pointé, la suite est reposée. */
+
+var CT = null;          // l'état du formulaire ouvert
+var JOURS_COURTS = [{n:1,l:'L'},{n:2,l:'M'},{n:3,l:'M'},{n:4,l:'J'},{n:5,l:'V'},{n:6,l:'S'},{n:0,l:'D'}];
+var JOURS_LONGS = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
+var JOURS_SERIE = ['DIMANCHE','LUNDI','MARDI','MERCREDI','JEUDI','VENDREDI','SAMEDI'];
+
+var RECURRENCES = [
+  {v:'JAMAIS',   l:'Jamais'},
+  {v:'SEMAINE',  l:'Toutes les semaines'},
+  {v:'OUVRES',   l:'Tous les jours de la semaine (lun. – ven.)'},
+  {v:'QUINZAINE',l:'Toutes les 2 semaines'},
+  {v:'MOIS',     l:'Tous les mois'},
+  {v:'MOIS2',    l:'Tous les 2 mois'},
+  {v:'PERSO',    l:'Personnalisée (choisir les jours)'}
+];
+
+function jourDe(iso){
+  var p = String(iso||'').split('-');
+  var d = new Date(Number(p[0]), Number(p[1])-1, Number(p[2]), 12);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+function rangDuJour(iso){
+  var d = jourDe(iso), r = Math.floor((d.getDate()-1)/7) + 1;
+  return r > 4 ? 5 : r;
+}
+function libelleRang(r){ return r === 5 ? 'dernier' : (r === 1 ? '1er' : r + 'e'); }
+function minutesDe(h){
+  var m = String(h||'').match(/^(\d{1,2}):(\d{2})/);
+  return m ? Number(m[1])*60 + Number(m[2]) : null;
+}
+function heureDe(mn){
+  mn = ((mn % 1440) + 1440) % 1440;
+  return ('0' + Math.floor(mn/60)).slice(-2) + ':' + ('0' + (mn%60)).slice(-2);
+}
+
+/* Le rythme d'un contrat, en toutes lettres : « Toutes les 2 semaines, le
+   jeudi à 10:30 ». C'est ce que la fiche et la liste des contrats affichent. */
+function libelleRythme(s){
+  if(!s) return '';
+  var f = String(s.frequence||'').toUpperCase(), j = String(s.jour||'').toLowerCase();
+  var txt;
+  if(f === 'HEBDO') txt = 'Toutes les semaines' + (j ? ', le ' + j : '');
+  else if(f === 'QUINZAINE') txt = 'Toutes les 2 semaines' + (j ? ', le ' + j : '');
+  else if(f === 'MENSUEL'){
+    var pas = Number(s.intervalle||1);
+    txt = (pas > 1 ? 'Tous les ' + pas + ' mois' : 'Tous les mois') +
+      (j ? ', le ' + libelleRang(Number(s.jourMois)) + ' ' + j
+         : (s.jourMois ? ', le ' + s.jourMois : ''));
+  } else txt = f || 'Rythme inconnu';
+  if(s.heure) txt += ' à ' + s.heure;
+  return txt;
+}
+
+function contratDe(cle){
+  var id = String(cle||'').split('|')[0];
+  return ((TABLEAU||{}).recurrents||[]).filter(function(s){ return s.id === id; })[0] || null;
+}
+
+/* ---- ouvrir le formulaire ---- */
+
+/* Nouveau : la date du jour, l'heure ronde qui vient, une heure de durée —
+   comme FamilyWall, qui propose toujours un créneau plutôt qu'un vide. */
+function nouveauChantier(iso){
+  var h = new Date(); h.setMinutes(0,0,0); h.setHours(h.getHours()+1);
+  var debut = (typeof iso === 'string' && iso) ? iso : isoJour();
+  CT = { mode:'neuf', client:'', adresse:'', cp:'', ville:'', acces:'', note:'',
+         nature:'', prestataire:'', date:debut, heure:heureDe(h.getHours()*60),
+         fin:heureDe(h.getHours()*60 + 60), journee:false,
+         rec:'JAMAIS', jours:[jourDe(debut).getDay()], mensuel:'JOUR', jusquA:'' };
+  ouvrirContrat('Nouvel événement');
+}
+
+/* Modifier un contrat à partir d'un passage (ou d'aujourd'hui depuis la liste
+   des contrats). La fiche part de ce que dit la série. */
+function modifierContrat(id, aPartirDe){
+  var s = ((TABLEAU||{}).recurrents||[]).filter(function(x){ return x.id === id; })[0];
+  if(!s) return erreur('Ce contrat n\'est pas dans le tableau. Appuie sur « Actualiser ».');
+  var depuis = aPartirDe && aPartirDe > isoJour() ? aPartirDe : isoJour();
+  var f = String(s.frequence||'').toUpperCase();
+  var rec = f === 'HEBDO' ? 'SEMAINE' : (f === 'QUINZAINE' ? 'QUINZAINE'
+          : (Number(s.intervalle||1) === 2 ? 'MOIS2' : 'MOIS'));
+  var jw = JOURS_SERIE.indexOf(String(s.jour||'').toUpperCase());
+  var debut = s.debut && s.debut > depuis ? s.debut : depuis;
+  var hDeb = minutesDe(s.heure);
+  CT = { mode:'modif', id:id, depuis:depuis,
+         client:s.client||'', adresse:s.adresse||'', cp:s.cp||'', ville:s.ville||'',
+         acces:s.acces||'', note:s.prestations||'', nature:s.nature||'',
+         prestataire:s.prestataire||'', date:debut,
+         heure:s.heure||'', fin: (hDeb !== null && s.duree) ? heureDe(hDeb + Number(s.duree)) : '',
+         journee: !s.heure, rec:rec, jours: jw >= 0 ? [jw] : [jourDe(debut).getDay()],
+         mensuel: (f === 'MENSUEL' && jw >= 0) ? 'RANG' : 'JOUR',
+         jourMois: s.jourMois || '', jusquA: s.fin || '' };
+  ouvrirContrat('Modifier le contrat');
+}
+
+function ouvrirContrat(titre){
+  AD_FICHE = {type:'contrat', cle: CT.id || ''};
+  montrer('eAd2');
+  $('hTitre').textContent = titre;
+  erreur(''); window.scrollTo(0,0);
+  peindreContrat();
+}
+
+/* ---- relire ce qui est tapé avant de repeindre ----
+   Un appui sur une pastille repeint le formulaire : sans cette relecture, le
+   nom du client déjà tapé disparaîtrait. */
+function lireContrat(){
+  if(!CT) return;
+  var v = function(id){ var e = $(id); return e ? e.value : undefined; };
+  ['client','adresse','cp','ville','acces','note'].forEach(function(k){
+    var x = v('ct_' + k); if(x !== undefined) CT[k] = x;
+  });
+  var d = v('ct_date'); if(d !== undefined && d) CT.date = d;
+  var h = v('ct_heure'); if(h !== undefined) CT.heure = h;
+  var f = v('ct_fin'); if(f !== undefined) CT.fin = f;
+  var j = v('ct_jusqua'); if(j !== undefined) CT.jusquA = j;
+}
+
+function ctPoser(k, val){ lireContrat(); CT[k] = val; peindreContrat(); }
+function ctRec(v){
+  lireContrat();
+  CT.rec = v;
+  /* « Tous les jours de la semaine » est un raccourci : il coche du lundi au
+     vendredi. Les autres repartent du jour de la date choisie. */
+  if(v === 'OUVRES') CT.jours = [1,2,3,4,5];
+  else if(v !== 'PERSO' || !CT.jours.length) CT.jours = [jourDe(CT.date).getDay()];
+  peindreContrat();
+}
+function ctJour(n){
+  lireContrat();
+  var i = CT.jours.indexOf(n);
+  if(i >= 0){ if(CT.jours.length > 1) CT.jours.splice(i,1); }
+  else CT.jours.push(n);
+  /* Toucher un jour, c'est personnaliser : « Toutes les semaines » avec deux
+     jours cochés n'est plus « toutes les semaines » au sens de FamilyWall. */
+  if(CT.rec === 'SEMAINE' || CT.rec === 'OUVRES') CT.rec = CT.jours.length > 1 ? 'PERSO' : 'SEMAINE';
+  peindreContrat();
+}
+function ctDate(){
+  var avant = CT.date;
+  lireContrat();
+  /* Changer la date d'un contrat d'un seul jour déplace aussi ce jour : c'est
+     ce qu'on attend en choisissant « le jeudi 12 ». */
+  if(CT.date !== avant && CT.jours.length <= 1 && CT.rec !== 'OUVRES') CT.jours = [jourDe(CT.date).getDay()];
+  peindreContrat();
+}
+function ctHeure(){
+  var avant = minutesDe(CT.heure), fin = minutesDe(CT.fin);
+  lireContrat();
+  /* Déplacer le début déplace la fin d'autant, comme dans un agenda. */
+  var apres = minutesDe(CT.heure);
+  if(avant !== null && fin !== null && apres !== null && fin > avant) CT.fin = heureDe(apres + (fin - avant));
+  peindreContrat();
+}
+
+/* ---- le formulaire ---- */
+function peindreContrat(){
+  var c = CT, gens = ((TABLEAU||{}).prestataires||[]);
+  var recur = c.rec !== 'JAMAIS';
+  var hebdo = ['SEMAINE','OUVRES','QUINZAINE','PERSO'].indexOf(c.rec) >= 0;
+  var mois = c.rec === 'MOIS' || c.rec === 'MOIS2';
+  var dj = jourDe(c.date);
+  var ch = function(id, lib, val, attr){
+    return '<label for="ct_' + id + '">' + lib + '</label><input id="ct_' + id + '" ' + (attr||'type="text"') +
+           ' value="' + ech(val||'') + '">';
+  };
+  var dureeMn = (minutesDe(c.fin) !== null && minutesDe(c.heure) !== null)
+    ? minutesDe(c.fin) - minutesDe(c.heure) : null;
+
+  var h = '';
+  if(c.mode === 'modif'){
+    h += '<div class="card" style="border-color:var(--acc-b)"><b>Modifier ' + ech(c.id) + '</b>' +
+      '<div class="mini">Les changements valent pour les passages à partir du <b>' +
+      ech(jourLisible(c.depuis)) + '</b>. Ce qui est passé, ou déjà commencé, ne bouge pas.</div></div>';
+  }
+
+  h += '<div class="card ctCarte">' +
+    '<input id="ct_client" class="ctTitre" type="text" placeholder="Titre : le client" value="' + ech(c.client) + '">' +
+
+    '<div class="ctLigne">' +
+      '<div><label for="ct_date">De</label>' +
+        '<input id="ct_date" type="date" value="' + ech(c.date) + '" onchange="ctDate()"></div>' +
+      (c.journee ? '' :
+      '<div style="width:110px"><label for="ct_heure">&nbsp;</label>' +
+        '<input id="ct_heure" type="time" value="' + ech(c.heure) + '" onchange="ctHeure()"></div>' +
+      '<div style="width:110px"><label for="ct_fin">À</label>' +
+        '<input id="ct_fin" type="time" value="' + ech(c.fin) + '" onchange="lireContrat();peindreContrat()"></div>') +
+    '</div>' +
+    (dureeMn !== null && !c.journee
+      ? '<div class="mini">' + (dureeMn > 0 ? dureeLisible(dureeMn) : '<span style="color:var(--danger)">La fin tombe avant le début.</span>') + '</div>' : '') +
+
+    '<label class="ctBascule"><input type="checkbox" ' + (c.journee ? 'checked ' : '') +
+      'onchange="ctPoser(\'journee\', this.checked)"> <span>Toute la journée</span></label>' +
+
+    '<label>Couleur</label>' +
+    '<div class="ctCouleurs">' +
+      NATURES_CHOIX.map(function(x){
+        var n = natureVue(x.v);
+        return '<button type="button" class="ctCoul' + (c.nature === x.v ? ' on' : '') + '" ' +
+          'style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '" ' +
+          'onclick="ctPoser(\'nature\',\'' + x.v + '\')"><i></i>' + ech(x.n) + '</button>';
+      }).join('') +
+    '</div>' +
+
+    '<label>Participant</label>' +
+    '<div class="ctGens">' +
+      gens.map(function(g){
+        return '<button type="button" class="ctAva' + (c.prestataire === g ? ' on' : '') + '" ' +
+          'onclick="ctPoser(\'prestataire\',\'' + ech(g).replace(/'/g,'&#39;') + '\')">' +
+          '<span>' + ech(String(g).slice(0,2)) + '</span>' + ech(g) + '</button>';
+      }).join('') +
+      '<button type="button" class="ctAva' + (!c.prestataire ? ' on' : '') + '" ' +
+        'onclick="ctPoser(\'prestataire\',\'\')"><span>?</span>Personne</button>' +
+    '</div>' +
+
+    '<label for="ct_rec">Récurrence</label>' +
+    '<select id="ct_rec" onchange="ctRec(this.value)">' +
+      RECURRENCES.filter(function(r){ return c.mode === 'neuf' || r.v !== 'JAMAIS'; }).map(function(r){
+        return '<option value="' + r.v + '"' + (c.rec === r.v ? ' selected' : '') + '>' + ech(r.l) + '</option>';
+      }).join('') +
+    '</select>' +
+
+    (hebdo
+      ? '<div class="ctJours">' + JOURS_COURTS.map(function(j){
+          return '<button type="button" class="ctJ' + (c.jours.indexOf(j.n) >= 0 ? ' on' : '') + '" ' +
+                 'aria-label="' + JOURS_LONGS[j.n] + '" onclick="ctJour(' + j.n + ')">' + j.l + '</button>';
+        }).join('') + '</div>'
+      : '') +
+    (mois
+      ? '<div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">' +
+          '<span class="puce' + (c.mensuel !== 'RANG' ? ' on' : '') + '" onclick="ctPoser(\'mensuel\',\'JOUR\')">' +
+            'le ' + dj.getDate() + ' du mois</span>' +
+          '<span class="puce' + (c.mensuel === 'RANG' ? ' on' : '') + '" onclick="ctPoser(\'mensuel\',\'RANG\')">' +
+            'le ' + libelleRang(rangDuJour(c.date)) + ' ' + JOURS_LONGS[dj.getDay()] + ' du mois</span>' +
+        '</div>'
+      : '') +
+
+    (recur
+      ? '<label for="ct_jusqua">Jusqu\'au</label>' +
+        '<div class="ctLigne"><div><input id="ct_jusqua" type="date" value="' + ech(c.jusquA) + '"></div>' +
+        (c.jusquA ? '<button type="button" class="btn sec sm" style="width:auto" ' +
+          'onclick="ctPoser(\'jusquA\',\'\')">Pas d\'échéance</button>' : '') + '</div>' +
+        '<div class="mini">' + (c.jusquA ? 'Dernier passage au plus tard le ' + ech(jourLisible(c.jusquA)) + '.'
+                                          : 'Pas d\'échéance : le contrat continue jusqu\'à ce que tu l\'arrêtes.') + '</div>'
+      : '') +
+  '</div>' +
+
+  '<div class="card">' +
+    ch('adresse', 'Où ?', c.adresse, 'type="text" placeholder="Adresse"') +
+    '<div class="row" style="gap:8px">' +
+      '<div style="width:110px">' + ch('cp', 'Code postal', c.cp) + '</div>' +
+      '<div style="flex:1">' + ch('ville', 'Ville', c.ville) + '</div>' +
+    '</div>' +
+    ch('acces', 'Accès au site', c.acces, 'type="text" placeholder="Code portail, où est la clé…"') +
+    '<label for="ct_note">Description</label>' +
+    '<textarea id="ct_note" rows="3" placeholder="Ce que le salarié verra en arrivant">' + ech(c.note) + '</textarea>' +
+  '</div>' +
+
+  '<button class="btn" id="bCtEnr" onclick="enregistrerContrat(this)">Enregistrer</button>' +
+  (c.mode === 'modif'
+    ? '<button class="btn sec" style="margin-top:10px;border-color:var(--danger);color:var(--danger)" ' +
+      'onclick="arreterContrat(\'' + ech(c.id) + '\',\'' + ech(c.depuis) + '\', this)">Arrêter le contrat</button>'
+    : '') +
+  '<button class="btn sec" style="margin-top:10px" onclick="retourTableau()">Annuler</button>';
+
+  $('adFiche').innerHTML = h;
+}
+
+/* ---- ce qui part au bureau ---- */
+function envoiContrat(){
+  var c = CT;
+  var hebdo = ['SEMAINE','OUVRES','QUINZAINE','PERSO'].indexOf(c.rec) >= 0;
+  var duree = (!c.journee && minutesDe(c.fin) !== null && minutesDe(c.heure) !== null)
+    ? minutesDe(c.fin) - minutesDe(c.heure) : '';
+  return {
+    client:c.client.trim(), adresse:c.adresse, cp:c.cp, ville:c.ville, acces:c.acces,
+    prestations:c.note, note:c.note, nature:c.nature, prestataire:c.prestataire,
+    frequence: c.rec === 'QUINZAINE' ? 'QUINZAINE' : (hebdo ? 'HEBDO' : 'MENSUEL'),
+    jours: hebdo ? c.jours.slice().sort() : [],
+    mensuel: c.mensuel === 'RANG' ? 'RANG' : 'JOUR',
+    jourMois: jourDe(c.date).getDate(),
+    intervalle: c.rec === 'MOIS2' ? 2 : 1,
+    debut:c.date, fin:c.jusquA || '',
+    heure: c.journee ? '' : c.heure, duree: duree > 0 ? duree : ''
+  };
+}
+
+function enregistrerContrat(btn){
+  lireContrat();
+  var c = CT;
+  if(!c) return;
+  if(!navigator.onLine) return erreur('Hors connexion : créer ou modifier un contrat a besoin du réseau.');
+  if(!String(c.client||'').trim()) return erreur('Il faut un titre : le nom du client.');
+  if(!c.journee && minutesDe(c.fin) !== null && minutesDe(c.heure) !== null &&
+     minutesDe(c.fin) <= minutesDe(c.heure)) return erreur('La fin tombe avant le début.');
+  if(c.jusquA && c.jusquA < c.date) return erreur('« Jusqu\'au » tombe avant le premier passage.');
+
+  /* Jamais : c'est un chantier ponctuel, le chemin de toujours. */
+  if(c.mode === 'neuf' && c.rec === 'JAMAIS'){
+    var d0 = (!c.journee && minutesDe(c.fin) !== null && minutesDe(c.heure) !== null)
+      ? minutesDe(c.fin) - minutesDe(c.heure) : '';
+    return posterChantierNeuf({ client:c.client.trim(), adresse:c.adresse, cp:c.cp, ville:c.ville,
+      acces:c.acces, note:c.note, nature:c.nature, date:c.date,
+      heure:c.journee ? '' : c.heure, duree: d0 > 0 ? d0 : '', prestataire:c.prestataire }, btn);
+  }
+
+  var moi = session();
+  var env = envoiContrat();
+  env.action = c.mode === 'modif' ? 'recurrentModif' : 'recurrentNeuf';
+  env.nom = moi.nom; env.code = moi.code; env.appareil = APPAREIL;
+  if(c.mode === 'modif'){ env.id = c.id; env.aPartirDe = c.depuis; }
+  erreur('');
+  if(btn) occuper(btn, 'Enregistrement…');
+  poster(env, 40000).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    tracer(c.mode === 'modif' ? 'CONTRAT MODIFIE' : 'CONTRAT CREE', env.client, (r.ids||[]).join(','));
+    AD_MOT_T = 0;
+    AD_MOT = (c.mode === 'modif' ? 'Contrat modifié' : 'Contrat créé') +
+      ((r.ids||[]).length ? ' (' + r.ids.join(', ') + ')' : '') +
+      ' · ' + (r.poses||0) + ' passage' + ((r.poses||0) > 1 ? 's' : '') + ' posé' + ((r.poses||0) > 1 ? 's' : '');
+    CT = null;
+    retourTableau();
+    chargerTableau();
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+
+function posterChantierNeuf(c, btn){
+  var moi = session();
+  erreur('');
+  if(btn) occuper(btn, 'Création…');
+  var env = {action:'chantierNeuf', nom:moi.nom, code:moi.code, appareil:APPAREIL};
+  for(var k in c) if(c.hasOwnProperty(k)) env[k] = c[k];
+  poster(env).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    tracer('CHANTIER CREE', c.client + ' ' + (c.date||'sans date'), r.id || '');
+    AD_MOT_T = 0; AD_MOT = 'Chantier créé';
+    CT = null;
+    retourTableau();
+    chargerTableau();
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+
+function arreterContrat(id, depuis, btn){
+  if(!navigator.onLine) return erreur('Hors connexion : arrêter un contrat a besoin du réseau.');
+  var d = depuis && depuis > isoJour() ? depuis : isoJour();
+  demander('Arrêter ce contrat ?',
+    'Plus aucun passage à partir du ' + jourLisible(d) + '. Ceux d\'avant restent, ' +
+    'et ce qui a été pointé n\'est jamais touché.', 'Arrêter le contrat').then(function(oui){
+    if(!oui) return;
+    var moi = session();
+    if(btn) occuper(btn, 'Arrêt…');
+    poster({action:'recurrentStop', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:id, aPartirDe:d}, 40000)
+      .then(function(r){
+        if(btn) libere(btn);
+        if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+        tracer('CONTRAT ARRETE', id, id);
+        AD_MOT_T = 0;
+        AD_MOT = 'Contrat ' + id + ' arrêté · dernier jour le ' + jourLisible(r.fin);
+        CT = null;
+        retourTableau();
+        chargerTableau();
+      }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+  });
+}
+
+/* ---- la carte « contrat » sur la fiche d'un passage ----
+   Comme FamilyWall quand on touche une occurrence : on corrige ce passage-ci
+   avec la fiche habituelle, ou on agit sur le contrat entier à partir d'ici. */
+function blocContratFiche(c){
+  if(!c || !c.recurrent) return '';
+  var s = contratDe(c.recurrent);
+  var id = String(c.recurrent).split('|')[0];
+  return '<div class="card ctFiche">' +
+    '<div class="row" style="align-items:center;gap:8px"><span class="ctRond">↻</span>' +
+      '<b style="flex:1">Contrat ' + ech(id) + '</b></div>' +
+    '<div class="mini">' + (s ? ech(libelleRythme(s)) : 'Rythme inconnu — actualise le tableau.') +
+      (s && s.debut ? ' · depuis le ' + ech(jjmmaa(s.debut)) : '') +
+      (s && s.fin ? ' · jusqu\'au ' + ech(jjmmaa(s.fin)) : '') + '</div>' +
+    '<div class="mini">La fiche ci-dessous ne change que <b>ce passage</b>.</div>' +
+    (s ? '<div class="row" style="gap:8px;margin-top:10px">' +
+      '<button class="btn sec sm" style="flex:1" onclick="modifierContrat(\'' + ech(id) + '\',\'' +
+        ech(c.date||'') + '\')">Modifier les suivants</button>' +
+      '<button class="btn sec sm" style="flex:1;color:var(--danger)" onclick="arreterContrat(\'' + ech(id) +
+        '\',\'' + ech(c.date||'') + '\', this)">Arrêter ici</button>' +
+    '</div>' : '') +
+  '</div>';
+}
+
+/* ---- la liste des contrats ---- */
+function listeContrats(){
+  AD_FICHE = {type:'contrats', cle:''};
+  montrer('eAd2');
+  $('hTitre').textContent = 'Les contrats';
+  erreur(''); window.scrollTo(0,0);
+  var l = ((TABLEAU||{}).recurrents||[]).slice();
+  var auj = isoJour();
+  var vivant = function(s){ return s.actif && (!s.fin || s.fin >= auj); };
+  l.sort(function(a,b){
+    if(vivant(a) !== vivant(b)) return vivant(a) ? -1 : 1;
+    return String(a.client).localeCompare(String(b.client), 'fr');
+  });
+  var vivants = l.filter(vivant), finis = l.filter(function(s){ return !vivant(s); });
+  var carte = function(s){
+    var n = natureVue(s.nature);
+    return '<div class="card chC" style="cursor:pointer;margin-bottom:8px;' +
+      (n ? '--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i : '') + '" ' +
+      (vivant(s) ? 'onclick="modifierContrat(\'' + ech(s.id) + '\',\'\')"' : '') + '>' +
+      '<div class="chTete"><b style="flex:1">' + ech(s.client) + '</b><span class="mini">' + ech(s.id) + '</span></div>' +
+      '<div class="chSous">' + ech(libelleRythme(s)) + '</div>' +
+      '<div class="mini">' + ech(s.prestataire || 'personne') + (s.ville ? ' · ' + ech(s.ville) : '') +
+        (s.fin ? ' · jusqu\'au ' + ech(jjmmaa(s.fin)) : '') + '</div>' +
+    '</div>';
+  };
+  $('adFiche').innerHTML =
+    '<button class="btn" onclick="nouveauChantier()">+ Nouvel événement</button>' +
+    '<h2 style="margin:16px 0 8px">En cours (' + vivants.length + ')</h2>' +
+    (vivants.length ? vivants.map(carte).join('') : '<div class="card"><div class="empty">Aucun contrat.</div></div>') +
+    (finis.length ? '<details style="margin-top:12px"><summary class="mini">Terminés (' + finis.length + ')</summary>' +
+      finis.map(carte).join('') + '</details>' : '') +
+    '<button class="btn sec" style="margin-top:12px" onclick="retourTableau()">Retour au tableau</button>';
+}
+
+/* Le mot qui suit une création : il reste en haut du tableau quelques
+   secondes — le tableau se repeint deux fois de suite (tout de suite, puis
+   quand le bureau a répondu), et le mot ne doit pas disparaître à la première. */
+var AD_MOT = '', AD_MOT_T = 0;
+function bandeauMot(){
+  if(!AD_MOT) return '';
+  if(!AD_MOT_T) AD_MOT_T = Date.now();
+  if(Date.now() - AD_MOT_T > 12000){ AD_MOT = ''; AD_MOT_T = 0; return ''; }
+  return '<div class="card" style="border-color:var(--ok);margin-bottom:10px"><b>' + ech(AD_MOT) + '</b></div>';
 }
 
 /* ====================== ESPACE PRESTATAIRE ======================

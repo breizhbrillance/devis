@@ -130,7 +130,18 @@ var ENTETES_CHANTIERS_ = [
 var ENTETES_RECURRENTS_ = [
   'ID', 'CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES',
   'FREQUENCE', 'JOUR', 'JOUR_MOIS', 'HEURE', 'DUREE_MIN',
-  'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF', 'NATURE', 'PRESTATIONS', 'NOTE'
+  'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF', 'NATURE', 'PRESTATIONS', 'NOTE',
+  /* Ajoutées le 7 novembre 2026, pour reprendre FamilyWall tel qu'il est :
+     EXCLUSIONS, les dates sautées (« 2026-12-06, 2027-02-06 ») — un passage
+     déplacé à la main dans FamilyWall laisse un trou dans la série ;
+     INTERVALLE, tous les combien de mois pour un MENSUEL (vide = 1, 2 = un
+     mois sur deux, compté depuis le mois du DÉBUT). Et un MENSUEL qui porte
+     un JOUR lit JOUR_MOIS comme un rang : JEUDI + 3 = le 3e jeudi du mois,
+     JEUDI + 5 = le dernier. */
+  'EXCLUSIONS', 'INTERVALLE',
+  /* Le devis d'où vient le contrat, quand il vient d'un devis signé : c'est
+     lui qui empêche d'écrire deux fois le même contrat. */
+  'DEVIS'
 ];
 
 /* A PLANIFIER : le devis est signé, personne ni date encore posés.
@@ -939,6 +950,7 @@ function doPost(e) {
     var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
                    'planning', 'chantier', 'tableau', 'planifier',
                    'chantierNeuf', 'lotChantiers',
+                   'recurrentNeuf', 'recurrentModif', 'recurrentStop',
                    'rdvNeuf', 'monChantier',
                    'prospects', 'appel', 'historique',
                    'facturation', 'facturer', 'facturesMois',
@@ -979,6 +991,9 @@ function doPost(e) {
     var permis = admin
       ? ['connexion', 'config', 'journal', 'tableau', 'planifier', 'statut',
          'chantierNeuf', 'lotChantiers',
+         /* Un contrat engage l'équipe chaque semaine : le gérant seul le crée,
+            le modifie ou l'arrête. */
+         'recurrentNeuf', 'recurrentModif', 'recurrentStop',
          /* Le gerant etablit ses propres devis depuis son tableau : « sync »
             est ce qui les depose, « photo » ce qui porte la signature. */
          'sync', 'photo',
@@ -1036,6 +1051,14 @@ function doPost(e) {
     if (d.action === 'poserDevis') return reponse_(poserAvantSignature_(d, com));
     if (d.action === 'chantierNeuf') return reponse_(creerChantier_(d, com));
     if (d.action === 'lotChantiers') return reponse_(lotChantiers_(d, com));
+    if (d.action === 'recurrentNeuf' || d.action === 'recurrentModif' || d.action === 'recurrentStop') {
+      /* Le verrou : deux créations en même temps prendraient le même numéro
+         de série, et la génération lit CHANTIERS avant d'y écrire. */
+      lock.waitLock(30000);
+      if (d.action === 'recurrentNeuf') return reponse_(recurrentNeuf_(d, com));
+      if (d.action === 'recurrentModif') return reponse_(recurrentModif_(d, com));
+      return reponse_(recurrentStop_(d, com));
+    }
     if (d.action === 'rdvNeuf') return reponse_(rdvCommercial_(d, com));
     if (d.action === 'monChantier') return reponse_(monChantier_(d, com));
     if (d.action === 'photo') return reponse_(enregistrerPhoto_(d));
@@ -1385,7 +1408,13 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
         attachments: pj
       }, reg);
     }
-  } catch (eMail) { /* un mail raté ne doit pas faire échouer la révision */ }
+  } catch (eMail) {
+    /* Un mail raté ne doit pas faire échouer la révision — mais il ne doit pas
+       disparaître non plus : sans trace, personne ne sait que le client n'a
+       rien reçu. */
+    tracerServeur_((devis && devis.commercial) || '', 'MAIL RATE',
+      'révision du devis ' + numero + ' — ' + String((eMail && eMail.message) || eMail), numero);
+  }
 
   return { ok: true, revise: true, numero: numero, pdfUrl: lien, controle: controle };
 }
@@ -1658,7 +1687,13 @@ function enregistrer_(d, com) {
         attachments: pj
       }, reg);
     }
-  } catch (eMail) { /* un mail raté ne doit pas faire échouer la synchro */ }
+  } catch (eMail) {
+    /* Même règle : la synchro aboutit, mais l'échec d'envoi s'inscrit au
+       journal. Un devis « reçu » dont le client n'a jamais eu le courriel est
+       le genre de chose qu'on découvre trois semaines trop tard. */
+    tracerServeur_(devis.commercial || '', 'MAIL RATE',
+      'devis ' + devis.numero + ' — ' + String((eMail && eMail.message) || eMail), devis.numero);
+  }
 
   tracerServeur_(devis.commercial, 'DEVIS RECU',
     (c.societe || c.contact || '') + ' — ' + eur_(t.ttc) + ' TTC' +
@@ -1958,7 +1993,12 @@ function tableauAdmin_() {
       nature: natureChantier_(o, natures),
       /* Seul le gérant le reçoit : le planning du salarié, lui, n'en sait
          rien et n'a pas à en savoir. */
-      avantSignature: String(o.AVANT_SIGNATURE || '').trim().toUpperCase() === 'OUI'
+      avantSignature: String(o.AVANT_SIGNATURE || '').trim().toUpperCase() === 'OUI',
+      /* La clé du contrat d'où vient le passage : c'est elle qui permet à la
+         fiche de dire « contrat récurrent » et de proposer d'en modifier la
+         suite. */
+      recurrent: String(o.RECURRENT || '').trim(),
+      duree: Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || ''
     });
   });
   chantiers.sort(function (a, b) {
@@ -1984,7 +2024,15 @@ function tableauAdmin_() {
     chiffres: chiffres, parCommercial: liste,
     devis: devis, chantiers: chantiers,
     prestataires: lirePrestataires_().map(function (p) { return p.nom; }),
-    commerciaux: lireCommerciaux_().map(function (c) { return c.nom; })
+    commerciaux: lireCommerciaux_().map(function (c) { return c.nom; }),
+    /* Les contrats, et jusqu'où leurs passages sont déjà posés : au-delà,
+       l'écran du gérant les prolonge lui-même en pointillé, comme un agenda
+       montre une répétition sans fin. */
+    recurrents: recurrentsPourAdmin_(),
+    horizon: (function () {
+      var h = new Date(); h.setDate(h.getDate() + semainesRecurrents_(reg) * 7);
+      return isoJour_(h);
+    })()
   };
 }
 
@@ -2324,6 +2372,13 @@ function poserPlanning_(numero, qui, appareil, avantSignature) {
                    String(e && e.message || e), numero, appareil || '');
     return { poses: [], refuses: [], motif: 'erreur' };
   }
+  /* Un contrat signé devient une série : les mois suivants se poseront
+     d'eux-mêmes. Un échec ici ne doit pas défaire la planification. */
+  var contrat = null;
+  try { contrat = contratDepuisDevis_(numero, qui); }
+  catch (eC) {
+    tracerServeur_('SYSTEME', 'CONTRAT ECHEC', String(eC && eC.message || eC), numero, appareil || '');
+  }
   var reg = lireReglages_();
   var dates = bilan.poses.map(function (p) {
     return '  · ' + isoJour_(p.date) + ' ' + p.heure + ' — ' + p.nom +
@@ -2352,6 +2407,8 @@ function poserPlanning_(numero, qui, appareil, avantSignature) {
       ? bilan.poses.length + ' intervention(s) posée(s) :\n' + dates + '\n'
       : 'Aucune intervention n\'a pu être posée.\n') +
     (bilan.motif ? '\nRien n\'a été planifié : ' + bilan.motif + '.\n' : '') +
+    (contrat && contrat.length ? '\nContrat écrit dans l\'onglet ' + SH.RECURRENTS + ' : ' +
+      contrat.join(', ') + '. Les mois suivants se posent tout seuls.\n' : '') +
     (bilan.refuses.length
       ? '\n' + bilan.refuses.length + ' intervention(s) sans créneau dans les quatre mois ' +
         'qui viennent : elles restent « A PLANIFIER » dans l\'onglet ' + SH.CHANTIERS + '.\n'
@@ -3499,6 +3556,20 @@ function minuit_(d) {
   var x = new Date(d); x.setHours(0, 0, 0, 0); return x;
 }
 
+/** « 2026-12-06, 06/02/2027 » → { '2026-12-06': true, '2027-02-06': true }. */
+function datesExclues_(v) {
+  var out = {};
+  if (v instanceof Date) { out[isoJour_(v)] = true; return out; }
+  String(v || '').split(/[,;\s]+/).forEach(function (s) {
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/) || null, d = null;
+    if (m) d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+    var m2 = !m && s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m2) d = new Date(Number(m2[3]), Number(m2[2]) - 1, Number(m2[1]), 12);
+    if (d && !isNaN(d.getTime())) out[isoJour_(d)] = true;
+  });
+  return out;
+}
+
 /** Les occurrences d'une série entre deux dates incluses. */
 function occurrencesRecurrent_(r, du, au) {
   var freq = String(r.FREQUENCE || '').toUpperCase().trim();
@@ -3514,6 +3585,11 @@ function occurrencesRecurrent_(r, du, au) {
 
   var jour = jourSemaineNum_(r.JOUR);
   var jourMois = Math.round(Number(r.JOUR_MOIS) || 0);
+  var exclues = datesExclues_(r.EXCLUSIONS);
+  var pas = Math.round(Number(r.INTERVALLE) || 1);
+  if (pas < 1 || pas > 12) pas = 1;
+  /* Le mois de référence d'un « un mois sur deux » : celui du début. */
+  var moisRef = debut ? debut.getFullYear() * 12 + debut.getMonth() : null;
 
   /* La quinzaine se compte depuis le DÉBUT de la série, pas depuis
      aujourd'hui : sans ancrage, la semaine paire changerait de sens à chaque
@@ -3534,13 +3610,25 @@ function occurrencesRecurrent_(r, du, au) {
       ok = (d.getDay() === jour && d >= ancre &&
             Math.round((minuit_(d) - ancre) / 86400000 / 7) % 2 === 0);
     } else if (freq === 'MENSUEL') {
-      if (jourMois >= 1 && jourMois <= 31) {
-        var dernier = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      var bonMois = pas === 1 || moisRef === null ||
+        ((d.getFullYear() * 12 + d.getMonth() - moisRef) % pas === 0);
+      var dernier = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      if (!bonMois) {
+        ok = false;
+      } else if (jour >= 0 && jourMois >= 1 && jourMois <= 5) {
+        /* Le 3e jeudi : le bon jour de la semaine, dans la bonne semaine du
+           mois. Le 5e veut dire le dernier, qu'il y en ait quatre ou cinq. */
+        if (d.getDay() === jour) {
+          var rang = Math.floor((d.getDate() - 1) / 7) + 1;
+          ok = jourMois === 5 ? (d.getDate() + 7 > dernier) : rang === jourMois;
+        }
+      } else if (jourMois >= 1 && jourMois <= 31) {
         /* Le 31 d'un mois de trente jours tombe le 30 : un contrat « le 31 »
            ne saute pas février. */
         ok = (d.getDate() === Math.min(jourMois, dernier));
       }
     }
+    if (ok && exclues[isoJour_(d)]) ok = false;
     if (ok) out.push(new Date(d));
   }
   return out;
@@ -3674,6 +3762,539 @@ function genererRecurrents() {
     b.annules + ' passage(s) à venir annulé(s), série arrêtée.\n\n' +
     'Les chantiers déjà posés ne sont jamais réécrits : une date déplacée ou ' +
     'un salarié changé à la main le restent.');
+}
+
+
+/* ================== UN DEVIS RÉCURRENT SIGNÉ DEVIENT UN CONTRAT ==================
+   Demande de Simon, 7 novembre 2026 : « à partir des devis signés, ajoute-les
+   automatiquement au classeur ». Jusque-là, un contrat d'entretien signé ne
+   posait que les passages de son premier mois (répartis sur 28 jours) : le
+   mois suivant, plus rien, sauf à écrire la série à la main dans RECURRENTS.
+
+   Le contrat se lit sur ce que la planification vient de poser : les jours de
+   la semaine, l'heure et le salarié des premiers passages. Le rythme vient du
+   nombre de passages par mois du devis — 1 : tous les mois ; 2 : toutes les
+   deux semaines ; 4 : toutes les semaines ; 8 : deux jours par semaine, etc.
+
+   Les passages du premier mois, déjà posés, deviennent les premiers passages
+   du contrat (ils reçoivent sa clé) : la génération ne les double pas. Une
+   date que la série aurait posée dans ce premier mois sans qu'un passage y
+   soit est notée en EXCLUSIONS, pour la même raison. */
+
+/** Le nombre de passages par mois → le rythme et le nombre de jours par semaine. */
+function rythmeDesPassages_(n) {
+  n = Math.round(Number(n) || 0);
+  if (n <= 1) return { frequence: 'MENSUEL', jours: 1 };
+  if (n <= 3) return { frequence: 'QUINZAINE', jours: Math.max(1, Math.round(n / 2.17)) };
+  return { frequence: 'HEBDO', jours: Math.max(1, Math.min(7, Math.round(n / 4.33))) };
+}
+
+function contratDepuisDevis_(numero, qui) {
+  var num = String(numero || '').trim();
+  if (!num) return null;
+  var ss = SpreadsheetApp.getActive();
+  if (!ss.getSheetByName(SH.RECURRENTS)) majStructure_();
+  var shR = ss.getSheetByName(SH.RECURRENTS);
+  var enR = shR.getRange(1, 1, 1, shR.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  if (enR.indexOf('DEVIS') < 0) { majStructure_(); }
+
+  /* Déjà fait : un devis ne fait qu'un contrat, même signé deux fois. */
+  var deja = objetsDe_(SH.RECURRENTS).some(function (r) {
+    return String(r.DEVIS || '').trim() === num;
+  });
+  if (deja) return null;
+
+  var devis = null;
+  lireDevis_().forEach(function (d) {
+    var n = String(d.NUMERO || '').trim(), o = String(d.NUMERO_ORIGINE || '').trim();
+    if (n === num || o === num) devis = d;
+  });
+  if (!devis) return null;
+  if (!recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS)) return null;
+
+  /* Les passages posés du premier mois, dans l'ordre. */
+  var shC = ss.getSheetByName(SH.CHANTIERS);
+  var enC = shC.getRange(1, 1, 1, shC.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cNum = enC.indexOf('NUMERO'), cDate = enC.indexOf('DATE'), cRec = enC.indexOf('RECURRENT');
+  var cSt = enC.indexOf('STATUT'), cLot = enC.indexOf('LOT');
+  if (cRec < 0) { majStructure_(); return null; }
+  var v = shC.getLastRow() > 1 ? shC.getRange(2, 1, shC.getLastRow() - 1, shC.getLastColumn()).getValues() : [];
+  var numeros = [num, String(devis.NUMERO || '').trim(), String(devis.NUMERO_ORIGINE || '').trim()];
+  var passages = [];
+  v.forEach(function (l, i) {
+    if (numeros.indexOf(String(l[cNum] || '').trim()) < 0) return;
+    if (String(l[cRec] || '').trim()) return;
+    if (cSt >= 0 && String(l[cSt] || '').toUpperCase().trim() === 'ANNULE') return;
+    if (cLot >= 0 && /^[2-9]/.test(String(l[cLot] || ''))) return;     // la suite d'une journée découpée
+    var d = l[cDate] ? new Date(l[cDate]) : null;
+    if (!d || isNaN(d.getTime())) return;
+    var o = {};
+    enC.forEach(function (h, c) { o[h] = l[c]; });
+    o._rang = i + 2; o._date = minuit_(d);
+    passages.push(o);
+  });
+  if (!passages.length) {
+    tracerServeur_(qui || 'SYSTEME', 'CONTRAT A ECRIRE',
+                   'aucun passage daté : la série n\'a pas pu être déduite', num, '');
+    return null;
+  }
+  passages.sort(function (a, b) { return a._date - b._date; });
+
+  var r = rythmeDesPassages_(devis.PASSAGES_MOIS);
+  var jours = [], modeles = {};
+  passages.forEach(function (p) {
+    var j = p._date.getDay();
+    if (jours.indexOf(j) < 0 && jours.length < r.jours) { jours.push(j); modeles[j] = p; }
+  });
+  if (r.frequence === 'MENSUEL') jours = [-1];
+
+  var premier = passages[0]._date, dernier = passages[passages.length - 1]._date;
+  var mensuel = Number(devis.TOTAL_HT_MENSUEL) || Number(devis.TOTAL_HT) || 0;
+  var base = {
+    CLIENT: String(devis.CLIENT || ''), ADRESSE: String(devis.ADRESSE || ''),
+    CP: String(devis.CP || ''), VILLE: String(devis.VILLE || ''),
+    ACCES: String(devis.NOTE_COMMERCIAL || '').trim(),
+    FREQUENCE: r.frequence, JOUR_MOIS: r.frequence === 'MENSUEL' ? premier.getDate() : '',
+    DEBUT: new Date(premier.getFullYear(), premier.getMonth(), premier.getDate(), 12),
+    FIN: '', ACTIF: 'OUI', NATURE: natureOuVide_(devis.NATURE),
+    PRESTATIONS: natureLisible_(devis.NATURE),
+    NOTE: 'Devis ' + num + (mensuel ? ' — ' + String(mensuel.toFixed(2)).replace('.', ',') + ' € HT par mois' : ''),
+    DEVIS: num
+  };
+
+  var ids = [];
+  (jours.length ? jours : [-1]).forEach(function (j) {
+    var m = j >= 0 ? modeles[j] : passages[0];
+    var s = {};
+    for (var k in base) if (base.hasOwnProperty(k)) s[k] = base[k];
+    s.HEURE = heureTexte_(m.HEURE);
+    s.DUREE_MIN = Math.round(Number(m.DUREE_PREVUE_MIN) || 0) || '';
+    s.PRESTATAIRE = String(m.PRESTATAIRE || '');
+
+    /* Le premier mois : chaque date de la série rencontre un passage déjà posé
+       (il reçoit la clé) ou devient une exclusion. */
+    var fin1 = new Date(dernier);
+    var occ = occurrencesRecurrent_({ FREQUENCE: s.FREQUENCE, JOUR: j >= 0 ? JOURS_SEMAINE_[j] : '',
+                                      JOUR_MOIS: s.JOUR_MOIS, DEBUT: s.DEBUT }, premier, fin1);
+    var exclues = [], aCle = [];
+    occ.forEach(function (d) {
+      var p = passages.filter(function (x) { return !x._pris && x._date.getTime() === minuit_(d).getTime(); })[0];
+      if (p) { p._pris = true; aCle.push({ rang: p._rang, iso: isoJour_(d) }); }
+      else exclues.push(isoJour_(d));
+    });
+    s.EXCLUSIONS = exclues.join(', ');
+    s.JOUR = j >= 0 ? JOURS_SEMAINE_[j] : '';
+    var id = ecrireSeries_(s, [j])[0];
+    ids.push(id);
+    aCle.forEach(function (a) { shC.getRange(a.rang, cRec + 1).setValue(id + '|' + a.iso); });
+  });
+
+  genererRecurrents_();
+  tracerServeur_(qui || 'SYSTEME', 'CONTRAT CREE',
+                 base.CLIENT + ' · ' + ids.join(', ') + ' · ' + r.frequence + ' (depuis le devis)', num, '');
+  return ids;
+}
+
+/* ================ CRÉER ET CONDUIRE UN CONTRAT DEPUIS L'APPLI ================
+   Demande de Simon, 7 novembre 2026 : « j'aimerais qu'on puisse créer un
+   chantier récurrent directement sur l'application (en tant qu'admin) —
+   prends exemple sur FamilyWall ». Jusque-là, un contrat s'écrivait à la main
+   dans l'onglet RECURRENTS, et rien ne l'arrêtait ni ne le modifiait ailleurs.
+
+   Trois gestes, ceux d'un agenda :
+   — créer : une ligne par jour de la semaine choisi (« le lundi et le
+     jeudi » fait deux séries, puisqu'une série n'a qu'un JOUR), puis le
+     planning des semaines qui viennent est posé tout de suite, sans attendre
+     la nuit ;
+   — modifier « tous les suivants » : la série est close la veille, et une
+     série neuve reprend à partir de la date choisie. Le passé garde ce qu'il
+     était — c'est là qu'on a pointé et facturé ;
+   — arrêter : la série est close la veille de la date choisie.
+
+   Ce qui a été posé d'avance et que personne n'a commencé est RETIRÉ, pas
+   annulé : ces passages n'ont jamais eu lieu, ils n'ont rien à faire sous la
+   pastille « annulés ». Et une fois la série close, la génération de la nuit
+   ne peut plus les reposer. Un passage déjà pointé n'est jamais touché. */
+
+var FREQUENCES_ = ['HEBDO', 'QUINZAINE', 'MENSUEL'];
+
+/** Ce que le gérant voit de ses contrats. */
+function recurrentsPourAdmin_() {
+  return objetsDe_(SH.RECURRENTS).filter(function (r) {
+    return String(r.ID || '').trim();
+  }).map(function (r) {
+    var deb = r.DEBUT ? new Date(r.DEBUT) : null;
+    var fin = r.FIN ? new Date(r.FIN) : null;
+    return {
+      id: String(r.ID).trim(), client: String(r.CLIENT || ''),
+      adresse: String(r.ADRESSE || ''), cp: String(r.CP || ''), ville: String(r.VILLE || ''),
+      acces: String(r.ACCES || ''),
+      frequence: String(r.FREQUENCE || '').toUpperCase().trim(),
+      jour: (function () { var j = jourSemaineNum_(r.JOUR); return j < 0 ? '' : JOURS_SEMAINE_[j]; })(),
+      jourMois: Math.round(Number(r.JOUR_MOIS) || 0) || '',
+      intervalle: Math.round(Number(r.INTERVALLE) || 0) || '',
+      exclusions: Object.keys(datesExclues_(r.EXCLUSIONS)).sort(),
+      note: String(r.NOTE || ''),
+      heure: heureTexte_(r.HEURE),
+      duree: Math.round(Number(r.DUREE_MIN) || 0) || '',
+      prestataire: String(r.PRESTATAIRE || ''),
+      debut: deb && !isNaN(deb.getTime()) ? isoJour_(deb) : '',
+      fin: fin && !isNaN(fin.getTime()) ? isoJour_(fin) : '',
+      actif: estActif_(r.ACTIF),
+      nature: natureOuVide_(r.NATURE),
+      prestations: String(r.PRESTATIONS || r.NOTE || '')
+    };
+  });
+}
+
+/** « 2026-11-12 » → la date à midi ; rien ou illisible → null. */
+function dateIso_(t) {
+  var s = String(t || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  var d = new Date(s + 'T12:00:00');
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** « 8:00 », « 08h00 », « 8 h » → « 08:00 » ; vide → '' ; illisible → null. */
+function heureNette_(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s) return '';
+  var m = s.match(/^(\d{1,2})\s*[:hH]\s*(\d{0,2})$/);
+  if (!m) return null;
+  var h = Number(m[1]), mn = Number(m[2] || 0);
+  if (h > 23 || mn > 59) return null;
+  return ('0' + h).slice(-2) + ':' + ('0' + mn).slice(-2);
+}
+
+/**
+ * Relit et vérifie ce que la fiche envoie. Rend { ok, s } ou { ok:false, erreur }.
+ * s porte des valeurs prêtes à écrire, et jours la liste des jours (0 à 6).
+ */
+function lireFicheRecurrent_(d) {
+  var client = String(d.client || '').trim();
+  if (!client) return { ok: false, erreur: 'il faut un nom de client' };
+
+  var freq = String(d.frequence || '').toUpperCase().trim();
+  if (FREQUENCES_.indexOf(freq) < 0) return { ok: false, erreur: 'rythme inconnu' };
+
+  var debut = dateIso_(d.debut);
+  if (!debut) return { ok: false, erreur: 'il faut la date du premier passage' };
+  var fin = String(d.fin || '').trim() ? dateIso_(d.fin) : null;
+  if (String(d.fin || '').trim() && !fin) return { ok: false, erreur: 'date de fin illisible' };
+  if (fin && minuit_(fin) < minuit_(debut)) {
+    return { ok: false, erreur: 'la fin tombe avant le premier passage' };
+  }
+
+  var jours = [], jourMois = '', intervalle = '';
+  if (freq === 'MENSUEL') {
+    var pas = Math.round(Number(d.intervalle) || 1);
+    if (pas < 1 || pas > 12) return { ok: false, erreur: 'intervalle de mois illisible' };
+    intervalle = pas > 1 ? pas : '';
+    if (String(d.mensuel || '').toUpperCase() === 'RANG') {
+      /* « Le 3e jeudi » : le jour et le rang se lisent sur la date du premier
+         passage. Un jeudi qui tombe dans les sept derniers jours du mois et
+         au-delà du 4e devient « le dernier ». */
+      var q = debut.getDate();
+      var rang = Math.floor((q - 1) / 7) + 1;
+      jours = [debut.getDay()];
+      jourMois = rang > 4 ? 5 : rang;
+    } else {
+      jourMois = Math.round(Number(d.jourMois) || debut.getDate());
+      if (jourMois < 1 || jourMois > 31) return { ok: false, erreur: 'jour du mois illisible' };
+      jours = [-1];
+    }
+  } else {
+    var brut = Array.isArray(d.jours) ? d.jours : (d.jours ? [d.jours] : [debut.getDay()]);
+    brut.forEach(function (j) {
+      var n = typeof j === 'number' ? j : jourSemaineNum_(j);
+      if (n >= 0 && n <= 6 && jours.indexOf(n) < 0) jours.push(n);
+    });
+    if (!jours.length) return { ok: false, erreur: 'choisis au moins un jour de la semaine' };
+    jours.sort();
+  }
+
+  var heure = heureNette_(d.heure);
+  if (heure === null) return { ok: false, erreur: 'heure illisible' };
+  var duree = Math.round(Number(d.duree) || 0);
+  if (duree < 0 || duree > 24 * 60) return { ok: false, erreur: 'durée illisible' };
+
+  var qui = String(d.prestataire || '').trim();
+  if (qui) {
+    var connu = false, n = normNom_(qui);
+    lirePrestataires_().forEach(function (p) { if (normNom_(p.nom) === n) { connu = true; qui = p.nom; } });
+    if (!connu) return { ok: false, erreur: 'ce prestataire n\'est pas dans la liste' };
+  }
+
+  return { ok: true, jours: jours, s: {
+    CLIENT: client,
+    ADRESSE: String(d.adresse || '').trim(), CP: String(d.cp || '').trim(),
+    VILLE: String(d.ville || '').trim(), ACCES: String(d.acces || '').trim(),
+    FREQUENCE: freq, JOUR_MOIS: jourMois, INTERVALLE: intervalle, HEURE: heure,
+    DUREE_MIN: duree > 0 ? duree : '',
+    PRESTATAIRE: qui, DEBUT: debut, FIN: fin || '', ACTIF: 'OUI',
+    NATURE: natureChoisie_(d.nature) === NATURE_RDV_ ? '' : natureChoisie_(d.nature),
+    PRESTATIONS: String(d.prestations || d.note || '').trim()
+  } };
+}
+
+/** Le prochain numéro de série : R-008 après R-007, même si une ligne manque. */
+function prochainNumRecurrent_() {
+  var max = 0;
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    var m = String(r.ID || '').match(/(\d+)\s*$/);
+    if (m) max = Math.max(max, Number(m[1]));
+  });
+  return max + 1;
+}
+
+/** Une série qui dit déjà la même chose — même client, rythme, jour, heure. */
+function serieJumelle_(s, jour, sauf) {
+  var t = null;
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    if (t || !String(r.ID || '').trim() || String(r.ID).trim() === sauf) return;
+    if (!estActif_(r.ACTIF)) return;
+    var fin = r.FIN ? minuit_(r.FIN) : null;
+    if (fin && !isNaN(fin.getTime()) && fin < minuit_(new Date())) return;
+    if (normNom_(r.CLIENT) !== normNom_(s.CLIENT)) return;
+    if (String(r.FREQUENCE || '').toUpperCase().trim() !== s.FREQUENCE) return;
+    if (s.FREQUENCE === 'MENSUEL') {
+      if (Math.round(Number(r.JOUR_MOIS) || 0) !== Number(s.JOUR_MOIS)) return;
+      if (jourSemaineNum_(r.JOUR) !== jour) return;
+      if ((Math.round(Number(r.INTERVALLE) || 1)) !== (Number(s.INTERVALLE) || 1)) return;
+    } else if (jourSemaineNum_(r.JOUR) !== jour) return;
+    if (heureNette_(heureTexte_(r.HEURE)) !== s.HEURE) return;
+    t = String(r.ID).trim();
+  });
+  return t;
+}
+
+/** Écrit les séries d'une fiche, une par jour. Rend la liste des ID posés. */
+function ecrireSeries_(s, jours) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.RECURRENTS);
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var num = prochainNumRecurrent_(), ids = [];
+  jours.forEach(function (j, i) {
+    var v = {};
+    for (var k in s) if (s.hasOwnProperty(k)) v[k] = s[k];
+    v.ID = 'R-' + ('00' + (num + i)).slice(-3);
+    v.JOUR = j >= 0 ? JOURS_SEMAINE_[j] : '';
+    sh.appendRow(en.map(function (h) { return v.hasOwnProperty(h) ? v[h] : ''; }));
+    ids.push(v.ID);
+  });
+  return ids;
+}
+
+/**
+ * Retire de CHANTIERS les passages d'une série, à partir d'une date, que
+ * personne n'a commencés. Un passage se reconnaît à sa clé RECURRENT ; on
+ * regarde la date de la clé ET la date posée, pour qu'un passage déplacé à la
+ * main d'un côté ou de l'autre de la date soit traité comme il le mérite.
+ */
+function retirerPassages_(id, aPartir) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return 0;
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  var cRec = en.indexOf('RECURRENT'), cDate = en.indexOf('DATE');
+  var cArr = en.indexOf('ARRIVEE'), cSt = en.indexOf('STATUT');
+  if (cRec < 0) return 0;
+  var seuil = minuit_(aPartir);
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+  var rangs = [];
+  v.forEach(function (l, i) {
+    var cle = String(l[cRec] || '').trim();
+    if (cle.split('|')[0] !== id) return;
+    if (cArr >= 0 && String(l[cArr] || '').trim()) return;          // pointé
+    var st = cSt >= 0 ? String(l[cSt] || '').toUpperCase().trim() : '';
+    if (st === 'FAIT' || st === 'EN COURS') return;
+    var dCle = dateIso_(cle.split('|')[1]);
+    var dPose = l[cDate] ? minuit_(l[cDate]) : null;
+    var apres = (dCle && minuit_(dCle) >= seuil) ||
+                (dPose && !isNaN(dPose.getTime()) && dPose >= seuil);
+    if (apres) rangs.push(i + 2);
+  });
+  for (var k = rangs.length - 1; k >= 0; k--) sh.deleteRow(rangs[k]);
+  return rangs.length;
+}
+
+/** Les jours où une série garde un passage commencé, à partir d'une date. */
+function passagesGardes_(id, aPartir) {
+  var out = {}, seuil = minuit_(aPartir);
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    var cle = String(o.RECURRENT || '').trim();
+    if (cle.split('|')[0] !== id) return;
+    if (String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') return;
+    var d = o.DATE ? minuit_(o.DATE) : dateIso_(cle.split('|')[1]);
+    if (d && !isNaN(d.getTime()) && minuit_(d) >= seuil) out[isoJour_(d)] = true;
+  });
+  return out;
+}
+
+/** La ligne d'une série dans RECURRENTS : { rang, en, ligne } ou null. */
+function ligneSerie_(id) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.RECURRENTS);
+  if (!sh || sh.getLastRow() < 2) return null;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var cId = en.indexOf('ID');
+  for (var i = 1; i < v.length; i++) {
+    if (String(v[i][cId] || '').trim() === id) {
+      var o = {};
+      en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
+      return { sh: sh, rang: i + 1, en: en, o: o };
+    }
+  }
+  return null;
+}
+
+function ecrireCase_(L, col, valeur) {
+  var c = L.en.indexOf(col);
+  if (c >= 0) L.sh.getRange(L.rang, c + 1).setValue(valeur);
+}
+
+/** Le premier passage de la série tombant le jour donné ou après. */
+function prochainPassage_(o, depuis) {
+  var au = new Date(depuis); au.setDate(au.getDate() + 62);
+  var l = occurrencesRecurrent_(o, depuis, au);
+  return l.length ? l[0] : null;
+}
+
+/** Créer un contrat depuis l'appli. */
+function recurrentNeuf_(d, com) {
+  var f = lireFicheRecurrent_(d);
+  if (!f.ok) return f;
+  if (!SpreadsheetApp.getActive().getSheetByName(SH.RECURRENTS)) majStructure_();
+
+  /* Pas de doublon : la même chose déjà écrite, même client, même rythme, même
+     jour et même heure, est refusée en nommant la série qui la porte. */
+  for (var i = 0; i < f.jours.length; i++) {
+    var jum = serieJumelle_(f.s, f.jours[i], '');
+    if (jum) return { ok: false, erreur: 'ce contrat existe déjà (' + jum + ')', existe: jum };
+  }
+
+  var ids = ecrireSeries_(f.s, f.jours);
+  var b = genererRecurrents_();
+  tracerServeur_(com ? com.nom : '', 'CONTRAT CREE',
+                 f.s.CLIENT + ' · ' + ids.join(', ') + ' · ' + f.s.FREQUENCE, '', d.appareil || '');
+  if (f.s.PRESTATAIRE) {
+    try {
+      notifier_(f.s.PRESTATAIRE, 'Nouveau contrat',
+                f.s.CLIENT + (f.s.HEURE ? ' · ' + f.s.HEURE : '') +
+                ' · à partir du ' + Utilities.formatDate(f.s.DEBUT, 'Europe/Paris', 'dd/MM'), '');
+    } catch (eN) {}
+  }
+  return { ok: true, ids: ids, poses: b.poses || 0 };
+}
+
+/**
+ * Modifier un contrat « à partir de » une date. Si la date tombe au début de
+ * la série ou avant, la série est réécrite en place (même ID) ; sinon elle
+ * est close la veille et une série neuve prend le relais.
+ */
+function recurrentModif_(d, com) {
+  var id = String(d.id || '').trim();
+  var L = ligneSerie_(id);
+  if (!L) return { ok: false, erreur: 'contrat introuvable' };
+  var f = lireFicheRecurrent_(d);
+  if (!f.ok) return f;
+
+  var auj = minuit_(new Date());
+  var depuis = dateIso_(d.aPartirDe) || new Date();
+  if (minuit_(depuis) < auj) depuis = new Date(auj);
+  var debutAncien = L.o.DEBUT ? minuit_(L.o.DEBUT) : null;
+  if (debutAncien && isNaN(debutAncien.getTime())) debutAncien = null;
+
+  for (var i = 0; i < f.jours.length; i++) {
+    var jum = serieJumelle_(f.s, f.jours[i], id);
+    if (jum) return { ok: false, erreur: 'ce contrat existe déjà (' + jum + ')', existe: jum };
+  }
+
+  /* Même rythme et même jour : la nouvelle série reprend sur un vrai passage
+     de l'ancienne. Sans cela, une quinzaine reprise « à partir d'aujourd'hui »
+     changerait de semaine et le client serait sauté une fois. */
+  var memeCadence = f.jours.length === 1 &&
+    String(L.o.FREQUENCE || '').toUpperCase().trim() === f.s.FREQUENCE &&
+    (f.s.FREQUENCE === 'MENSUEL'
+      ? Math.round(Number(L.o.JOUR_MOIS) || 0) === Number(f.s.JOUR_MOIS) &&
+        jourSemaineNum_(L.o.JOUR) === f.jours[0] &&
+        Math.round(Number(L.o.INTERVALLE) || 1) === (Number(f.s.INTERVALLE) || 1)
+      : jourSemaineNum_(L.o.JOUR) === f.jours[0]);
+  var debutNeuf = minuit_(f.s.DEBUT) > minuit_(depuis) ? f.s.DEBUT : new Date(depuis);
+  if (memeCadence) {
+    var p = prochainPassage_(L.o, depuis);
+    if (p && minuit_(p) > minuit_(debutNeuf)) debutNeuf = p;
+  }
+
+  var retires = retirerPassages_(id, depuis), ids;
+  var enPlace = !debutAncien || debutAncien >= minuit_(depuis);
+
+  /* Un passage déjà commencé reste à sa place (retirerPassages_ ne le touche
+     pas). La série neuve ne doit pas en poser un second le même jour : son
+     premier passage est repoussé d'autant. */
+  if (!enPlace) {
+    var gardes = passagesGardes_(id, depuis);
+    for (var g = 0; g < 12; g++) {
+      var essai = {};
+      for (var k0 in f.s) if (f.s.hasOwnProperty(k0)) essai[k0] = f.s[k0];
+      essai.DEBUT = debutNeuf;
+      essai.JOUR = f.jours[0] >= 0 ? JOURS_SEMAINE_[f.jours[0]] : '';
+      var premier = prochainPassage_(essai, debutNeuf);
+      if (!premier || !gardes[isoJour_(premier)]) break;
+      var apres = new Date(premier); apres.setDate(apres.getDate() + 1);
+      debutNeuf = memeCadence ? (prochainPassage_(L.o, apres) || apres) : apres;
+    }
+  }
+  if (enPlace) {
+    /* Rien n'a encore eu lieu avant la date : on réécrit la série elle-même. */
+    var s = f.s;
+    s.DEBUT = memeCadence ? debutNeuf : f.s.DEBUT;
+    ['CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES', 'FREQUENCE', 'JOUR_MOIS', 'INTERVALLE', 'HEURE',
+     'DUREE_MIN', 'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF', 'NATURE', 'PRESTATIONS']
+      .forEach(function (k) { ecrireCase_(L, k, s[k]); });
+    ecrireCase_(L, 'JOUR', f.jours[0] >= 0 ? JOURS_SEMAINE_[f.jours[0]] : '');
+    ids = [id];
+    if (f.jours.length > 1) ids = ids.concat(ecrireSeries_(s, f.jours.slice(1)));
+  } else {
+    var veille = new Date(depuis); veille.setDate(veille.getDate() - 1); veille.setHours(12, 0, 0, 0);
+    ecrireCase_(L, 'FIN', veille);
+    f.s.DEBUT = debutNeuf;
+    /* Les dates sautées suivent la série : un trou posé exprès ne doit pas se
+       refermer parce qu'on a changé l'heure. */
+    if (String(L.o.EXCLUSIONS || '').trim()) f.s.EXCLUSIONS = L.o.EXCLUSIONS;
+    ids = ecrireSeries_(f.s, f.jours);
+  }
+
+  var b = genererRecurrents_();
+  tracerServeur_(com ? com.nom : '', 'CONTRAT MODIFIE',
+                 f.s.CLIENT + ' · ' + id + (enPlace ? ' réécrit' : ' → ' + ids.join(', ')) +
+                 ' · à partir du ' + isoJour_(depuis) + ' · ' + retires + ' passage(s) reposé(s)',
+                 '', d.appareil || '');
+  return { ok: true, ids: ids, enPlace: enPlace, retires: retires, poses: b.poses || 0 };
+}
+
+/** Arrêter un contrat : plus aucun passage à partir de la date donnée. */
+function recurrentStop_(d, com) {
+  var id = String(d.id || '').trim();
+  var L = ligneSerie_(id);
+  if (!L) return { ok: false, erreur: 'contrat introuvable' };
+  var auj = minuit_(new Date());
+  var depuis = dateIso_(d.aPartirDe) || new Date();
+  if (minuit_(depuis) < auj) depuis = new Date(auj);
+  var veille = new Date(depuis); veille.setDate(veille.getDate() - 1); veille.setHours(12, 0, 0, 0);
+  var debut = L.o.DEBUT ? minuit_(L.o.DEBUT) : null;
+
+  ecrireCase_(L, 'FIN', veille);
+  /* Une série qui n'aurait jamais eu un seul passage est éteinte : une FIN
+     tombée avant son DÉBUT se lirait mal dans le classeur. */
+  if (debut && !isNaN(debut.getTime()) && minuit_(veille) < debut) ecrireCase_(L, 'ACTIF', 'NON');
+  var retires = retirerPassages_(id, depuis);
+  tracerServeur_(com ? com.nom : '', 'CONTRAT ARRETE',
+                 String(L.o.CLIENT || '') + ' · ' + id + ' · dernier jour ' + isoJour_(veille) +
+                 ' · ' + retires + ' passage(s) retiré(s)', '', d.appareil || '');
+  return { ok: true, retires: retires, fin: isoJour_(veille) };
 }
 
 /* La nature d'un chantier. La colonne d'abord ; à défaut celle de son devis,
@@ -4769,6 +5390,23 @@ function notifConfig_() {
  * jamais : une notification qui ne part pas ne doit pas empêcher un chantier
  * d'être planifié. Un échec part au journal, pour qu'il ne passe pas inaperçu.
  */
+/* Le service dit-il, d'une manière ou d'une autre, que le message n'a trouvé
+   personne ? Un nom qu'il ne connaît pas arrive sous « invalid_aliases », des
+   appareils désabonnés sous une phrase anglaise, et les deux viennent avec un
+   code 200 : sans cette lecture, un échec passerait pour un envoi. */
+function notifPersonne_(rep) {
+  if (!rep) return true;
+  var e = rep.errors;
+  if (!e) return false;
+  if (e.invalid_aliases || e.invalid_external_user_ids || e.invalid_player_ids) return true;
+  if (e.length) {
+    for (var i = 0; i < e.length; i++) {
+      if (/not subscribed|no subscribers|invalid/i.test(String(e[i] || ''))) return true;
+    }
+  }
+  return false;
+}
+
 function notifier_(nom, titre, texte, lien) {
   var c = notifConfig_();
   if (!c.app || !c.cle) return { ok: false, erreur: 'notifications non connectées' };
@@ -4795,13 +5433,21 @@ function notifier_(nom, titre, texte, lien) {
     var code = r.getResponseCode();
     var rep = {};
     try { rep = JSON.parse(r.getContentText() || '{}'); } catch (e) {}
-    /* OneSignal répond 200 même quand personne n'est visé : « recipients: 0 »
-       veut dire que ce salarié n'a pas encore accepté les notifications sur
-       son téléphone. Ce n'est pas une panne, mais ce n'est pas un envoi. */
+    /* OneSignal répond 200 même quand personne n'est visé. Encore faut-il lire
+       la bonne chose : deux générations d'API se croisent ici. L'ancienne
+       rendait « recipients » ; celle-ci (?c=push) rend un identifiant de
+       message, et signale un nom qu'elle ne connaît pas par
+       « errors.invalid_aliases ». Compter « recipients » comme avant faisait
+       annoncer « personne n'est inscrit » alors que la notification était bel
+       et bien partie — c'est ce qui a fait croire, le 29 octobre, que rien ne
+       marchait. */
     if (code >= 200 && code < 300) {
+      if (notifPersonne_(rep)) {
+        return { ok: false, erreur: 'personne inscrit sous ce nom', aucun: true };
+      }
       var n = Number(rep.recipients || 0);
-      if (!n) return { ok: false, erreur: 'personne inscrit sous ce nom', aucun: true };
-      return { ok: true, recus: n, id: rep.id || '' };
+      if (rep.id || n) return { ok: true, recus: n, id: String(rep.id || '') };
+      return { ok: false, erreur: 'personne inscrit sous ce nom', aucun: true };
     }
     var msg = (rep.errors && rep.errors[0]) ||
               (rep.errors && rep.errors.invalid_aliases ? 'nom inconnu du service' : '') ||
@@ -4880,7 +5526,10 @@ function testerNotification() {
 
   var res = notifier_(nom, 'Essai', 'Si tu lis ceci, les notifications marchent.');
   if (res.ok) {
-    ui.alert('Partie à ' + res.recus + ' téléphone' + (res.recus > 1 ? 's' : '') + '.');
+    ui.alert(res.recus
+      ? 'Partie à ' + res.recus + ' téléphone' + (res.recus > 1 ? 's' : '') + '.'
+      : 'Partie. Le service ne dit plus combien de téléphones l\'ont reçue : ' +
+        'pour le compte exact, regarde « Messages » sur le tableau de bord OneSignal.');
   } else if (res.aucun) {
     ui.alert('Personne n\'est inscrit sous « ' + nom + ' ».\n\n' +
       'Cette personne doit ouvrir l\'application, se connecter sous ce nom, ' +
@@ -4939,6 +5588,21 @@ function envoyerMail_(m, reg) {
   var html = (m.htmlBody !== undefined && m.htmlBody !== null)
     ? String(m.htmlBody) : texteEnHtml_(m.body);
   o.htmlBody = html + banniereHtml_(reg);
+  if (o.name === undefined) {
+    var enseigne = String(reg.societe_nom || '').trim();
+    if (enseigne) o.name = enseigne;
+  }
+  /* L'adresse d'expédition, elle, reste celle du compte Google qui porte le
+     script : la changer demanderait à Apps Script un accès large à toute la
+     boîte Gmail, et ce n'est pas un prix à payer pour une ligne d'en-tête.
+     Deux champs suffisent à ce que le client voie la maison et lui réponde :
+     le nom affiché, posé plus haut, et l'adresse de réponse ci-dessous.
+     « Répondre » part alors chez BREIZH BRILLANCE, pas dans une boîte
+     personnelle — et personne n'a à y penser. */
+  if (o.replyTo === undefined) {
+    var maison = String(reg.societe_email || '').trim();
+    if (maison) o.replyTo = maison;
+  }
   MailApp.sendEmail(o);
 }
 
