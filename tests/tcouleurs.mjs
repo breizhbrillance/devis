@@ -52,6 +52,8 @@ const b = await chromium.launch({ executablePath: CHROME });
 const c = await b.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true,
   isMobile: true, locale: 'fr-FR' });
 const p = await c.newPage();
+/* v93 : ces essais lisent les teintes du mode clair. */
+await p.addInitScript(() => { try { localStorage.setItem("theme", "clair"); } catch (e) {} });
 const err = []; p.on('pageerror', e => err.push(String(e)));
 async function clic(sel) {
   try { await p.click(sel, { timeout: 6000 }); return true; }
