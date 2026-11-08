@@ -68,13 +68,26 @@
 
     <div class="card" id="carteSigner">
       <h2>Bon pour accord</h2>
-      <div class="mini">En signant, vous acceptez ce devis et ses conditions. Vous recevrez votre copie signée par e-mail.</div>
+      <div class="mini">En signant, vous acceptez ce devis et ses conditions. Vous recevrez par e-mail le devis et la preuve de votre signature.</div>
       <label for="nom">Nom et qualité du signataire</label>
       <input id="nom" type="text" autocomplete="name" placeholder="Jean Dupont, gérant">
       <label>Votre signature</label>
       <div class="pad" id="pad"><canvas id="sig"></canvas><span id="padAide">Signez ici avec le doigt ou la souris</span></div>
       <button class="btn sec" onclick="effacer()">Effacer la signature</button>
-      <label class="accord"><input type="checkbox" id="accord"><span>Bon pour accord : j'accepte le devis <b id="numAccord"></b>.</span></label>
+      <div id="blocRetract" class="hide" style="margin-top:12px;padding:10px 12px;border:1px solid #d6dbe4;border-radius:10px">
+        <b>Votre droit de rétractation</b>
+        <div class="mini">Vous disposez de 14 jours après la signature pour vous rétracter, sans motif, avec le formulaire
+          qui figure sur le devis (PDF). Sans demande de votre part, nous n'interviendrons pas avant la fin de ce délai.</div>
+        <label class="accord"><input type="checkbox" id="anticipe" onchange="majAnticipe()"><span>Je demande que l'intervention
+          puisse commencer <b>avant la fin</b> du délai de rétractation de 14 jours.</span></label>
+        <label class="accord hide" id="lPerte"><input type="checkbox" id="perte"><span>Je reconnais que je perdrai mon droit de
+          rétractation une fois la prestation entièrement exécutée, et que si je me rétracte après son commencement,
+          je paierai le service fourni jusque-là.</span></label>
+      </div>
+      <label class="accord"><input type="checkbox" id="accord"><span>Bon pour accord : j'accepte le devis <b id="numAccord"></b>
+        et ses conditions, et je le signe électroniquement.</span></label>
+      <div class="mini" style="margin-top:6px">Sont conservés comme preuve : votre nom, votre signature, la date et l'heure,
+        l'appareil utilisé et l'empreinte numérique du devis.</div>
       <div class="err" id="err"></div>
       <button class="btn" id="bSigner" onclick="signer()">Signer le devis</button>
     </div>
@@ -109,7 +122,7 @@ function erreurPage(t){
 
 function charger(){
   if(!N || !T) return erreurPage('Ce lien est incomplet. Demandez un nouveau lien à Breizh Brillance.');
-  poster({action:'devisPublic', n:N, t:T}).then(function(d){
+  poster({action:'devisPublic', n:N, t:T, appareil:navigator.userAgent}).then(function(d){
     if(!d || !d.ok) return erreurPage((d && d.erreur) || 'Le devis n\'a pas pu être chargé. Réessayez dans un instant.');
     D = d;
     $('chargement').classList.add('hide');
@@ -138,6 +151,7 @@ function charger(){
       '<div class="tot"><span>TVA</span><span>' + eur(d.tva) + '</span></div>' +
       '<div class="tot gros"><span>Total TTC' + (rec ? ' par mois' : '') + '</span><span>' + eur(d.ttc) + '</span></div>';
     if(d.aPdf) $('bPdf').classList.remove('hide');
+    if(d.particulier) $('blocRetract').classList.remove('hide');
     $('page').classList.remove('hide');
     preparerPad();
   }, function(){ erreurPage('Le devis n\'a pas pu être chargé. Vérifiez votre connexion et rechargez la page.'); });
@@ -178,18 +192,25 @@ function effacer(){
   TRACE = false; $('padAide').classList.remove('hide');
 }
 
+function majAnticipe(){
+  $('lPerte').classList.toggle('hide', !$('anticipe').checked);
+  if(!$('anticipe').checked) $('perte').checked = false;
+}
 function signer(){
   var err = $('err'); err.textContent = '';
   var nom = $('nom').value.trim();
   if(nom.length < 2) return err.textContent = 'Indiquez votre nom et votre qualité.';
   if(!TRACE) return err.textContent = 'Signez dans le cadre.';
   if(!$('accord').checked) return err.textContent = 'Cochez « Bon pour accord ».';
+  var anticipe = !!(D && D.particulier && $('anticipe').checked);
+  if(anticipe && !$('perte').checked) return err.textContent = 'Pour commencer avant 14 jours, cochez aussi la case sur le droit de rétractation.';
   /* Fond blanc sous le tracé, réduit à 600 px de large : l'image reste lisible et légère. */
   var w = 600, h = Math.round(600 * cv.height / cv.width);
   var c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
   var x2 = c2.getContext('2d'); x2.fillStyle = '#fff'; x2.fillRect(0, 0, w, h); x2.drawImage(cv, 0, 0, w, h);
   var b = $('bSigner'); b.disabled = true; b.textContent = 'Signature en cours…';
   poster({action:'signerDistance', n:N, t:T, nom:nom, accepte:true, image:c2.toDataURL('image/png'),
+          anticipe:anticipe, perteDroit:anticipe && $('perte').checked,
           appareil:navigator.userAgent}).then(function(r){
     if(!r || !r.ok){ b.disabled = false; b.textContent = 'Signer le devis';
       return err.textContent = (r && r.erreur) || 'La signature n\'est pas passée. Réessayez.'; }

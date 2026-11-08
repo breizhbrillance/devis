@@ -119,7 +119,11 @@ var ENTETES_CHANTIERS_ = [
      retient l'annulation automatique : un devis refusé emporte les chantiers
      nés d'une signature, jamais ceux-là, que le gérant décide lui-même de
      garder ou non. Effacée le jour où le devis est enfin signé. */
-  'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT', 'NATURE', 'AVANT_SIGNATURE'
+  'DUREE_PREVUE_MIN', 'LOT', 'RECURRENT', 'NATURE', 'AVANT_SIGNATURE',
+  /* v101 — la fiche chantier jointe par le gérant (PDF ou photo) : FICHE porte
+     le lien Drive, FICHE_NOM le nom du fichier. Le salarié la lit par l'appli,
+     jamais par un lien public : elle porte des codes d'accès et des adresses. */
+  'FICHE', 'FICHE_NOM'
 ];
 
 /* La série récurrente. JOUR vaut LUNDI..DIMANCHE pour les fréquences
@@ -141,7 +145,9 @@ var ENTETES_RECURRENTS_ = [
   'EXCLUSIONS', 'INTERVALLE',
   /* Le devis d'où vient le contrat, quand il vient d'un devis signé : c'est
      lui qui empêche d'écrire deux fois le même contrat. */
-  'DEVIS'
+  'DEVIS',
+  /* v101 — la fiche chantier du contrat, recopiée sur chaque passage. */
+  'FICHE', 'FICHE_NOM'
 ];
 
 /* A PLANIFIER : le devis est signé, personne ni date encore posés.
@@ -1002,7 +1008,8 @@ function doPost(e) {
                    'prospects', 'appel', 'historique',
                    'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
                    'mesDevis', 'devisArchive',
-                   'poserDevis', 'suggestions', 'lienSignature'];
+                   'poserDevis', 'suggestions', 'lienSignature',
+                   'ficheJointe', 'ficheRetirer', 'ficheLire'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1053,9 +1060,11 @@ function doPost(e) {
             déclaré signé : c'est un engagement pris sur la parole du client,
             il revient au gérant seul. */
          'poserDevis', 'suggestions', 'lienSignature',
+         /* La fiche chantier : le gérant la joint, la remplace, la retire. */
+         'ficheJointe', 'ficheRetirer', 'ficheLire',
          'mesDevis', 'devisArchive']
       : agent
-        ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
+        ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
            'prospects', 'appel', 'historique',
            /* Ses devis à lui, relus dans le classeur : l'action filtre sur
@@ -1066,7 +1075,7 @@ function doPost(e) {
        parmi les prestataires : c'est la liste qui protège, pas l'écran. Et
        « planning » ne rend jamais que les chantiers à son nom. */
     if (!admin && !agent && aussiPrestataire_(com.nom)) {
-      permis = permis.concat(['planning', 'chantier', 'rdvNeuf', 'monChantier']);
+      permis = permis.concat(['planning', 'chantier', 'rdvNeuf', 'monChantier', 'ficheLire']);
     }
     if (permis.indexOf(d.action) < 0) {
       tracerServeur_(com.nom, 'ACTION REFUSEE', d.action, '', d.appareil || '');
@@ -1082,6 +1091,11 @@ function doPost(e) {
       return reponse_({ ok: true, chantiers: planningDe_(com.nom) });
     }
     if (d.action === 'chantier') return reponse_(enregistrerChantier_(d, com));
+    if (d.action === 'ficheLire') return reponse_(lireFiche_(d, com));
+    if (d.action === 'ficheJointe' || d.action === 'ficheRetirer') {
+      lock.waitLock(30000);
+      return reponse_(d.action === 'ficheJointe' ? joindreFiche_(d, com) : retirerFiche_(d, com));
+    }
     if (d.action === 'journal') {
       var evs = (d.evenements || []).slice(0, 300).map(function (e) {
         return { t: e.t, nom: e.nom || com.nom, action: e.action, detail: e.detail,
@@ -2071,6 +2085,13 @@ function tableauAdmin_() {
          fiche de dire « contrat récurrent » et de proposer d'en modifier la
          suite. */
       recurrent: String(o.RECURRENT || '').trim(),
+      fiche: String(o.FICHE || '').trim() ? (String(o.FICHE_NOM || '').trim() || 'Fiche chantier') : '',
+      /* Un passage sans date venu d'un férié : le nom du férié et sa date
+         d'origine, pour que « À placer » dise pourquoi il est là. */
+      ferie: (!o.DATE && String(o.RECURRENT || '').indexOf('|') > 0)
+        ? (function () { var iso = String(o.RECURRENT).split('|')[1];
+                         var n = nomFerieIso_(iso); return n ? { nom: n, date: iso } : ''; })()
+        : '',
       duree: Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || ''
     });
   });
@@ -3101,6 +3122,13 @@ function calendrier_(reg) {
   };
 }
 
+/* Le férié d'une date « 2026-11-11 », sans calendrier sous la main. */
+function nomFerieIso_(iso) {
+  var d = dateIso_(iso);
+  if (!d) return '';
+  return joursFeries_(d.getFullYear())[isoJour_(d)] || '';
+}
+
 /* Le nom du jour férié, ou '' si c'est un jour ordinaire. */
 function ferie_(cal, date) {
   if (!cal || cal.feriesTravailles) return '';
@@ -3907,24 +3935,33 @@ function genererRecurrents_() {
   var suivant = prochainNumChantier_(sh, cId);
   var maintenant = new Date();
   var rows = [], rang = 0;
+  /* v101 — « enlève les jours fériés des potentielles interventions et
+     mets-les à poser au calendrier ». Un passage qui tombe un férié n'est
+     pas posé ce jour-là : il part sans date dans « À placer », avec sa clé
+     (la date d'origine), pour que le gérant le replace et que la nuit ne le
+     repose pas. */
+  var cal = calendrier_(reg);
+  bilan.feries = 0;
 
   series.forEach(function (r) {
     var id = String(r.ID).trim();
     occurrencesRecurrent_(r, aujourd, horizon).forEach(function (d) {
       var cle = id + '|' + isoJour_(d);
       if (deja[cle]) return;
+      var fer = ferie_(cal, d);
+      if (fer) bilan.feries++;
       var v2 = {
         ID: 'CH-' + ('000' + (suivant + rang)).slice(-4),
         NUMERO: '',
         CLIENT: String(r.CLIENT || ''),
         ADRESSE: String(r.ADRESSE || ''), CP: String(r.CP || ''), VILLE: String(r.VILLE || ''),
         ACCES: String(r.ACCES || ''),
-        DATE: d, HEURE: heureTexte_(r.HEURE),
+        DATE: fer ? '' : d, HEURE: heureTexte_(r.HEURE),
         PRESTATAIRE: String(r.PRESTATAIRE || ''),
         /* Date et salarié posés : le chantier est planifié, il part sur le
            téléphone. Sans salarié, il reste à planifier et remonte en tête de
-           l'écran du gérant. */
-        STATUT: String(r.PRESTATAIRE || '').trim() ? 'PLANIFIE' : 'A PLANIFIER',
+           l'écran du gérant. Un férié : à placer. */
+        STATUT: (!fer && String(r.PRESTATAIRE || '').trim()) ? 'PLANIFIE' : 'A PLANIFIER',
         ARRIVEE: '', DEPART: '', MINUTES: '',
         PRESTATIONS_FAITES: '', SIGNALEMENT: '', PHOTOS: 0,
         /* Sans devis derrière, la fiche de travail du salarié serait vide :
@@ -3932,7 +3969,8 @@ function genererRecurrents_() {
         NOTE: String(r.PRESTATIONS || r.NOTE || ''),
         CREE_LE: maintenant,
         DUREE_PREVUE_MIN: Math.round(Number(r.DUREE_MIN) || 0) || '',
-        LOT: '', RECURRENT: cle, NATURE: natureOuVide_(r.NATURE)
+        LOT: '', RECURRENT: cle, NATURE: natureOuVide_(r.NATURE),
+        FICHE: String(r.FICHE || ''), FICHE_NOM: String(r.FICHE_NOM || '')
       };
       rows.push(en.map(function (h) { return v2.hasOwnProperty(h) ? v2[h] : ''; }));
       rang++;
@@ -3959,24 +3997,49 @@ function genererRecurrents_() {
       fin: fin
     };
   });
+  bilan.ferieRetires = 0;
   for (var k in deja) {
     if (!deja.hasOwnProperty(k)) continue;
     var id2 = k.split('|')[0];
     var etat = vivantes[id2];
     var l = deja[k].ligne;
     var dl = l[cDate] ? minuit_(l[cDate]) : null;
+    if (!l[cDate]) {
+      /* Un passage sans date (un férié à replacer) d'une série arrêtée depuis
+         ne doit pas traîner dans « À placer ». */
+      var dk = dateIso_(k.split('|')[1]);
+      var mort = !etat || !etat.actif || (etat.fin && dk && minuit_(dk) > etat.fin);
+      if (mort && dk && minuit_(dk) >= aujourd &&
+          String(l[cStatut] || '').toUpperCase().trim() !== 'ANNULE' &&
+          !(cArr >= 0 && String(l[cArr] || '').trim())) {
+        sh.getRange(deja[k].rang, cStatut + 1).setValue('ANNULE');
+        bilan.annules++;
+      }
+      continue;
+    }
     if (!dl || isNaN(dl.getTime()) || dl < aujourd) continue;
     if (String(l[cStatut] || '').toUpperCase().trim() === 'ANNULE') continue;
     if (cArr >= 0 && String(l[cArr] || '').trim()) continue;     // déjà pointé
     var morte = !etat || !etat.actif || (etat.fin && dl > etat.fin);
-    if (!morte) continue;
+    if (!morte) {
+      /* Posé d'avance un férié, à sa date d'origine (donc pas déplacé à la
+         main) : il repart dans « À placer ». Un passage que le gérant a mis
+         lui-même un férié reste où il l'a mis. */
+      if (isoJour_(dl) === k.split('|')[1] && ferie_(cal, dl)) {
+        sh.getRange(deja[k].rang, cDate + 1).setValue('');
+        sh.getRange(deja[k].rang, cStatut + 1).setValue('A PLANIFIER');
+        bilan.ferieRetires++;
+      }
+      continue;
+    }
     sh.getRange(deja[k].rang, cStatut + 1).setValue('ANNULE');
     bilan.annules++;
   }
 
-  if (bilan.poses || bilan.annules) {
+  if (bilan.poses || bilan.annules || bilan.ferieRetires) {
     tracerServeur_('SYSTEME', 'PLANNING RECURRENT',
-      bilan.poses + ' posé(s), ' + bilan.annules + ' annulé(s), ' +
+      bilan.poses + ' posé(s) dont ' + bilan.feries + ' férié(s) à placer, ' +
+      bilan.annules + ' annulé(s), ' + bilan.ferieRetires + ' férié(s) retiré(s) du calendrier, ' +
       bilan.series + ' série(s)', '', '');
   }
   return bilan;
@@ -4176,7 +4239,8 @@ function recurrentsPourAdmin_() {
       actif: estActif_(r.ACTIF),
       nature: natureOuVide_(r.NATURE),
       prestations: String(r.PRESTATIONS || r.NOTE || ''),
-      devis: String(r.DEVIS || '').trim()
+      devis: String(r.DEVIS || '').trim(),
+      fiche: String(r.FICHE || '').trim() ? (String(r.FICHE_NOM || '').trim() || 'Fiche chantier') : ''
     };
   });
 }
@@ -4688,7 +4752,8 @@ function planningDe_(nom) {
       signalement: String(o.SIGNALEMENT || ''),
       note: String(o.NOTE || ''),
       nature: natureChantier_(o, parNature),
-      taches: taches
+      taches: taches,
+      fiche: String(o.FICHE || '').trim() ? (String(o.FICHE_NOM || '').trim() || 'Fiche chantier') : ''
     });
   }
   out.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
@@ -6885,8 +6950,17 @@ function devisPublic_(d) {
     lignes: lignes, ht: Number(x.TOTAL_HT) || 0, tva: Number(x.TOTAL_TVA) || 0, ttc: Number(x.TOTAL_TTC) || 0,
     mensuel: Number(x.TOTAL_HT_MENSUEL) || 0,
     signe: String(x.STATUT || '').toUpperCase() === 'SIGNE', signataire: String(x.SIGNATAIRE || ''),
-    refuse: String(x.STATUT || '').toUpperCase() === 'REFUSE'
+    refuse: String(x.STATUT || '').toUpperCase() === 'REFUSE',
+    /* v101 — un particulier qui signe à distance a 14 jours pour se
+       rétracter (Code de la consommation, L221-18). La page de signature le
+       lui dit, et lui demande s'il veut que l'intervention commence avant
+       (L221-25). */
+    particulier: String(x.TYPE_CLIENT || '').toUpperCase().indexOf('PART') === 0
   };
+  if (!res.signe && !res.refuse) {
+    tracerServeur_(String(x.COMMERCIAL || '') || 'CLIENT', 'DEVIS CONSULTE EN LIGNE',
+                   String(d.appareil || '').slice(0, 120), num, 'signature en ligne');
+  }
   /* Le PDF du devis, pour que le client lise exactement ce qu'il signe. */
   var id = idDrive_(x.LIEN_PDF);
   if (id && d.pdf) {
@@ -6910,10 +6984,27 @@ function signerDistance_(d) {
   if (!m || m[1].length < 800) return { ok: false, erreur: 'La signature est vide. Signez dans le cadre.' };
   if (m[1].length > 900000) return { ok: false, erreur: 'Signature trop lourde, recommencez.' };
 
+  var particulier = String(x.TYPE_CLIENT || '').toUpperCase().indexOf('PART') === 0;
+  var anticipe = !!(particulier && d.anticipe);
+  if (anticipe && !d.perteDroit) {
+    return { ok: false, erreur: 'Pour commencer avant 14 jours, cochez aussi la case sur la perte du droit de rétractation.' };
+  }
+
   var reg = lireReglages_();
   var quand = new Date();
   var commercial = String(x.COMMERCIAL || '');
   var numAvant = String(x.NUMERO).trim();
+
+  /* v101 — l'empreinte du devis signé : SHA-256 du PDF archivé, celui que la
+     page a montré au client. Elle prouve, plus tard, que le document n'a pas
+     changé depuis la signature (Code civil, art. 1366 : intégrité). */
+  var empreinte = '';
+  try {
+    var idPdf = idDrive_(x.LIEN_PDF);
+    if (idPdf) empreinte = hexDe_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,
+                                                          DriveApp.getFileById(idPdf).getBlob().getBytes()));
+  } catch (eH) {}
+  var finRetract = new Date(quand.getTime()); finRetract.setDate(finRetract.getDate() + 14);
   /* Le passage à SIGNE passe par le même chemin que le bouton « Signé » de
      l'appli : nouveau numéro, interventions créées, contrat, journal. */
   var r = enregistrerStatut_({ numero: numAvant, verdict: 'SIGNE', quand: quand.getTime(),
@@ -6945,10 +7036,25 @@ function signerDistance_(d) {
       (Number(x.TOTAL_HT_MENSUEL) ? '<br>dont ' + eur_(x.TOTAL_HT_MENSUEL) + ' HT par mois (forfait lissé sur 52 semaines)' : '') + '</p>' +
       '<h3>Bon pour accord</h3>' +
       '<p>Signé en ligne par <b>' + echHtml_(nom) + '</b> le ' +
-      Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM/yyyy à HH:mm') + ' (heure de Paris).</p>' +
+      Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM/yyyy à HH:mm:ss') + ' (heure de Paris).</p>' +
       '<img src="data:image/png;base64,' + m[1] + '" style="height:110px;border:1px solid #ccc">' +
-      '<p style="color:#555;font-size:10px">Signature électronique simple recueillie par lien personnel ' +
-      '(référence ' + echHtml_(String(d.t).slice(0, 8)) + '…), appareil : ' + echHtml_(String(d.appareil || '').slice(0, 160)) + '.</p>' +
+      (particulier ? '<h3>Droit de rétractation</h3><p>' + (anticipe
+        ? 'Le client a demandé expressément que l\'intervention commence avant la fin du délai de rétractation de 14 jours, ' +
+          'et a reconnu qu\'il perdra ce droit une fois la prestation entièrement exécutée (Code de la consommation, art. L221-25 et L221-28).'
+        : 'Le client n\'a pas demandé de commencement avant la fin du délai de rétractation : aucune intervention avant le ' +
+          Utilities.formatDate(finRetract, 'Europe/Paris', 'dd/MM/yyyy') + ' inclus.') + '</p>' : '') +
+      '<h3>Dossier de preuve</h3>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:10.5px" border="1" cellpadding="4">' +
+      '<tr><td>Procédé</td><td>Signature électronique simple (règlement eIDAS n° 910/2014, art. 25 ; Code civil, art. 1366-1367) : ' +
+        'lien personnel envoyé à l\'adresse du client, consultation du devis, nom et qualité saisis, case « Bon pour accord » cochée, signature tracée.</td></tr>' +
+      '<tr><td>Lien envoyé à</td><td>' + echHtml_(String(x.EMAIL || '—')) + '</td></tr>' +
+      '<tr><td>Référence du lien</td><td>' + echHtml_(String(d.t).slice(0, 12)) + '…</td></tr>' +
+      '<tr><td>Empreinte SHA-256 du devis PDF</td><td style="word-break:break-all">' + echHtml_(empreinte || 'PDF non archivé') + '</td></tr>' +
+      '<tr><td>Texte accepté</td><td>« Bon pour accord : j\'accepte ce devis et ses conditions, et je le signe électroniquement. »</td></tr>' +
+      '<tr><td>Appareil</td><td>' + echHtml_(String(d.appareil || '').slice(0, 200)) + '</td></tr>' +
+      '<tr><td>Horodatage</td><td>' + Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM/yyyy HH:mm:ss') +
+        ' (Europe/Paris) — consultation et envoi tracés au journal du classeur</td></tr>' +
+      '</table>' +
       '</body></html>';
     preuve = Utilities.newBlob(html, 'text/html', 'preuve.html').getAs('application/pdf')
       .setName('Devis ' + numeroFichier_(num) + ' - signé en ligne.pdf');
@@ -6956,18 +7062,35 @@ function signerDistance_(d) {
   } catch (eP) {
     tracerServeur_('SYSTEME', 'PREUVE SIGNATURE ECHEC', String(eP && eP.message || eP).slice(0, 200), num, '');
   }
-  majDevis_(num, { SIGNATAIRE: nom, PREUVE_SIGNATURE: lien || 'signé en ligne le ' +
-                   Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM/yyyy HH:mm') });
-  tracerServeur_(commercial || 'CLIENT', 'DEVIS SIGNE EN LIGNE', nom + ' · ' + String(d.appareil || '').slice(0, 80), num, 'signature en ligne');
+  var maj = { SIGNATAIRE: nom, PREUVE_SIGNATURE: lien || 'signé en ligne le ' +
+                   Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM/yyyy HH:mm') };
+  /* Pas de demande de commencer plus tôt : les créneaux proposés au gérant
+     partent du lendemain du délai de rétractation. */
+  if (particulier && !anticipe) {
+    var apres = new Date(finRetract.getTime()); apres.setDate(apres.getDate() + 1); apres.setHours(12, 0, 0, 0);
+    if (!(x.DATE_SOUHAITEE instanceof Date) || x.DATE_SOUHAITEE < apres) maj.DATE_SOUHAITEE = apres;
+  }
+  majDevis_(num, maj);
+  tracerServeur_(commercial || 'CLIENT', 'DEVIS SIGNE EN LIGNE', nom + ' · SHA-256 ' + (empreinte || '—').slice(0, 16) +
+                 (particulier ? (anticipe ? ' · commencement anticipé demandé' : ' · pas avant le ' +
+                   Utilities.formatDate(finRetract, 'Europe/Paris', 'dd/MM')) : '') +
+                 ' · ' + String(d.appareil || '').slice(0, 80), num, 'signature en ligne');
 
   /* Le client reçoit sa copie ; le gérant et le commercial sont prévenus. */
   try {
     var pj = preuve ? [preuve] : [];
+    /* Le client garde aussi le devis lui-même (avec ses conditions et, pour un
+       particulier, le formulaire de rétractation) : c'est son support durable. */
+    try { var idP = idDrive_(x.LIEN_PDF); if (idP) pj = pj.concat([DriveApp.getFileById(idP).getBlob()]); } catch (ePj) {}
     if (String(x.EMAIL || '').trim()) {
       envoyerMail_({ to: String(x.EMAIL).trim(), subject: 'Devis ' + num + ' signé — ' + (reg.societe_nom || ''),
                      name: String(reg.societe_nom || 'Devis'), replyTo: String(reg.societe_email || ''),
                      htmlBody: '<p>Bonjour,</p><p>Merci ! Votre signature du devis ' + echHtml_(num) +
-                       ' est bien enregistrée. Vous en trouverez la copie en pièce jointe.</p>' +
+                       ' est bien enregistrée. Vous trouverez en pièces jointes le devis et la preuve de signature.</p>' +
+                       (particulier ? '<p>' + (anticipe
+                         ? 'Vous avez demandé que l\'intervention commence avant la fin de votre délai de rétractation de 14 jours.'
+                         : 'Vous disposez de 14 jours, jusqu\'au ' + Utilities.formatDate(finRetract, 'Europe/Paris', 'dd/MM/yyyy') +
+                           ', pour vous rétracter avec le formulaire joint au devis. Nous n\'interviendrons pas avant.') + '</p>' : '') +
                        '<p>Nous revenons vers vous très vite pour fixer la date d\'intervention.</p>' +
                        '<p>' + echHtml_(reg.societe_nom || '') + '</p>', attachments: pj }, reg);
     }
@@ -6978,6 +7101,10 @@ function signerDistance_(d) {
                    htmlBody: '<p>' + echHtml_(x.CLIENT) + ' a signé le devis ' + echHtml_(num) + ' en ligne (' +
                      echHtml_(nom) + ', ' + Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM HH:mm') + ').</p>' +
                      '<p>Montant : ' + eur_(x.TOTAL_HT) + ' HT. Les interventions sont dans le bac « à placer » du Planning.</p>' +
+                     (particulier && !anticipe ? '<p><b>Particulier : pas d\'intervention avant le ' +
+                       Utilities.formatDate(new Date(finRetract.getTime() + 86400000), 'Europe/Paris', 'dd/MM/yyyy') +
+                       '</b> (délai de rétractation, il n\'a pas demandé de commencer plus tôt).</p>' : '') +
+                     (particulier && anticipe ? '<p>Particulier : il a demandé un commencement avant la fin du délai de rétractation.</p>' : '') +
                      (lien ? '<p><a href="' + lien + '">Preuve de signature (PDF)</a></p>' : ''), attachments: pj }, reg);
   } catch (eM) {
     tracerServeur_('SYSTEME', 'MAIL RATE', 'signature en ligne ' + num + ' — ' + String(eM && eM.message || eM), num, '');
@@ -9747,4 +9874,133 @@ function facturesDuMois_(d, com) {
                  '', d.appareil || '');
   return { ok: true, periode: periode, periodeNom: moisLisible_(periode),
            faits: faits, sautes: sautes, echecs: echecs };
+}
+
+/* ====================== LA FICHE CHANTIER JOINTE (v101) ======================
+   Demande de Simon, 8 novembre 2026 : « quand je crée ou modifie une
+   intervention, je dois pouvoir rajouter une fiche chantier en pièce jointe,
+   pour que quand les prestataires cliquent sur l'intervention sur le planning
+   ou là où ils pointent, ils voient aussi la fiche avec les instructions ».
+
+   Le fichier (PDF ou photo, 10 Mo au plus) est rangé dans le Drive du gérant,
+   DEVIS NETTOYAGE / FICHES CHANTIER. Il n'est jamais partagé par lien : le
+   salarié le reçoit par l'appli (ficheLire), et seulement pour une
+   intervention à son nom. Joint à un contrat (R-…), il vaut pour tous ses
+   passages à venir, et la génération de la nuit le recopie sur les suivants.
+   Un fichier remplacé n'est pas supprimé : les passages déjà faits gardent
+   celle qu'ils avaient. */
+var FICHE_MAX_ = 10 * 1024 * 1024;
+var FICHE_TYPES_ = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/gif'];
+
+/** Ajoute une colonne qui manque, sans relancer toute la mise à jour. */
+function colonneAssuree_(nomOnglet, h) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(nomOnglet);
+  if (!sh) return null;
+  var en = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0]
+    .map(function (x) { return String(x).trim(); });
+  if (en.indexOf(h) < 0) {
+    sh.getRange(1, sh.getLastColumn() + 1).setValue(h)
+      .setFontWeight('bold').setBackground('#1f2937').setFontColor('#ffffff');
+  }
+  return sh;
+}
+
+function dossierFiches_() {
+  return sousDossier_(racineDevis_(lireReglages_()), 'FICHES CHANTIER');
+}
+
+/** Les passages d'un contrat qui prennent la fiche : à venir, ou sans date, pas encore faits. */
+function passagesAVenir_(id) {
+  var auj = minuit_(new Date()), out = [];
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    if (String(o.RECURRENT || '').split('|')[0] !== id) return;
+    var st = String(o.STATUT || '').toUpperCase().trim();
+    if (st === 'FAIT' || st === 'ANNULE') return;
+    if (o.DATE) { var d = minuit_(o.DATE); if (!isNaN(d.getTime()) && d < auj) return; }
+    out.push(String(o.ID).trim());
+  });
+  return out;
+}
+
+function chantierParId_(id) {
+  var t = null;
+  objetsDe_(SH.CHANTIERS).forEach(function (o) { if (String(o.ID || '').trim() === id) t = o; });
+  return t;
+}
+
+function joindreFiche_(d, com) {
+  var cible = String(d.id || '').trim();
+  if (!cible) return { ok: false, erreur: 'intervention ou contrat manquant' };
+  var type = String(d.type || '').toLowerCase().trim();
+  if (FICHE_TYPES_.indexOf(type) < 0) return { ok: false, erreur: 'la fiche doit être un PDF ou une photo' };
+  var data = String(d.data || '');
+  if (!data) return { ok: false, erreur: 'fichier vide' };
+  var octets;
+  try { octets = Utilities.base64Decode(data); } catch (e) { return { ok: false, erreur: 'fichier illisible' }; }
+  if (!octets || !octets.length) return { ok: false, erreur: 'fichier vide' };
+  if (octets.length > FICHE_MAX_) return { ok: false, erreur: 'fichier trop lourd (10 Mo au plus)' };
+
+  var serie = /^R-/i.test(cible), L = null, ch = null;
+  if (serie) { L = ligneSerie_(cible); if (!L) return { ok: false, erreur: 'contrat introuvable' }; }
+  else { ch = chantierParId_(cible); if (!ch) return { ok: false, erreur: 'intervention introuvable' }; }
+
+  colonneAssuree_(SH.CHANTIERS, 'FICHE'); colonneAssuree_(SH.CHANTIERS, 'FICHE_NOM');
+  if (serie) { colonneAssuree_(SH.RECURRENTS, 'FICHE'); colonneAssuree_(SH.RECURRENTS, 'FICHE_NOM'); L = ligneSerie_(cible); }
+
+  /* « nom » est celui de la personne connectée : le nom du fichier arrive à part. */
+  var nomOrig = String(d.fichierNom || '').replace(/[\\\/:*?"<>|\r\n]+/g, ' ').trim().slice(0, 80) ||
+    (type === 'application/pdf' ? 'fiche.pdf' : 'fiche.jpg');
+  var client = serie ? String(L.o.CLIENT || '') : String(ch.CLIENT || '');
+  var nomDrive = 'Fiche-' + cible + '-' + sansAccent_(client).replace(/[^A-Z0-9]+/gi, '-').slice(0, 40) + '-' + nomOrig;
+  var f = dossierFiches_().createFile(Utilities.newBlob(octets, type, nomDrive));
+  var url = f.getUrl();
+
+  var ids = serie ? passagesAVenir_(cible) : [cible];
+  if (serie) { ecrireCase_(L, 'FICHE', url); ecrireCase_(L, 'FICHE_NOM', nomOrig); }
+  ids.forEach(function (id) { majChantier_(id, { FICHE: url, FICHE_NOM: nomOrig }); });
+  tracerServeur_(com ? com.nom : '', 'FICHE CHANTIER JOINTE',
+                 cible + ' · ' + nomOrig + ' · ' + ids.length + ' intervention(s)', '', d.appareil || '');
+  return { ok: true, nom: nomOrig, interventions: ids.length };
+}
+
+function retirerFiche_(d, com) {
+  var cible = String(d.id || '').trim();
+  var serie = /^R-/i.test(cible), ids;
+  if (serie) {
+    var L = ligneSerie_(cible);
+    if (!L) return { ok: false, erreur: 'contrat introuvable' };
+    ecrireCase_(L, 'FICHE', ''); ecrireCase_(L, 'FICHE_NOM', '');
+    ids = passagesAVenir_(cible);
+  } else {
+    if (!chantierParId_(cible)) return { ok: false, erreur: 'intervention introuvable' };
+    ids = [cible];
+  }
+  ids.forEach(function (id) { majChantier_(id, { FICHE: '', FICHE_NOM: '' }); });
+  tracerServeur_(com ? com.nom : '', 'FICHE CHANTIER RETIREE', cible, '', d.appareil || '');
+  return { ok: true, interventions: ids.length };
+}
+
+/** Le salarié lit la fiche d'une intervention à son nom ; le gérant, toutes. */
+function lireFiche_(d, com) {
+  var cible = String(d.id || '').trim();
+  var o = /^R-/i.test(cible) ? (ligneSerie_(cible) || {}).o : chantierParId_(cible);
+  if (!o) return { ok: false, erreur: 'intervention introuvable' };
+  if (com.role !== 'ADMIN' && !quiContient_(o.PRESTATAIRE, com.nom)) {
+    tracerServeur_(com.nom, 'ACTION REFUSEE', 'ficheLire ' + cible, '', d.appareil || '');
+    return { ok: false, erreur: 'cette intervention n\'est pas à ton nom' };
+  }
+  var id = idDrive_(o.FICHE);
+  if (!id) return { ok: false, erreur: 'pas de fiche jointe' };
+  try {
+    var f = DriveApp.getFileById(id);
+    return { ok: true, data: Utilities.base64Encode(f.getBlob().getBytes()), type: f.getMimeType(),
+             nom: String(o.FICHE_NOM || '') || f.getName() };
+  } catch (e) {
+    return { ok: false, erreur: 'la fiche n\'a pas pu être lue sur le Drive' };
+  }
+}
+
+/** Octets signés d'Apps Script → hexadécimal (empreintes). */
+function hexDe_(octets) {
+  return (octets || []).map(function (b) { var v = (b < 0 ? b + 256 : b).toString(16); return v.length < 2 ? '0' + v : v; }).join('');
 }

@@ -697,7 +697,7 @@
   .factTitre{font-size:15px;margin:18px 2px 6px;color:var(--txt,inherit)}
   /* v100 — les cinq onglets du tableau */
   .adOngs{gap:4px;flex-wrap:nowrap}
-  .adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ctDevisRes{display:flex;flex-direction:column;gap:6px;margin-top:6px}.ctDevisLigne{text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line,#334);background:transparent;color:inherit;font-size:14px;cursor:pointer}.ctDevisLigne:active{opacity:.7}.ctDevisChoisi{display:flex;gap:8px;align-items:center;justify-content:space-between}.calFer{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(220,38,38,.07) 6px 12px)}.calFerL{display:inline-block;font-size:10px;font-weight:600;color:var(--danger);margin-left:4px;vertical-align:middle}.semFer{display:block;font-size:10px;font-style:normal;color:var(--danger);font-weight:600}.adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
   <!-- Les notifications. Le SDK vit chez OneSignal : sans réseau il ne se
        charge pas, et l'application s'en passe — le reste fonctionne hors
@@ -1025,9 +1025,10 @@
       <input id="fSignataire" placeholder="Nom et qualité">
       <div class="mini">S'imprime sous le cadre de signature du devis.</div>
       <div id="sigVide">
-        <div class="mini" style="margin:12px 0 8px">Le devis se signe sur le papier imprimé.
-          Si le client préfère signer à l'écran :</div>
+        <div class="mini" style="margin:12px 0 8px">Le client signe sur place, à l'écran — ou il reçoit le devis
+          par e-mail et le signe à distance, depuis son téléphone ou son ordinateur :</div>
         <button class="btn sec" onclick="ouvrirSignature()">Signature à l'écran</button>
+        <button class="btn sec" style="margin-top:8px" onclick="choisirSignatureDistance()">✉️ Envoyer pour signature à distance</button>
       </div>
       <div id="sigFaite" class="hide">
         <img id="sigApercu" alt="Signature du client"
@@ -1047,7 +1048,7 @@
     <div class="card">
       <label style="display:flex;gap:10px;align-items:center;margin:0">
         <input type="checkbox" id="fEnvoi" style="width:20px;height:20px;flex:none" onchange="majMailClient()">
-        <span style="color:var(--txt);font-size:15px">Envoyer le devis au client par e-mail</span>
+        <span style="color:var(--txt);font-size:15px">Envoyer le devis au client par e-mail, pour signature à distance</span>
       </label>
       <div class="mini">Pour qu'il le lise et le signe à distance. Part au retour du réseau si tu es hors connexion.</div>
       <div id="blocMail" class="hide">
@@ -1512,6 +1513,7 @@
       <button class="btn sec sm" style="margin-top:10px" onclick="itineraire()">Itinéraire</button>
 
       <div id="agAcces" class="tvaInfo hide" style="margin-top:14px"></div>
+      <div id="agFiche" class="hide" style="margin-top:14px"></div>
     </div>
 
     <!-- Le pointage. Gros boutons : ça se touche avec des gants, dehors. -->
@@ -1612,11 +1614,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=100"></script>
-<script src="jspdf.umd.min.js?v=100"></script>
-<script src="police.js?v=100"></script>
-<script src="logo.js?v=100"></script>
-<script src="pdf.js?v=100"></script>
-<script src="app.js?v=100"></script>
+<script src="config.js?v=101"></script>
+<script src="jspdf.umd.min.js?v=101"></script>
+<script src="police.js?v=101"></script>
+<script src="logo.js?v=101"></script>
+<script src="pdf.js?v=101"></script>
+<script src="app.js?v=101"></script>
 </body>
 </html>

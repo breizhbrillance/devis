@@ -359,7 +359,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v100';
+var VERSION_APP = 'v101';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4729,7 +4729,8 @@ function semaineHtml(chantiers, surClic, glisser){
          (liste.length ? '' : ' semVide') + '"' +
          (glisser ? ' data-jour="' + ech(j) + '"' : '') + '>' +
          '<div class="semTete"><b>' + SEM_JOURS[i].slice(0,3) + '</b>' +
-         '<span>' + d.getDate() + '</span></div>';
+         '<span>' + d.getDate() + '</span>' +
+         (nomFerie(j) ? '<em class="semFer">Férié · ' + ech(nomFerie(j)) + '</em>' : '') + '</div>';
     if(!liste.length){
       h += '<div class="semRien">—</div>';
     } else {
@@ -4910,7 +4911,9 @@ function aPlacerHtml(t){
         'onclick="ficheChantier(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\')">' +
         '<b>' + ech(c.client || 'Intervention') + '</b>' + (c.ville ? ' · ' + ech(c.ville) : '') +
         '<span class="mini" style="display:block">' +
-        (c.date ? jourLisible(String(c.date).slice(0,10)) + ' · personne' : 'sans date') +
+        (c.date ? jourLisible(String(c.date).slice(0,10)) + ' · personne'
+                : (c.ferie && c.ferie.nom ? 'férié (' + ech(c.ferie.nom) + ', ' + ech(jourLisible(c.ferie.date)) + ') · à replacer'
+                                          : 'sans date')) +
         (c.numero ? ' · devis ' + ech(c.numero) : '') + '</span></button>';
     }).join('') + '</div>';
 }
@@ -4978,6 +4981,33 @@ function chantiersDuCalendrier(t){
   });
 }
 
+/* v101 — les jours fériés de métropole, calculés ici comme au classeur
+   (Pâques par Meeus) : le planning les montre, et « À placer » dit quand un
+   passage y a été mis parce qu'il tombait un férié. */
+var FERIES_CACHE = {};
+function feriesAn(an){
+  if(FERIES_CACHE[an]) return FERIES_CACHE[an];
+  var a = an % 19, b = Math.floor(an / 100), c = an % 100;
+  var d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  var g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  var i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  var m = Math.floor((a + 11 * h + 22 * l) / 451);
+  var mois = Math.floor((h + l - 7 * m + 114) / 31), jour = ((h + l - 7 * m + 114) % 31) + 1;
+  var t = {};
+  var fixe = function(mm, jj, nom){ t[isoJour(new Date(an, mm - 1, jj, 12))] = nom; };
+  var mobile = function(dec, nom){ var x = new Date(an, mois - 1, jour, 12); x.setDate(x.getDate() + dec); t[isoJour(x)] = nom; };
+  fixe(1, 1, 'Jour de l\'an'); mobile(1, 'Lundi de Pâques'); fixe(5, 1, 'Fête du travail');
+  fixe(5, 8, 'Victoire 1945'); mobile(39, 'Ascension'); mobile(50, 'Lundi de Pentecôte');
+  fixe(7, 14, 'Fête nationale'); fixe(8, 15, 'Assomption'); fixe(11, 1, 'Toussaint');
+  fixe(11, 11, 'Armistice 1918'); fixe(12, 25, 'Noël');
+  return (FERIES_CACHE[an] = t);
+}
+function nomFerie(iso){
+  iso = String(iso || '').slice(0, 10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+  return feriesAn(Number(iso.slice(0, 4)))[iso] || '';
+}
+
 function moisHtml(chantiers, avecBac){
   var p = moisVu(), auj = isoJour();
   var premier = p + '-01';
@@ -5017,10 +5047,13 @@ function moisHtml(chantiers, avecBac){
     if(i % 7 === 0 && i >= 28 && iso > dernier) break;   // la sixième semaine n'existe pas toujours
     var dehors = iso.slice(0,7) !== p;
     var l = par[iso] || [];
+    var fer = nomFerie(iso);
     h += '<div class="calJ' + (dehors ? ' calHors' : '') + (iso === auj ? ' calAuj' : '') +
+         (fer ? ' calFer' : '') +
          (iso === CAL_JOUR ? ' calOn' : '') + '" data-jour="' + iso + '" role="button" tabindex="0" ' +
-         'aria-label="' + ech(jourLisible(iso)) + ', ' + l.length + ' chantier' + (l.length > 1 ? 's' : '') + '" ' +
-         'onclick="calChoisir(\'' + iso + '\')"><b class="calN">' + d.getDate() + '</b>';
+         'aria-label="' + ech(jourLisible(iso)) + (fer ? ', férié' : '') + ', ' + l.length + ' chantier' + (l.length > 1 ? 's' : '') + '" ' +
+         'onclick="calChoisir(\'' + iso + '\')"><b class="calN">' + d.getDate() + '</b>' +
+         (fer ? '<span class="calFerL" title="' + ech(fer) + '">Férié</span>' : '');
     l.slice(0, CAL_PAR_CASE).forEach(function(c){
       var n = natureVue(c.nature);
       h += '<span class="calEv" data-ch="' + ech(String(c.id)) + '"' +
@@ -5063,7 +5096,8 @@ function bacAPlacer(chantiers){
 function journeeHtml(iso, l){
   var h = '<div class="card calJourne" id="calJourne" data-jour="' + iso + '">' +
     '<div style="display:flex;align-items:baseline;gap:8px">' +
-    '<b style="flex:1;font-size:16px">' + ech(jourLisible(iso)) + '</b>' +
+    '<b style="flex:1;font-size:16px">' + ech(jourLisible(iso)) +
+      (nomFerie(iso) ? ' <span class="calFerL">Férié · ' + ech(nomFerie(iso)) + '</span>' : '') + '</b>' +
     '<span class="mini">' + (l.length ? l.length + ' chantier' + (l.length > 1 ? 's' : '') : 'rien de prévu') +
     '</span></div>' +
     '<div class="row" style="gap:8px;margin-top:10px">' +
@@ -6391,6 +6425,7 @@ function peindreFicheChantier(c, neuf){
           'chantier ordinaire ; un refus ne l\'enlèvera pas tout seul.</div>' : '') +
       '</div>') +
     (neuf ? '' : blocContratFiche(c)) +
+    (neuf ? '' : blocFicheChantier(c)) +
 
     '<div class="card">' +
       '<h2>' + (neuf ? 'Le nouveau chantier' : 'Le chantier') + '</h2>' +
@@ -6690,7 +6725,6 @@ function lireContrat(){
   var h = v('ct_heure'); if(h !== undefined) CT.heure = h;
   var f = v('ct_fin'); if(f !== undefined) CT.fin = f;
   var j = v('ct_jusqua'); if(j !== undefined) CT.jusquA = j;
-  var dl = v('ct_devis'); if(dl !== undefined) CT.devisLie = dl;
 }
 
 /* v99 — « toutes les interventions doivent être reliées à un devis, et par
@@ -6717,6 +6751,80 @@ function optionsDevisLie(c){
         ech((x.proche ? '★ ' : '') + (d.client || '') + ' · ' + d.numero + ' · ' + eur(d.ht) + ' HT' +
             (String(d.statut||'').toUpperCase() === 'SIGNE' ? ' · signé' : '')) + '</option>';
     }).join('');
+}
+
+/* v101 — « quand je cherche un devis lié je ne sélectionne pas, juste en
+   tapant les premières lettres je trouve ». Un champ de recherche : chaque
+   lettre tapée filtre les devis (client, numéro, ville), sans repeindre le
+   formulaire — le clavier reste ouvert. Un appui sur un résultat le choisit ;
+   si le client n'est pas encore écrit, la fiche reprend celui du devis et son
+   adresse. */
+function devisCherches(q, c){
+  var mots = sansAccents(String(q || '')).toLowerCase().split(/\s+/).filter(Boolean);
+  var cl = sansAccents(String((c && c.client) || '')).toLowerCase().trim();
+  var l = ((TABLEAU||{}).devis||[]).filter(function(d){
+    if(String(d.statut || '').toUpperCase() === 'REFUSE') return false;
+    if(!mots.length) return cl.length >= 3 && sansAccents(String(d.client||'')).toLowerCase().indexOf(cl) >= 0;
+    var h = sansAccents([d.client, d.numero, d.ville, d.adresse].join(' ')).toLowerCase();
+    var mh = h.split(/[\s,·\-—'’]+/);
+    return mots.every(function(m){
+      return mh.some(function(x){ return x.indexOf(m) === 0; }) || h.indexOf(m) >= 0;
+    });
+  });
+  l.sort(function(a, b){
+    var sa = String(a.statut||'').toUpperCase() === 'SIGNE' ? 1 : 0;
+    var sb = String(b.statut||'').toUpperCase() === 'SIGNE' ? 1 : 0;
+    if(sa !== sb) return sb - sa;
+    return String(b.date || '') < String(a.date || '') ? -1 : 1;
+  });
+  return l.slice(0, 8);
+}
+function sansAccents(s){
+  return String(s || '').normalize ? String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '') : String(s || '');
+}
+function ligneDevisLie(d){
+  return ech((d.client || '') + ' · ' + d.numero + ' · ' + eur(d.ht) + ' HT' +
+    (d.ville ? ' · ' + d.ville : '') +
+    (String(d.statut||'').toUpperCase() === 'SIGNE' ? ' · signé' : ''));
+}
+function blocDevisLie(c){
+  if(c.devisLie){
+    var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === c.devisLie; })[0];
+    return '<div class="ctDevisChoisi"><b>' + (d ? ligneDevisLie(d) : ech(c.devisLie)) + '</b>' +
+      '<button type="button" class="btn sec sm" style="width:auto" onclick="choisirDevisLie(\'\')">Changer</button></div>';
+  }
+  return '<input id="ct_devisQ" type="search" autocomplete="off" placeholder="Tape les premières lettres du client ou le n° du devis"' +
+    ' value="' + ech(c.devisQ || '') + '" oninput="chercherDevisLie(this.value)">' +
+    '<div id="ct_devisRes" class="ctDevisRes">' + resultatsDevisLie(c.devisQ || '', c) + '</div>';
+}
+function resultatsDevisLie(q, c){
+  var l = devisCherches(q, c);
+  if(!l.length) return String(q || '').trim()
+    ? '<div class="mini">Aucun devis ne correspond.</div>' : '';
+  return l.map(function(d){
+    return '<button type="button" class="ctDevisLigne" onclick="choisirDevisLie(\'' + ech(d.numero) + '\')">' +
+      ligneDevisLie(d) + '</button>';
+  }).join('');
+}
+function chercherDevisLie(q){
+  if(!CT) return;
+  CT.devisQ = q;
+  var r = $('ct_devisRes'); if(r) r.innerHTML = resultatsDevisLie(q, CT);
+}
+function choisirDevisLie(num){
+  lireContrat();
+  CT.devisLie = num || '';
+  CT.devisQ = '';
+  if(num){
+    var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === num; })[0];
+    if(d){
+      if(!String(CT.client||'').trim()) CT.client = d.client || '';
+      if(!String(CT.adresse||'').trim()) CT.adresse = d.adresse || '';
+      if(!String(CT.cp||'').trim()) CT.cp = d.cp || '';
+      if(!String(CT.ville||'').trim()) CT.ville = d.ville || '';
+    }
+  }
+  peindreContrat();
 }
 
 function ctPoser(k, val){ lireContrat(); CT[k] = val; peindreContrat(); }
@@ -6857,8 +6965,7 @@ function peindreContrat(){
   '</div>' +
 
   (c.mode === 'neuf' && !c.devis
-    ? '<div class="card"><label for="ct_devis">Devis lié</label>' +
-      '<select id="ct_devis" onchange="lireContrat();peindreContrat()">' + optionsDevisLie(c) + '</select>' +
+    ? '<div class="card"><label for="ct_devisQ">Devis lié</label>' + blocDevisLie(c) +
       '<div class="mini">' + (c.devisLie
         ? 'L\'intervention sera facturée au prix de ce devis.'
         : '<span style="color:var(--warn)">Sans devis, la facture reprendra le prix écrit dans la description ' +
@@ -6874,6 +6981,7 @@ function peindreContrat(){
     '<label for="ct_note">Description</label>' +
     '<textarea id="ct_note" rows="3" placeholder="Ce que le salarié verra en arrivant">' + ech(c.note) + '</textarea>' +
   '</div>' +
+  blocFicheForm(c) +
 
   '<button class="btn" id="bCtEnr" onclick="enregistrerContrat(this)">Enregistrer</button>' +
   (c.mode === 'modif'
@@ -6922,7 +7030,7 @@ function enregistrerContrat(btn){
     return posterChantierNeuf({ client:c.client.trim(), adresse:c.adresse, cp:c.cp, ville:c.ville,
       acces:c.acces, note:c.note, nature:c.nature, date:c.date,
       heure:c.journee ? '' : c.heure, duree: d0 > 0 ? d0 : '', prestataire:c.prestataire,
-      devis: c.devisLie || '' }, btn);
+      devis: c.devisLie || '' }, btn, c.fichier);
   }
 
   var moi = session();
@@ -6936,6 +7044,7 @@ function enregistrerContrat(btn){
     if(btn) libere(btn);
     if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
     tracer(c.mode === 'modif' ? 'CONTRAT MODIFIE' : 'CONTRAT CREE', env.client, (r.ids||[]).join(','));
+    if(c.fichier && (r.ids||[]).length) envoyerFicheApres(r.ids, c.fichier);
     AD_MOT_T = 0;
     AD_MOT = (c.mode === 'modif' ? 'Contrat modifié' : 'Contrat créé') +
       ((r.ids||[]).length ? ' (' + r.ids.join(', ') + ')' : '') +
@@ -6948,7 +7057,7 @@ function enregistrerContrat(btn){
   }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
 }
 
-function posterChantierNeuf(c, btn){
+function posterChantierNeuf(c, btn, fichier){
   var moi = session();
   erreur('');
   if(btn) occuper(btn, 'Création…');
@@ -6958,6 +7067,7 @@ function posterChantierNeuf(c, btn){
     if(btn) libere(btn);
     if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
     tracer('CHANTIER CREE', c.client + ' ' + (c.date||'sans date'), r.id || '');
+    if(fichier && r.id) envoyerFicheApres([r.id], fichier);
     AD_MOT_T = 0; AD_MOT = 'Chantier créé';
     CT = null;
     retourTableau();
@@ -7471,6 +7581,13 @@ function peindreChantier(){
   $('agAdresse').innerHTML = ech(c.adresse || '') +
     ((c.cp || c.ville) ? '<br>' + ech((c.cp||'') + ' ' + (c.ville||'')) : '');
 
+  var fz = $('agFiche');
+  if(fz){
+    fz.classList.toggle('hide', !c.fiche);
+    fz.innerHTML = c.fiche ? '<button class="btn" onclick="voirFicheJointe(\'' + ech(String(c.id)).replace(/'/g,'&#39;') +
+      '\', this)">📎 Voir la fiche d\'intervention</button>' +
+      '<div class="mini" style="margin-top:4px">' + ech(c.fiche) + ' · les instructions du bureau pour ce chantier</div>' : '';
+  }
   var acc = $('agAcces');
   if(String(c.acces || '').trim()){
     acc.classList.remove('hide');
@@ -8910,4 +9027,163 @@ function dateCourte(iso){
   var d = new Date(iso);
   if(isNaN(d.getTime())) return '';
   return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+d.getFullYear();
+}
+
+/* ====================== LA FICHE CHANTIER JOINTE (v101) ======================
+   « Quand je crée ou modifie une intervention, je dois pouvoir rajouter une
+   fiche chantier en pièce jointe, pour que les prestataires la voient quand
+   ils cliquent sur l'intervention sur le planning ou là où ils pointent. »
+   PDF ou photo. La photo est réduite avant l'envoi (2000 px, JPEG) : celle
+   d'un téléphone pèse souvent 5 Mo, ce qui ferait attendre sur le réseau
+   d'un chantier. Le salarié la lit par l'appli, jamais par un lien. */
+var FICHE_MAX = 10 * 1024 * 1024;
+function lireFichierFiche(f){
+  return new Promise(function(res, rej){
+    if(!f) return rej(new Error('aucun fichier'));
+    var pdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    var image = /^image\//.test(f.type);
+    if(!pdf && !image) return rej(new Error('Choisis un PDF ou une photo.'));
+    var fin = function(data, type){
+      if(data.length * 0.75 > FICHE_MAX) return rej(new Error('Fichier trop lourd (10 Mo au plus).'));
+      res({ nom: f.name || (pdf ? 'fiche.pdf' : 'fiche.jpg'), type: type, data: data });
+    };
+    var r = new FileReader();
+    r.onerror = function(){ rej(new Error('Le fichier n\'a pas pu être lu.')); };
+    r.onload = function(){
+      var url = String(r.result || ''), brut = url.split(',')[1] || '';
+      if(pdf) return fin(brut, 'application/pdf');
+      var img = new Image();
+      img.onload = function(){
+        try{
+          var k = Math.min(1, 2000 / Math.max(img.width, img.height));
+          var cv = document.createElement('canvas');
+          cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          fin(cv.toDataURL('image/jpeg', 0.82).split(',')[1], 'image/jpeg');
+        }catch(e){ fin(brut, f.type || 'image/jpeg'); }
+      };
+      img.onerror = function(){ fin(brut, f.type || 'image/jpeg'); };
+      img.src = url;
+    };
+    r.readAsDataURL(f);
+  });
+}
+
+/* Dans le formulaire « + Intervention » : le fichier est gardé en mémoire et
+   part juste après la création (il faut le numéro de l'intervention). */
+function blocFicheForm(c){
+  var deja = c.mode === 'modif' ? ((contratDe(c.id + '|') || {}).fiche || '') : '';
+  return '<div class="card"><label>Fiche chantier <span class="mini">(PDF ou photo, facultatif)</span></label>' +
+    (c.fichier
+      ? '<div class="ctDevisChoisi"><b>📎 ' + ech(c.fichier.nom) + '</b>' +
+        '<button type="button" class="btn sec sm" style="width:auto" onclick="ctFicheOter()">Retirer</button></div>'
+      : (deja ? '<div class="mini">Fiche actuelle : ' + ech(deja) + '. Choisis un fichier pour la remplacer.</div>' : '') +
+        '<input id="ct_fiche" type="file" accept="application/pdf,image/*" onchange="ctFicheChoisie(this)">') +
+    '<div class="mini">Le salarié la verra en ouvrant l\'intervention, avec les instructions.</div></div>';
+}
+function ctFicheChoisie(inp){
+  var f = inp && inp.files && inp.files[0];
+  if(!f || !CT) return;
+  lireContrat();
+  lireFichierFiche(f).then(function(x){ CT.fichier = x; peindreContrat(); },
+                           function(e){ erreur(String(e && e.message || e)); inp.value = ''; });
+}
+function ctFicheOter(){ lireContrat(); if(CT) CT.fichier = null; peindreContrat(); }
+
+function envoyerFicheApres(ids, fichier){
+  var moi = session();
+  (ids || []).reduce(function(p, id){
+    return p.then(function(){
+      return poster({action:'ficheJointe', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:id,
+                     fichierNom:fichier.nom, type:fichier.type, data:fichier.data}, 90000)
+        .then(function(r){
+          if(!r || !r.ok){ AD_MOT_T = 0; AD_MOT = 'Fiche non jointe : ' + ((r && r.erreur) || attenteLisible()); }
+        });
+    });
+  }, Promise.resolve()).then(function(){ chargerTableau(); }, function(){ chargerTableau(); });
+}
+
+/* Sur la fiche d'un passage, dans le tableau du gérant : joindre, voir,
+   remplacer, retirer — tout de suite, sans attendre « Enregistrer ». */
+function blocFicheChantier(c){
+  var id = ech(String(c.id)).replace(/'/g,'&#39;');
+  return '<div class="card" id="adFicheJ"><b>Fiche chantier</b>' +
+    (c.fiche
+      ? '<div class="mini" style="margin:4px 0 8px">📎 ' + ech(c.fiche) + (c.recurrent ? ' · celle du contrat' : '') + '</div>' +
+        '<div class="row" style="gap:8px;flex-wrap:wrap">' +
+        '<button class="btn sec sm" style="flex:1" onclick="voirFicheJointe(\'' + id + '\', this)">Voir</button>' +
+        '<label class="btn sec sm" style="flex:1;text-align:center">Remplacer' +
+          '<input type="file" accept="application/pdf,image/*" class="hide" onchange="joindreFicheAd(\'' + id + '\', this)"></label>' +
+        '<button class="btn sec sm" style="flex:1" onclick="retirerFicheAd(\'' + id + '\', this)">Retirer</button></div>'
+      : '<div class="mini" style="margin:4px 0 8px">Aucune. Le salarié la verrait en ouvrant l\'intervention.</div>' +
+        '<label class="btn sec sm" style="display:block;text-align:center">📎 Joindre une fiche (PDF ou photo)' +
+          '<input type="file" accept="application/pdf,image/*" class="hide" onchange="joindreFicheAd(\'' + id + '\', this)"></label>') +
+    (c.recurrent ? '<div class="mini" style="margin-top:6px">Pour tous les passages du contrat, joins-la depuis « Modifier le contrat ».</div>' : '') +
+    '<div class="mini" id="adFicheEtat"></div></div>';
+}
+function joindreFicheAd(id, inp){
+  var f = inp && inp.files && inp.files[0];
+  if(!f) return;
+  var z = $('adFicheEtat');
+  if(z) z.textContent = 'Envoi de la fiche…';
+  lireFichierFiche(f).then(function(x){
+    var moi = session();
+    return poster({action:'ficheJointe', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:id,
+                   fichierNom:x.nom, type:x.type, data:x.data}, 90000);
+  }).then(function(r){
+    if(!r || !r.ok){ if(z) z.textContent = (r && r.erreur) ? String(r.erreur) : attenteLisible(); return; }
+    var c = ((TABLEAU||{}).chantiers||[]).filter(function(x){ return x.id === id; })[0];
+    if(c){ c.fiche = r.nom; var b = $('adFicheJ'); if(b) b.outerHTML = blocFicheChantier(c); }
+    chargerTableau();
+  }, function(e){ if(z) z.textContent = String(e && e.message || e); });
+}
+function retirerFicheAd(id, btn){
+  var moi = session();
+  if(btn) occuper(btn, '…');
+  poster({action:'ficheRetirer', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:id}).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) || attenteLisible());
+    var c = ((TABLEAU||{}).chantiers||[]).filter(function(x){ return x.id === id; })[0];
+    if(c){ c.fiche = ''; var b = $('adFicheJ'); if(b) b.outerHTML = blocFicheChantier(c); }
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+
+/* Voir la fiche : un PDF s'ouvre dans la visionneuse des devis, une photo
+   s'affiche en grand dans le même cadre. */
+function voirFicheJointe(id, btn){
+  var moi = session();
+  if(!moi) return;
+  if(!navigator.onLine) return erreur('Hors connexion : la fiche a besoin du réseau pour s\'ouvrir.');
+  if(btn) occuper(btn, 'Ouverture…');
+  poster({action:'ficheLire', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:id}, 60000).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) || attenteLisible());
+    ouvrirFiche(r);
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+function ouvrirFiche(r){
+  var titre = document.querySelector('#pdfOverlay .so-h b');
+  if(String(r.type || '') === 'application/pdf'){
+    ouvrirPdf({ pdf: r.data, numero: r.nom || 'Fiche chantier', nomFichier: r.nom || 'fiche.pdf' });
+    if(titre) titre.textContent = 'Fiche chantier';
+    return;
+  }
+  PDF_VU = null;
+  if(titre) titre.textContent = 'Fiche chantier';
+  $('poNum').textContent = r.nom || '';
+  $('poPages').innerHTML = '<img class="poPage" alt="Fiche chantier" style="width:100%;height:auto" src="data:' +
+    ech(r.type || 'image/jpeg') + ';base64,' + r.data + '">';
+  $('pdfOverlay').classList.remove('hide');
+}
+
+/* v101 — « pour la signature par mail, assure-toi que je peux l'envoyer lors
+   de la création du devis ». Le choix est à côté de « Signature à l'écran » :
+   il coche l'envoi, ouvre le mail proposé et descend jusqu'à lui. À
+   l'enregistrement, le devis part avec le bouton « Signer le devis en ligne ». */
+function choisirSignatureDistance(){
+  var c = $('fEnvoi');
+  if(!c) return;
+  if(!c.checked){ c.checked = true; majMailClient(); }
+  var b = $('blocMail') || c;
+  setTimeout(function(){ b.scrollIntoView({behavior:'smooth', block:'start'}); var a = $('fMailA'); if(a && !a.value) a.focus(); }, 60);
 }
