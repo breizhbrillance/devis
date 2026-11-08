@@ -987,6 +987,13 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
     var d = JSON.parse(e.postData.contents);
+    /* v99 — la page de signature du client : pas de nom ni de code, c'est le
+       jeton signé du lien qui ouvre (et seulement ce devis-là). */
+    if (d.action === 'devisPublic') return reponse_(devisPublic_(d));
+    if (d.action === 'signerDistance') {
+      lock.waitLock(30000);
+      return reponse_(signerDistance_(d));
+    }
     var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
                    'planning', 'chantier', 'tableau', 'planifier',
                    'chantierNeuf', 'lotChantiers',
@@ -995,7 +1002,7 @@ function doPost(e) {
                    'prospects', 'appel', 'historique',
                    'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
                    'mesDevis', 'devisArchive',
-                   'poserDevis'];
+                   'poserDevis', 'suggestions', 'lienSignature'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1045,7 +1052,7 @@ function doPost(e) {
          /* Poser le travail d'un devis que le commercial n'a pas encore
             déclaré signé : c'est un engagement pris sur la parole du client,
             il revient au gérant seul. */
-         'poserDevis',
+         'poserDevis', 'suggestions', 'lienSignature',
          'mesDevis', 'devisArchive']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier']
@@ -1053,7 +1060,7 @@ function doPost(e) {
            'prospects', 'appel', 'historique',
            /* Ses devis à lui, relus dans le classeur : l'action filtre sur
               son nom, elle ne sait pas rendre ceux d'un autre. */
-           'mesDevis', 'devisArchive'];
+           'mesDevis', 'devisArchive', 'lienSignature'];
     /* Le commercial qui fait aussi des chantiers lit son planning et pointe.
        On ne lui ouvre que ces deux actions, et seulement s'il figure vraiment
        parmi les prestataires : c'est la liste qui protège, pas l'écran. Et
@@ -1123,6 +1130,8 @@ function doPost(e) {
       return reponse_(facturesDuMois_(d, com));
     }
     if (d.action === 'mesDevis') return reponse_(mesDevis_(d, com));
+    if (d.action === 'suggestions') return reponse_(suggestionsPlacement_(d));
+    if (d.action === 'lienSignature') return reponse_(lienSignatureAppli_(d, com));
     if (d.action === 'devisArchive') return reponse_(devisArchive_(d, com));
     if (d.action === 'prospects') return reponse_(listeProspects_(d));
     if (d.action === 'historique') return reponse_(historiqueAppels_(d, com));
@@ -2251,9 +2260,20 @@ function creerChantier_(d, com) {
   if (date && isNaN(date.getTime())) return { ok: false, erreur: 'date illisible' };
   var mn = Math.round(Number(d.duree) || 0);
 
+  /* v99 — « toutes les interventions doivent être reliées à un devis, puis à
+     une facture ». Le devis choisi dans le formulaire est vérifié ici. */
+  var numLie = '';
+  if (String(d.devis || '').trim()) {
+    lireDevis_().forEach(function (x) {
+      var n = String(x.NUMERO || '').trim(), o = String(x.NUMERO_ORIGINE || '').trim();
+      if (n === String(d.devis).trim() || (o && o === String(d.devis).trim())) numLie = n;
+    });
+    if (!numLie) return { ok: false, erreur: 'le devis ' + d.devis + ' est introuvable' };
+  }
+
   var id = 'CH-' + ('000' + prochainNumChantier_(sh, cId)).slice(-4);
   var v = {
-    ID: id, NUMERO: '',
+    ID: id, NUMERO: numLie,
     CLIENT: client,
     ADRESSE: String(d.adresse || ''), CP: String(d.cp || ''), VILLE: String(d.ville || ''),
     ACCES: String(d.acces || ''),
@@ -2473,8 +2493,10 @@ function poserPlanning_(numero, qui, appareil, avantSignature) {
       : 'Devis ' + numero + ' signé.\n\n') +
     (bilan.poses.length
       ? bilan.poses.length + ' intervention(s) posée(s) :\n' + dates + '\n'
-      : 'Aucune intervention n\'a pu être posée.\n') +
-    (bilan.motif ? '\nRien n\'a été planifié : ' + bilan.motif + '.\n' : '') +
+      : (planificationAuto_(reg) ? 'Aucune intervention n\'a pu être posée.\n'
+         : 'Les interventions attendent dans le bac « à placer » du Planning de l\'appli : ' +
+           'ouvre-les, l\'appli te propose des créneaux.\n')) +
+    (bilan.motif && planificationAuto_(reg) ? '\nRien n\'a été planifié : ' + bilan.motif + '.\n' : '') +
     (contrat && contrat.length ? '\nContrat écrit dans l\'onglet ' + SH.RECURRENTS + ' : ' +
       contrat.join(', ') + '. Les mois suivants se posent tout seuls.\n' : '') +
     (bilan.refuses.length
@@ -2488,6 +2510,44 @@ function poserPlanning_(numero, qui, appareil, avantSignature) {
     envoyerMail_({ to: dest, subject: 'Planning — devis ' + numero, body: corps }, reg);
   } catch (e) { /* sans importance : le classeur reste la source */ }
   return bilan;
+}
+
+/* ================================================================
+   v99 — DES SUGGESTIONS QUAND ON PLACE
+   ================================================================
+   Le placement automatique est coupé (planificationAuto_) : c'est Simon qui
+   choisit le jour et l'heure. L'appli lui propose trois créneaux, calculés
+   comme le faisait le placement automatique (salarié le moins chargé, jours
+   travaillés, absences, route depuis le chantier précédent), sans rien
+   écrire. Il en prend un, ou pas. */
+function suggestionsPlacement_(d) {
+  var id = String(d.id || '').trim();
+  var ch = null;
+  objetsDe_(SH.CHANTIERS).forEach(function (o) { if (String(o.ID || '').trim() === id) ch = o; });
+  if (!ch) return { ok: false, erreur: 'intervention introuvable' };
+  var minutes = Math.round(Number(ch.DUREE_PREVUE_MIN) || 0) || 210;
+  var adresse = adresseComplete_(ch.ADRESSE, ch.CP, ch.VILLE);
+  var depuis = new Date(); depuis.setDate(depuis.getDate() + 1);
+  var num = String(ch.NUMERO || '').trim();
+  if (num) {
+    lireDevis_().forEach(function (x) {
+      if (String(x.NUMERO || '').trim() === num && x.DATE_SOUHAITEE instanceof Date && x.DATE_SOUHAITEE > depuis) {
+        depuis = new Date(x.DATE_SOUHAITEE.getTime());
+      }
+    });
+  }
+  var gens = prestatairesPlanning_();
+  if (!gens.length) return { ok: true, suggestions: [], motif: 'aucun salarié décrit dans PRESTATAIRES (jours, plages)' };
+  var charge = chargeActuelle_();
+  var out = [];
+  for (var k = 0; k < 3; k++) {
+    var c = creneauPour_(minutes, depuis, gens, charge, '', 60, adresse);
+    if (!c) break;
+    out.push({ date: isoJour_(c.date), heure: c.heure, nom: c.nom, route: c.route || 0,
+               jour: Utilities.formatDate(c.date, 'Europe/Paris', 'EEEE d MMMM') });
+    depuis = new Date(c.date.getTime()); depuis.setDate(depuis.getDate() + 1);
+  }
+  return { ok: true, id: id, minutes: minutes, suggestions: out };
 }
 
 /* 450 minutes → « 7 h 30 ». Pour un courriel que l'on lit d'un coup d'œil. */
@@ -2531,7 +2591,13 @@ function heuresLisibles_(min) {
    ni date ni salarié : on revient au fonctionnement d'avant, sans toucher au
    code. C'est la sortie de secours si la planification se trompe. */
 function planificationAuto_(reg) {
-  return String((reg && reg.planification_auto) || 'OUI').toUpperCase().trim() !== 'NON';
+  /* v99 — Simon, le 8 novembre : « quand c'est signé, crée juste
+     l'intervention et mets-la dans à placer ; à notre échelle je peux encore
+     choisir où placer ». Le placement automatique est donc coupé par défaut :
+     il ne revient que si REGLAGES porte placement_auto = OUI. L'ancienne clé
+     planification_auto n'est plus lue. Pour placer, l'appli propose des
+     créneaux (suggestionsPlacement_). */
+  return String((reg && reg.placement_auto) || 'NON').toUpperCase().trim() === 'OUI';
 }
 
 /* Le taux horaire de vente qui sert à convertir un montant en heures. */
@@ -6290,12 +6356,13 @@ function facturesContrats_(periode, com, seul) {
         ref: 'BB-CT-' + slugRef_(nom) + '-' + mois,
         client: { nom: String(t('CLIENT_FACTURE') || nom), siren: t('SIREN'), email: t('EMAIL'),
                   adresse: t('ADRESSE'), cp: t('CP'), ville: t('VILLE'),
-                  particulier: /^O/i.test(String(t('PARTICULIER'))), idConnu: t('ID_PENNYLANE') },
+                  particulier: estParticulier_(t('CLIENT_FACTURE') || nom, t('PARTICULIER')), idConnu: t('ID_PENNYLANE') },
         sujet: 'Facture ' + moisLisible_(mois) + ' — contrat d\'entretien ' + nom,
         description: 'Contrat d\'entretien — ' + moisLisible_(mois) + '.',
         lignes: ls.map(function (l) {
+          var part = estParticulier_(t('CLIENT_FACTURE') || nom, t('PARTICULIER'));
           return { libelle: String(l.LIGNE || 'Entretien des locaux') + ' — ' + moisLisible_(mois),
-                   prix: Number(l.MENSUEL_HT), tva: String(l.TVA) === '' ? 20 : Number(l.TVA), qte: 1,
+                   prix: Number(l.MENSUEL_HT), tva: part ? 10 : (String(l.TVA) === '' ? 20 : Number(l.TVA)), qte: 1,
                    detail: phraseLissage_(l.RYTHME) };
         })
       });
@@ -6336,6 +6403,25 @@ function ponctuelsAPreparer_(maintenant) {
 
 function facturesPonctuels_(com) {
   var faits = [], echecs = [], sautes = [];
+  /* v99 — les interventions SANS devis, pointées FAIT depuis deux heures,
+     dont le prix est écrit dans la note (« 690 € HT »). Celles sans prix
+     attendent dans l'onglet Factures de l'appli : on n'invente pas un montant. */
+  var faites0 = facturesFaites_(), t0 = Date.now();
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    var id = String(o.ID || '').trim();
+    if (!id || String(o.NUMERO || '').trim() || String(o.RECURRENT || '').trim()) return;
+    if (String(o.STATUT || '').toUpperCase().trim() !== 'FAIT') return;
+    if ((faites0[id] || {})['']) return;
+    var dep = o.DEPART ? new Date(o.DEPART) : null;
+    if (!dep || isNaN(dep.getTime()) || t0 - dep.getTime() < 2 * 3600 * 1000) return;
+    var prix = prixDeNote_(o.NOTE);
+    if (!prix) return;
+    if (contratProche_(o.CLIENT, nomsDeContrats_())) return;    // peut-être dans un forfait : à la main
+    var r = facturerIntervention_({ cle: id, ht: prix.ht }, com);
+    if (r.ok) faits.push({ client: String(o.CLIENT || ''), ht: r.ht, idPennylane: r.idPennylane });
+    else if (r.deja) sautes.push({ client: String(o.CLIENT || ''), motif: 'déjà préparée' });
+    else echecs.push({ client: String(o.CLIENT || ''), erreur: r.erreur });
+  });
   ponctuelsAPreparer_().forEach(function (p) {
     var r = preparerFacturePennylane_({ numero: p.numero }, com);
     if (r.ok) faits.push({ client: p.client, ht: r.ht, idPennylane: r.idPennylane });
@@ -6395,6 +6481,14 @@ function contratProche_(client, noms) {
     if (k2.length >= 4 && c.indexOf(' ' + k2 + ' ') >= 0) return noms[k];
   }
   return '';
+}
+
+/* v99 — « 10 % pour un particulier, 20 % pour une société », comme dans
+   Henrri. Un particulier se reconnaît à son nom (M., MME, MR, MONSIEUR,
+   MADAME, M. ET MME) ou à la case PARTICULIER du contrat. */
+function estParticulier_(nom, caseParticulier) {
+  if (/^O/i.test(String(caseParticulier || '').trim())) return true;
+  return /^\s*(M\.|MME\b|MR\b|MLLE\b|MONSIEUR\b|MADAME\b|M\s+ET\s+MME\b|M\s+)/i.test(String(nom || ''));
 }
 
 function libelleNature_(n) {
@@ -6470,7 +6564,8 @@ function facturationAppli_(periode) {
       adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
       nature: String(o.NATURE || ''), libelle: libelleNature_(o.NATURE),
       note: String(o.NOTE || '').replace(/\s*—?\s*repris de FamilyWall\s*/i, '').trim().slice(0, 200),
-      ht: prix ? prix.ht : 0, prixLu: prix ? prix.lu : '', tva: 20,
+      ht: prix ? prix.ht : 0, prixLu: prix ? prix.lu : '', tva: estParticulier_(o.CLIENT) ? 10 : 20,
+      particulier: estParticulier_(o.CLIENT),
       qui: String(o.PRESTATAIRE || ''), pointe: st === 'FAIT',
       jamaisPlace: st === 'A PLANIFIER' || !String(o.PRESTATAIRE || '').trim(),
       contrat: contratProche_(o.CLIENT, noms),
@@ -6516,7 +6611,7 @@ function facturerIntervention_(d, com) {
   if ((facturesFaites_()[id] || {})['']) return { ok: false, deja: true, erreur: 'Déjà facturée.' };
   var ht = Math.round((Number(String(d.ht || '').replace(',', '.')) || 0) * 100) / 100;
   if (!(ht > 0)) return { ok: false, erreur: 'Indique le montant HT.' };
-  var tva = d.tva === undefined || d.tva === '' ? 20 : Number(d.tva);
+  var tva = d.tva === undefined || d.tva === '' ? (estParticulier_(d.client || ch.CLIENT) ? 10 : 20) : Number(d.tva);
   var client = String(d.client || ch.CLIENT || '').trim();
   var libelle = String(d.libelle || libelleNature_(ch.NATURE)).trim();
   var jour = ch.DATE ? Utilities.formatDate(new Date(ch.DATE), 'Europe/Paris', 'dd/MM/yyyy') : '';
@@ -6584,7 +6679,239 @@ function preparationAutomatique() {
     if (new Date().getDate() <= 5) facturesContrats_(moisEcoule_(), null);
   } catch (e2) {
     tracerServeur_('SYSTEME', 'PREPARATION AUTO EN ECHEC', String(e2 && e2.message || e2).slice(0, 200), '', '');
+  }
+  try { relancerPointages_(new Date()); } catch (e3) {
+    tracerServeur_('SYSTEME', 'RELANCE POINTAGE EN ECHEC', String(e3 && e3.message || e3).slice(0, 200), '', '');
   } finally { lock.releaseLock(); }
+}
+
+/* ================================================================
+   v99 — RELANCER UN SALARIÉ QUI N'A PAS POINTÉ
+   ================================================================
+   Une heure après la fin prévue d'une intervention du jour (heure + durée
+   prévue), si personne n'a pointé l'arrivée, chacun de ceux qui y sont
+   affectés reçoit une notification. Une seule fois par intervention. Entre
+   8 h et 21 h seulement. Tourne avec la préparation automatique (menu 31). */
+function relancerPointages_(maintenant) {
+  var now = maintenant || new Date();
+  var h = now.getHours();
+  if (h < 8 || h >= 21) return { relances: 0 };
+  var c = notifConfig_();
+  if (!c.app || !c.cle) return { relances: 0, motif: 'notifications non connectées' };
+  var iso = isoJour_(now);
+  var props = PropertiesService.getScriptProperties();
+  var cle = 'RELANCES_POINTAGE_' + iso;
+  var deja = {};
+  try { deja = JSON.parse(props.getProperty(cle) || '{}'); } catch (e) { deja = {}; }
+  var n = 0;
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    var id = String(o.ID || '').trim();
+    if (!id || deja[id]) return;
+    if (!(o.DATE instanceof Date) || isoJour_(o.DATE) !== iso) return;
+    var st = String(o.STATUT || '').toUpperCase().trim();
+    if (st !== 'PLANIFIE' && st !== '') return;
+    if (o.ARRIVEE && String(o.ARRIVEE).trim()) return;
+    var qui = String(o.PRESTATAIRE || '').trim();
+    if (!qui) return;
+    var hh = o.HEURE instanceof Date ? o.HEURE.getHours() * 60 + o.HEURE.getMinutes()
+      : (function (x) { var m = String(x || '').match(/(\d{1,2})[:h](\d{2})?/); return m ? Number(m[1]) * 60 + Number(m[2] || 0) : -1; })(o.HEURE);
+    if (hh < 0) return;
+    var fin = hh + (Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || 120) + 60;
+    if (h * 60 + now.getMinutes() < fin) return;
+    try {
+      notifier_(qui, 'Pense à pointer', String(o.CLIENT || 'Intervention') +
+                ' : appuie sur Arrivée puis Départ dans l\'appli, même après coup.', '');
+      deja[id] = 1; n++;
+    } catch (eN) {}
+  });
+  if (n) {
+    props.setProperty(cle, JSON.stringify(deja));
+    tracerServeur_('SYSTEME', 'RELANCE POINTAGE', n + ' intervention(s) non pointée(s)', '', '');
+  }
+  return { relances: n };
+}
+
+/* ================================================================
+   v99 — LA SIGNATURE À DISTANCE
+   ================================================================
+   Simon : « si je fais signer à distance, comment faire pour que le statut
+   change bien en signé ? ». Le client reçoit un lien personnel (dans le mail
+   du devis, ou envoyé par SMS depuis l'appli). La page signer.html lui
+   montre le devis, il signe au doigt ou à la souris, et le devis passe à
+   SIGNE ici même : interventions créées (dans le bac « à placer »), preuve
+   PDF rangée dans le Drive, mail de confirmation au client et au gérant.
+   Le lien est signé (HMAC) : impossible d'en fabriquer un pour un autre devis.
+   C'est une signature électronique « simple » au sens du règlement eIDAS,
+   avec horodatage, nom, image de la signature et appareil utilisé. */
+function secretSignature_() {
+  var p = PropertiesService.getScriptProperties();
+  var s = p.getProperty('SIGNATURE_SECRET');
+  if (!s) { s = Utilities.getUuid() + Utilities.getUuid(); p.setProperty('SIGNATURE_SECRET', s); }
+  return s;
+}
+function jetonSignature_(numero) {
+  var b = Utilities.computeHmacSha256Signature(String(numero).trim(), secretSignature_());
+  return Utilities.base64EncodeWebSafe(b).replace(/=+$/, '').slice(0, 22);
+}
+function lienSignature_(numero) {
+  var reg = lireReglages_();
+  var base = String(reg.url_appli || 'https://breizhbrillance.github.io/devis/').replace(/\/?$/, '/');
+  return base + 'signer.html?n=' + encodeURIComponent(String(numero).trim()) + '&t=' + jetonSignature_(numero);
+}
+/* Le devis visé par un lien : le numéro du lien, ou celui d'avant la signature. */
+function devisDuLien_(n, t) {
+  var num = String(n || '').trim();
+  if (!num || !t || String(t) !== jetonSignature_(num)) return null;
+  var cible = null;
+  lireDevis_().forEach(function (x) {
+    if (String(x.NUMERO || '').trim() === num || String(x.NUMERO_ORIGINE || '').trim() === num) cible = x;
+  });
+  return cible;
+}
+
+function lienSignatureAppli_(d, com) {
+  var num = String(d.numero || '').trim();
+  var cible = null;
+  lireDevis_().forEach(function (x) {
+    if (String(x.NUMERO || '').trim() === num || String(x.NUMERO_ORIGINE || '').trim() === num) cible = x;
+  });
+  if (!cible) return { ok: false, erreur: 'devis introuvable' };
+  if (String(com.role || '') !== 'ADMIN' && normNom_(cible.COMMERCIAL) !== normNom_(com.nom)) {
+    return { ok: false, erreur: 'ce devis n\'est pas le vôtre' };
+  }
+  if (String(cible.STATUT || '').toUpperCase() === 'SIGNE') return { ok: false, erreur: 'ce devis est déjà signé' };
+  var vrai = String(cible.NUMERO).trim();
+  tracerServeur_(com.nom, 'LIEN DE SIGNATURE', 'créé', vrai, d.appareil || '');
+  return { ok: true, numero: vrai, url: lienSignature_(vrai), client: String(cible.CLIENT || ''),
+           contact: String(cible.CONTACT || ''), email: String(cible.EMAIL || ''), tel: String(cible.TELEPHONE || '') };
+}
+
+function devisPublic_(d) {
+  var x = devisDuLien_(d.n, d.t);
+  if (!x) return { ok: false, erreur: 'Ce lien n\'est pas valable. Demandez un nouveau lien à Breizh Brillance.' };
+  var reg = lireReglages_();
+  var num = String(x.NUMERO).trim();
+  var lignes = (lignesParDevis_()[num] || []).slice().sort(function (a, b) {
+    return (Number(a.ORDRE) || 0) - (Number(b.ORDRE) || 0);
+  }).map(function (l) {
+    return { designation: String(l.DESIGNATION || ''), detail: String(l.DETAIL || ''),
+             qte: Number(l.QTE) || 0, unite: String(l.UNITE || ''), pu: Number(l.PU_HT) || 0,
+             rem: Number(l.REMISE_PCT) || 0, tva: Number(l.TVA) || 0, total: Number(l.TOTAL_HT) || 0 };
+  });
+  var res = {
+    ok: true, numero: num, societe: String(reg.societe_nom || 'BREIZH BRILLANCE'),
+    societeTel: String(reg.societe_tel || ''), societeEmail: String(reg.societe_email || ''),
+    client: String(x.CLIENT || ''), contact: String(x.CONTACT || ''),
+    adresse: [x.ADRESSE, [x.CP, x.VILLE].join(' ').trim()].filter(function (v) { return String(v || '').trim(); }).join(', '),
+    objet: String(x.OBJET || ''), date: isoDe_(x.DATE) || '',
+    passages: Number(x.PASSAGES_MOIS) || 0, recurrent: recurrentDevis_(x.NATURE, x.PASSAGES_MOIS),
+    lignes: lignes, ht: Number(x.TOTAL_HT) || 0, tva: Number(x.TOTAL_TVA) || 0, ttc: Number(x.TOTAL_TTC) || 0,
+    mensuel: Number(x.TOTAL_HT_MENSUEL) || 0,
+    signe: String(x.STATUT || '').toUpperCase() === 'SIGNE', signataire: String(x.SIGNATAIRE || ''),
+    refuse: String(x.STATUT || '').toUpperCase() === 'REFUSE'
+  };
+  /* Le PDF du devis, pour que le client lise exactement ce qu'il signe. */
+  var id = idDrive_(x.LIEN_PDF);
+  if (id && d.pdf) {
+    try { res.pdf = Utilities.base64Encode(DriveApp.getFileById(id).getBlob().getBytes()); } catch (e) {}
+  }
+  res.aPdf = !!id;
+  return res;
+}
+
+function signerDistance_(d) {
+  var x = devisDuLien_(d.n, d.t);
+  if (!x) return { ok: false, erreur: 'Ce lien n\'est pas valable. Demandez un nouveau lien à Breizh Brillance.' };
+  var st = String(x.STATUT || '').toUpperCase().trim();
+  if (st === 'SIGNE') return { ok: true, deja: true, numero: String(x.NUMERO) };
+  if (st === 'REFUSE') return { ok: false, erreur: 'Ce devis a été clôturé. Contactez Breizh Brillance.' };
+  var nom = String(d.nom || '').trim();
+  if (nom.length < 2) return { ok: false, erreur: 'Indiquez votre nom et votre qualité.' };
+  if (!d.accepte) return { ok: false, erreur: 'Cochez « Bon pour accord » pour signer.' };
+  var img = String(d.image || '');
+  var m = img.match(/^data:image\/png;base64,([A-Za-z0-9+\/=]+)$/);
+  if (!m || m[1].length < 800) return { ok: false, erreur: 'La signature est vide. Signez dans le cadre.' };
+  if (m[1].length > 900000) return { ok: false, erreur: 'Signature trop lourde, recommencez.' };
+
+  var reg = lireReglages_();
+  var quand = new Date();
+  var commercial = String(x.COMMERCIAL || '');
+  var numAvant = String(x.NUMERO).trim();
+  /* Le passage à SIGNE passe par le même chemin que le bouton « Signé » de
+     l'appli : nouveau numéro, interventions créées, contrat, journal. */
+  var r = enregistrerStatut_({ numero: numAvant, verdict: 'SIGNE', quand: quand.getTime(),
+                               appareil: 'signature en ligne' }, { nom: commercial || 'CLIENT', role: 'COMMERCIAL' });
+  if (!r || !r.ok) return { ok: false, erreur: 'La signature n\'a pas pu être enregistrée. Réessayez dans un instant.' };
+  var num = String(r.numero || numAvant);
+
+  /* La preuve : un PDF qui reprend le devis, la signature, le nom, l'heure. */
+  var lien = '', preuve = null;
+  try {
+    var lp = (lignesParDevis_()[num] || lignesParDevis_()[numAvant] || []).slice().sort(function (a, b) {
+      return (Number(a.ORDRE) || 0) - (Number(b.ORDRE) || 0);
+    });
+    var lignesHtml = lp.map(function (l) {
+      return '<tr><td>' + echHtml_(l.DESIGNATION) + (l.DETAIL ? '<br><small>' + echHtml_(l.DETAIL) + '</small>' : '') +
+        '</td><td style="text-align:right">' + echHtml_(nbFr_(l.QTE)) + ' ' + echHtml_(l.UNITE) +
+        '</td><td style="text-align:right">' + eur_(l.TOTAL_HT) + '</td></tr>';
+    }).join('');
+    var html = '<html><body style="font-family:Arial,sans-serif;font-size:12px;color:#111">' +
+      '<h2 style="margin:0">' + echHtml_(reg.societe_nom || 'BREIZH BRILLANCE') + '</h2>' +
+      '<p>Devis <b>' + echHtml_(num) + '</b>' + (num !== numAvant ? ' (anciennement ' + echHtml_(numAvant) + ')' : '') +
+      ' — ' + echHtml_(x.CLIENT) + '<br>' + echHtml_([x.ADRESSE, x.CP, x.VILLE].join(' ')) + '</p>' +
+      (x.OBJET ? '<p>Objet : ' + echHtml_(x.OBJET) + '</p>' : '') +
+      '<table style="width:100%;border-collapse:collapse" border="1" cellpadding="5">' +
+      '<tr style="background:#eee"><th style="text-align:left">Prestation</th><th>Quantité</th><th>Total HT</th></tr>' +
+      lignesHtml + '</table>' +
+      '<p style="text-align:right">Total HT : <b>' + eur_(x.TOTAL_HT) + '</b> · TVA : ' + eur_(x.TOTAL_TVA) +
+      ' · Total TTC : <b>' + eur_(x.TOTAL_TTC) + '</b>' +
+      (Number(x.TOTAL_HT_MENSUEL) ? '<br>dont ' + eur_(x.TOTAL_HT_MENSUEL) + ' HT par mois (forfait lissé sur 52 semaines)' : '') + '</p>' +
+      '<h3>Bon pour accord</h3>' +
+      '<p>Signé en ligne par <b>' + echHtml_(nom) + '</b> le ' +
+      Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM/yyyy à HH:mm') + ' (heure de Paris).</p>' +
+      '<img src="data:image/png;base64,' + m[1] + '" style="height:110px;border:1px solid #ccc">' +
+      '<p style="color:#555;font-size:10px">Signature électronique simple recueillie par lien personnel ' +
+      '(référence ' + echHtml_(String(d.t).slice(0, 8)) + '…), appareil : ' + echHtml_(String(d.appareil || '').slice(0, 160)) + '.</p>' +
+      '</body></html>';
+    preuve = Utilities.newBlob(html, 'text/html', 'preuve.html').getAs('application/pdf')
+      .setName('Devis ' + numeroFichier_(num) + ' - signé en ligne.pdf');
+    lien = dossierDevis_(reg, x.DATE instanceof Date ? x.DATE : quand, commercial).createFile(preuve).getUrl();
+  } catch (eP) {
+    tracerServeur_('SYSTEME', 'PREUVE SIGNATURE ECHEC', String(eP && eP.message || eP).slice(0, 200), num, '');
+  }
+  majDevis_(num, { SIGNATAIRE: nom, PREUVE_SIGNATURE: lien || 'signé en ligne le ' +
+                   Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM/yyyy HH:mm') });
+  tracerServeur_(commercial || 'CLIENT', 'DEVIS SIGNE EN LIGNE', nom + ' · ' + String(d.appareil || '').slice(0, 80), num, 'signature en ligne');
+
+  /* Le client reçoit sa copie ; le gérant et le commercial sont prévenus. */
+  try {
+    var pj = preuve ? [preuve] : [];
+    if (String(x.EMAIL || '').trim()) {
+      envoyerMail_({ to: String(x.EMAIL).trim(), subject: 'Devis ' + num + ' signé — ' + (reg.societe_nom || ''),
+                     name: String(reg.societe_nom || 'Devis'), replyTo: String(reg.societe_email || ''),
+                     htmlBody: '<p>Bonjour,</p><p>Merci ! Votre signature du devis ' + echHtml_(num) +
+                       ' est bien enregistrée. Vous en trouverez la copie en pièce jointe.</p>' +
+                       '<p>Nous revenons vers vous très vite pour fixer la date d\'intervention.</p>' +
+                       '<p>' + echHtml_(reg.societe_nom || '') + '</p>', attachments: pj }, reg);
+    }
+    var dest = String(reg.recap_email || '').trim() || Session.getEffectiveUser().getEmail();
+    var com = trouverPersonne_(commercial);
+    envoyerMail_({ to: dest + (com && com.email && com.email !== dest ? ',' + com.email : ''),
+                   subject: '✍️ Devis ' + num + ' signé en ligne — ' + String(x.CLIENT || ''),
+                   htmlBody: '<p>' + echHtml_(x.CLIENT) + ' a signé le devis ' + echHtml_(num) + ' en ligne (' +
+                     echHtml_(nom) + ', ' + Utilities.formatDate(quand, 'Europe/Paris', 'dd/MM HH:mm') + ').</p>' +
+                     '<p>Montant : ' + eur_(x.TOTAL_HT) + ' HT. Les interventions sont dans le bac « à placer » du Planning.</p>' +
+                     (lien ? '<p><a href="' + lien + '">Preuve de signature (PDF)</a></p>' : ''), attachments: pj }, reg);
+  } catch (eM) {
+    tracerServeur_('SYSTEME', 'MAIL RATE', 'signature en ligne ' + num + ' — ' + String(eM && eM.message || eM), num, '');
+  }
+  try {
+    lireAdmins_().forEach(function (a) {
+      notifier_(a.nom, 'Devis signé en ligne', String(x.CLIENT || '') + ' · ' + eur_(x.TOTAL_HT) + ' HT', '');
+    });
+    if (commercial) notifier_(commercial, 'Devis signé en ligne', String(x.CLIENT || '') + ' · ' + num, '');
+  } catch (eN) {}
+  return { ok: true, numero: num };
 }
 
 function compteRendu_(titre, r) {
@@ -6734,6 +7061,12 @@ function corpsMail_(devis, reg, com, revise) {
     '<p>J\'espère que vous allez bien !</p>' +
     '<p>Suite au chiffrage réalisé dernièrement, je vous transmets ci-joint le devis ' +
     (revise ? 'corrigé ' : '') + 'correspondant à votre demande.</p>' +
+    (devis && devis.numero && !devis.signature
+      ? '<p style="margin:22px 0"><a href="' + lienSignature_(devis.numero) + '" style="background:#004C92;color:#fff;' +
+        'padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold">Signer le devis en ligne</a></p>' +
+        '<p style="font-size:12px;color:#6b7280">Un clic, une signature au doigt ou à la souris : c\'est tout. ' +
+        'Vous recevrez aussitôt votre copie signée.</p>'
+      : '') +
     '<p>Si vous avez des questions ou quoi que ce soit d\'autre, je reste disponible' +
     (tel ? ' par téléphone au ' + tel : '') + '.</p>' +
     '<p>Belle fin de journée,<br>Cordialement,</p>' +

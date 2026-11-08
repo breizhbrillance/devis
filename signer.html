@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#004C92">
+<title>Signer votre devis — Breizh Brillance</title>
+<link rel="icon" href="icon-192.png">
+<!-- v99 — La page que le client ouvre depuis son lien personnel. Elle lit le
+     devis au bureau (jeton signé du lien), le montre, recueille la signature
+     et la renvoie. Le devis passe à « signé » côté bureau, rien d'autre à
+     faire pour personne. Aucune donnée n'est gardée dans le navigateur. -->
+<style>
+  :root{ --acc:#004C92; --acc-f:#EAF2FB; --txt:#111827; --mut:#6b7280; --line:#e5e7eb; --ok:#15803d; --danger:#b91c1c; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:var(--txt);
+        background:#f3f4f6; font-size:16px; line-height:1.45; }
+  header{ background:var(--acc); color:#fff; padding:16px 18px; }
+  header img{ width:36px; height:36px; border-radius:8px; vertical-align:middle; margin-right:10px; background:#fff; }
+  header b{ font-size:17px; vertical-align:middle; }
+  main{ max-width:640px; margin:0 auto; padding:14px; }
+  .card{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:12px; }
+  h1{ font-size:20px; margin:0 0 4px; }
+  h2{ font-size:16px; margin:0 0 8px; }
+  .mini{ color:var(--mut); font-size:13px; }
+  table{ width:100%; border-collapse:collapse; font-size:14px; }
+  td{ padding:8px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  td.m{ text-align:right; white-space:nowrap; padding-left:10px; }
+  .tot{ display:flex; justify-content:space-between; padding:4px 0; }
+  .tot.gros{ font-weight:700; font-size:18px; border-top:2px solid var(--txt); margin-top:6px; padding-top:8px; }
+  label{ display:block; font-size:14px; font-weight:600; margin:12px 0 6px; }
+  input[type=text]{ width:100%; padding:12px; font-size:16px; border:1px solid #cbd5e1; border-radius:10px; }
+  .pad{ position:relative; border:2px dashed #94a3b8; border-radius:12px; background:#fff; height:200px; touch-action:none; }
+  .pad canvas{ width:100%; height:100%; display:block; border-radius:12px; }
+  .pad span{ position:absolute; left:0; right:0; top:44%; text-align:center; color:#cbd5e1; pointer-events:none; font-size:15px; }
+  .accord{ display:flex; gap:10px; align-items:flex-start; margin-top:14px; font-size:15px; }
+  .accord input{ width:22px; height:22px; flex:none; margin-top:1px; }
+  button{ font:inherit; }
+  .btn{ display:block; width:100%; padding:14px; border:0; border-radius:10px; background:var(--acc); color:#fff;
+        font-size:17px; font-weight:700; margin-top:16px; cursor:pointer; }
+  .btn.sec{ background:#fff; color:var(--acc); border:1px solid var(--acc); font-weight:600; font-size:15px; padding:11px; margin-top:10px; }
+  .btn[disabled]{ opacity:.6; }
+  .err{ color:var(--danger); font-weight:600; margin-top:10px; }
+  .ok{ text-align:center; padding:28px 16px; }
+  .ok .rond{ width:64px; height:64px; border-radius:50%; background:var(--ok); color:#fff; font-size:36px; line-height:64px; margin:0 auto 12px; }
+  .hide{ display:none; }
+</style>
+</head>
+<body>
+<header><img src="icon-192.png" alt=""><b id="soc">Breizh Brillance</b></header>
+<main>
+  <div id="chargement" class="card">Chargement du devis…</div>
+  <div id="erreurPage" class="card hide"></div>
+
+  <div id="page" class="hide">
+    <div class="card">
+      <h1 id="titre">Devis</h1>
+      <div class="mini" id="sousTitre"></div>
+      <div id="objet" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <h2>Prestations</h2>
+      <table id="lignes"></table>
+      <div style="margin-top:10px" id="totaux"></div>
+      <button class="btn sec hide" id="bPdf" onclick="voirPdf(this)">Voir le devis complet (PDF)</button>
+    </div>
+
+    <div class="card" id="carteSigner">
+      <h2>Bon pour accord</h2>
+      <div class="mini">En signant, vous acceptez ce devis et ses conditions. Vous recevrez votre copie signée par e-mail.</div>
+      <label for="nom">Nom et qualité du signataire</label>
+      <input id="nom" type="text" autocomplete="name" placeholder="Jean Dupont, gérant">
+      <label>Votre signature</label>
+      <div class="pad" id="pad"><canvas id="sig"></canvas><span id="padAide">Signez ici avec le doigt ou la souris</span></div>
+      <button class="btn sec" onclick="effacer()">Effacer la signature</button>
+      <label class="accord"><input type="checkbox" id="accord"><span>Bon pour accord : j'accepte le devis <b id="numAccord"></b>.</span></label>
+      <div class="err" id="err"></div>
+      <button class="btn" id="bSigner" onclick="signer()">Signer le devis</button>
+    </div>
+  </div>
+
+  <div id="fini" class="card ok hide">
+    <div class="rond">✓</div>
+    <h1>Merci, c'est signé</h1>
+    <p id="finiTexte">Votre signature est enregistrée. Vous allez recevoir votre copie par e-mail, et nous revenons vers vous pour fixer la date d'intervention.</p>
+  </div>
+</main>
+
+<script src="config.js?v=99"></script>
+<script>
+var P = new URLSearchParams(location.search);
+var N = P.get('n') || '', T = P.get('t') || '';
+var D = null, TRACE = false;
+
+function $(id){ return document.getElementById(id); }
+function ech(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function eur(n){ return (Number(n) || 0).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €'; }
+function nbFr(n){ n = Math.round((Number(n) || 0) * 100) / 100; return String(n).replace('.', ','); }
+function poster(corps){
+  return fetch(API_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(corps)})
+    .then(function(r){ return r.json(); });
+}
+function erreurPage(t){
+  $('chargement').classList.add('hide');
+  $('erreurPage').textContent = t;
+  $('erreurPage').classList.remove('hide');
+}
+
+function charger(){
+  if(!N || !T) return erreurPage('Ce lien est incomplet. Demandez un nouveau lien à Breizh Brillance.');
+  poster({action:'devisPublic', n:N, t:T}).then(function(d){
+    if(!d || !d.ok) return erreurPage((d && d.erreur) || 'Le devis n\'a pas pu être chargé. Réessayez dans un instant.');
+    D = d;
+    $('chargement').classList.add('hide');
+    $('soc').textContent = d.societe || 'Breizh Brillance';
+    document.title = 'Devis ' + d.numero + ' — ' + (d.societe || 'Breizh Brillance');
+    if(d.signe){
+      $('fini').classList.remove('hide');
+      $('finiTexte').textContent = 'Ce devis est déjà signé' + (d.signataire ? ' par ' + d.signataire : '') + '. Merci !';
+      return;
+    }
+    if(d.refuse) return erreurPage('Ce devis a été clôturé. Contactez Breizh Brillance' + (d.societeTel ? ' au ' + d.societeTel : '') + '.');
+    $('titre').textContent = 'Devis ' + d.numero;
+    $('numAccord').textContent = d.numero;
+    $('sousTitre').textContent = [d.client, d.adresse].filter(Boolean).join(' · ');
+    $('objet').textContent = d.objet ? 'Objet : ' + d.objet : '';
+    $('lignes').innerHTML = (d.lignes || []).map(function(l){
+      return '<tr><td><b>' + ech(l.designation) + '</b>' + (l.detail ? '<div class="mini">' + ech(l.detail) + '</div>' : '') +
+        '<div class="mini">' + ech(nbFr(l.qte)) + ' ' + ech(l.unite) + ' × ' + eur(l.pu) + (l.rem ? ' − ' + nbFr(l.rem) + ' %' : '') +
+        ' · TVA ' + ech(nbFr(l.tva)) + ' %</div></td><td class="m">' + eur(l.total) + '</td></tr>';
+    }).join('');
+    var rec = d.recurrent && d.passages > 0;
+    $('totaux').innerHTML =
+      (rec ? '<div class="mini" style="margin-bottom:6px">Prix d\'un passage ci-dessus. ' +
+             'Forfait mensuel : ' + nbFr(d.passages) + ' passages par mois en moyenne, sur 52 semaines.</div>' : '') +
+      '<div class="tot"><span>Total HT' + (rec ? ' par mois' : '') + '</span><b>' + eur(d.ht) + '</b></div>' +
+      '<div class="tot"><span>TVA</span><span>' + eur(d.tva) + '</span></div>' +
+      '<div class="tot gros"><span>Total TTC' + (rec ? ' par mois' : '') + '</span><span>' + eur(d.ttc) + '</span></div>';
+    if(d.aPdf) $('bPdf').classList.remove('hide');
+    $('page').classList.remove('hide');
+    preparerPad();
+  }, function(){ erreurPage('Le devis n\'a pas pu être chargé. Vérifiez votre connexion et rechargez la page.'); });
+}
+
+function voirPdf(btn){
+  btn.disabled = true; btn.textContent = 'Chargement du PDF…';
+  poster({action:'devisPublic', n:N, t:T, pdf:1}).then(function(d){
+    btn.disabled = false; btn.textContent = 'Voir le devis complet (PDF)';
+    if(!d || !d.pdf) return;
+    var bin = atob(d.pdf), oct = new Uint8Array(bin.length);
+    for(var i = 0; i < bin.length; i++) oct[i] = bin.charCodeAt(i);
+    var url = URL.createObjectURL(new Blob([oct], {type:'application/pdf'}));
+    var a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener';
+    a.download = 'Devis ' + D.numero + '.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+  }, function(){ btn.disabled = false; btn.textContent = 'Voir le devis complet (PDF)'; });
+}
+
+/* ---- la signature au doigt ---- */
+var cv, cx, enTrait = false, der = null;
+function preparerPad(){
+  cv = $('sig'); cx = cv.getContext('2d');
+  var r = cv.getBoundingClientRect(), k = window.devicePixelRatio || 1;
+  cv.width = Math.round(r.width * k); cv.height = Math.round(r.height * k);
+  cx.scale(k, k);
+  cx.lineWidth = 2.4; cx.lineCap = 'round'; cx.lineJoin = 'round'; cx.strokeStyle = '#0b1f3a';
+  function pt(e){ var b = cv.getBoundingClientRect(); return {x:e.clientX - b.left, y:e.clientY - b.top}; }
+  cv.addEventListener('pointerdown', function(e){ e.preventDefault(); cv.setPointerCapture(e.pointerId); enTrait = true; der = pt(e);
+    cx.beginPath(); cx.arc(der.x, der.y, 1.1, 0, 6.3); cx.fillStyle = cx.strokeStyle; cx.fill(); TRACE = true; $('padAide').classList.add('hide'); });
+  cv.addEventListener('pointermove', function(e){ if(!enTrait) return; e.preventDefault(); var p = pt(e);
+    cx.beginPath(); cx.moveTo(der.x, der.y); cx.lineTo(p.x, p.y); cx.stroke(); der = p; });
+  ['pointerup','pointercancel','pointerleave'].forEach(function(t){ cv.addEventListener(t, function(){ enTrait = false; }); });
+}
+function effacer(){
+  if(!cv) return;
+  cx.save(); cx.setTransform(1,0,0,1,0,0); cx.clearRect(0, 0, cv.width, cv.height); cx.restore();
+  TRACE = false; $('padAide').classList.remove('hide');
+}
+
+function signer(){
+  var err = $('err'); err.textContent = '';
+  var nom = $('nom').value.trim();
+  if(nom.length < 2) return err.textContent = 'Indiquez votre nom et votre qualité.';
+  if(!TRACE) return err.textContent = 'Signez dans le cadre.';
+  if(!$('accord').checked) return err.textContent = 'Cochez « Bon pour accord ».';
+  /* Fond blanc sous le tracé, réduit à 600 px de large : l'image reste lisible et légère. */
+  var w = 600, h = Math.round(600 * cv.height / cv.width);
+  var c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
+  var x2 = c2.getContext('2d'); x2.fillStyle = '#fff'; x2.fillRect(0, 0, w, h); x2.drawImage(cv, 0, 0, w, h);
+  var b = $('bSigner'); b.disabled = true; b.textContent = 'Signature en cours…';
+  poster({action:'signerDistance', n:N, t:T, nom:nom, accepte:true, image:c2.toDataURL('image/png'),
+          appareil:navigator.userAgent}).then(function(r){
+    if(!r || !r.ok){ b.disabled = false; b.textContent = 'Signer le devis';
+      return err.textContent = (r && r.erreur) || 'La signature n\'est pas passée. Réessayez.'; }
+    $('page').classList.add('hide');
+    $('fini').classList.remove('hide');
+    window.scrollTo(0, 0);
+  }, function(){ b.disabled = false; b.textContent = 'Signer le devis';
+    err.textContent = 'Pas de réponse. Vérifiez votre connexion et réessayez.'; });
+}
+charger();
+</script>
+</body>
+</html>

@@ -359,7 +359,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v98';
+var VERSION_APP = 'v99';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4241,6 +4241,7 @@ function peindreFicheArchive(d){
         'Dupliquer ce devis</button>' +
     '</div>' +
 
+    blocSignatureDistance(d, 'archive') +
     '<div class="card">' +
       '<h2>Résultat du rendez-vous</h2>' +
       '<div class="mini" style="margin-top:0">Ce que tu poses ici part directement au ' +
@@ -4255,6 +4256,53 @@ function peindreFicheArchive(d){
       '<label>Raison du refus</label>' +
       '<input id="arMotif" placeholder="Trop cher, concurrent…" value="' + ech(d.motif || '') + '">' +
     '</div>';
+}
+
+/* v99 — LA SIGNATURE À DISTANCE. Le client reçoit un lien personnel (par
+   SMS, WhatsApp ou mail) vers une page où il lit le devis et signe au doigt.
+   Le devis passe alors à SIGNE tout seul, sans que personne ne coche rien.
+   Le même lien est déjà dans le mail du devis quand on l'envoie au client. */
+function blocSignatureDistance(d, ou){
+  var st = String(d.statut || '').toUpperCase();
+  if(st === 'SIGNE' || st === 'REFUSE') return '';
+  return '<div class="card"><h2>Faire signer à distance</h2>' +
+    '<div class="mini" style="margin-top:0">Le client reçoit un lien, lit le devis et signe au doigt ou à la souris. ' +
+    'Le devis passe à « signé » tout seul et tu es prévenu.</div>' +
+    '<button class="btn" style="margin-top:10px" onclick="envoyerLienSignature(\'' +
+      ech(d.numero).replace(/'/g,'&#39;') + '\', this)">Envoyer le lien de signature</button>' +
+    '<div id="lienSig" class="mini" style="word-break:break-all"></div></div>';
+}
+
+function envoyerLienSignature(numero, btn){
+  var moi = session();
+  if(!moi) return;
+  if(!navigator.onLine) return erreur('Hors connexion : le lien se fabrique au bureau.');
+  occuper(btn, 'Lien…');
+  poster({action:'lienSignature', numero:numero, nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(r){
+    libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    erreur('');
+    var texte = 'Bonjour' + (r.contact ? ' ' + r.contact : '') + ', voici le devis ' + r.numero +
+      ' de BREIZH BRILLANCE. Vous pouvez le lire et le signer en ligne ici : ' + r.url;
+    var zone = $('lienSig');
+    var sms = r.tel ? 'sms:' + String(r.tel).replace(/\s+/g, '') + '?&body=' + encodeURIComponent(texte) : '';
+    var mail = r.email ? 'mailto:' + r.email + '?subject=' + encodeURIComponent('Devis ' + r.numero + ' à signer') +
+                         '&body=' + encodeURIComponent(texte) : '';
+    if(zone) zone.innerHTML = '<div style="margin-top:10px">' + ech(r.url) + '</div>' +
+      '<div class="row" style="gap:8px;margin-top:8px">' +
+        (sms ? '<a class="btn sec sm" style="flex:1;text-align:center;text-decoration:none" href="' + ech(sms) + '">SMS</a>' : '') +
+        (mail ? '<a class="btn sec sm" style="flex:1;text-align:center;text-decoration:none" href="' + ech(mail) + '">E-mail</a>' : '') +
+        '<button class="btn sec sm" style="flex:1" onclick="copierTexte(this, ' + ech(JSON.stringify(r.url)).replace(/"/g,'&quot;') + ')">Copier</button>' +
+      '</div>';
+    if(navigator.share){
+      navigator.share({title:'Devis ' + r.numero, text:texte}).catch(function(){});
+    }
+  }, function(){ libere(btn); erreur(attenteLisible()); });
+}
+function copierTexte(btn, t){
+  try{
+    navigator.clipboard.writeText(t).then(function(){ btn.textContent = 'Copié'; });
+  }catch(e){ prompt('Copie le lien :', t); }
 }
 
 function pdfArchive(btn){
@@ -4494,6 +4542,18 @@ function activerNotifs(btn){
 
 /* La carte, posée sur le planning du salarié et sur le tableau du gérant. */
 function peindreNotifs(){
+  /* v99 — le gérant a aussi sa zone (devis signé en ligne, etc.), en haut du
+     tableau, qui disparaît une fois les notifications actives. */
+  var za = $('notifZoneAd');
+  if(za){
+    var ea = notifCalculer();
+    za.classList.toggle('hide', ea === 'actif' || ea === 'absent');
+    if(ea !== 'actif' && ea !== 'absent'){
+      za.innerHTML = '<b>Notifications</b><div class="mini" style="margin-top:4px">' + ech(notifTexte()) + '</div>' +
+        (ea === 'eteint' ? '<button class="btn sec sm" style="margin-top:10px" onclick="activerNotifs(this)">' +
+                           'Activer les notifications</button>' : '');
+    }
+  }
   var z = $('notifZone');
   if(!z) return;
   var e = notifCalculer();
@@ -4996,6 +5056,7 @@ function ecranAdmin(){
   $('hTitre').textContent = 'Le tableau';
   erreur('');
   window.scrollTo(0,0);
+  try{ peindreNotifs(); }catch(e){}
   if(!TABLEAU) TABLEAU = lsj('tableau');
   peindreTableau();
   if(navigator.onLine) chargerTableau();
@@ -5917,6 +5978,7 @@ function peindreFicheDevis(d){
       '<input id="adMotif" placeholder="Trop cher, concurrent…" value="' + ech(d.motif||'') + '">' +
     '</div>' +
 
+    blocSignatureDistance(d, 'admin') +
     blocPoserTravail(d) +
 
     /* Repartir de ce devis : même client, mêmes prestations, un devis neuf à
@@ -5960,8 +6022,8 @@ function blocPoserTravail(d){
   }
   if(st === 'SIGNE'){
     return '<div class="card"><h2>Le travail</h2>' +
-      '<div class="mini" style="margin-top:0">Ce devis est signé : son planning a été posé ' +
-      'tout seul.</div></div>';
+      '<div class="mini" style="margin-top:0">Ce devis est signé : ses interventions sont dans le Planning. ' +
+      'Celles sans date attendent dans le bac « à placer » ; ouvre-les pour voir les créneaux proposés.</div></div>';
   }
   if(st === 'REFUSE'){
     return '<div class="card"><h2>Le travail</h2>' +
@@ -6058,6 +6120,46 @@ function ficheChantier(id){
   $('hTitre').textContent = 'Chantier';
   erreur(''); window.scrollTo(0,0);
   peindreFicheChantier(c, false);
+  if((!c.date || !c.prestataire) && !estAnnule(c)) chargerSuggestions(c.id);
+}
+
+/* v99 — le placement automatique est coupé : Simon choisit. L'appli propose
+   trois créneaux (salarié le moins chargé, jours travaillés, route) ; un
+   appui remplit la date, l'heure et la personne, rien n'est enregistré tant
+   qu'il n'a pas appuyé sur « Enregistrer ». */
+var AD_SUGG = [];
+function chargerSuggestions(id){
+  var moi = session();
+  var zone = $('adSugg');
+  if(!moi || !zone || !navigator.onLine) return;
+  zone.innerHTML = '<div class="mini">Recherche de créneaux libres…</div>';
+  poster({action:'suggestions', id:id, nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(r){
+    var z = $('adSugg');
+    if(!z) return;
+    if(!r || !r.ok){ z.innerHTML = ''; return; }
+    AD_SUGG = r.suggestions || [];
+    if(!AD_SUGG.length){
+      z.innerHTML = '<div class="mini">' + ech(r.motif || 'Aucun créneau libre trouvé dans les 60 jours.') + '</div>';
+      return;
+    }
+    z.innerHTML = '<label>Créneaux proposés</label><div class="row" style="flex-wrap:wrap;gap:6px">' +
+      AD_SUGG.map(function(sg, i){
+        return '<span class="puce" onclick="prendreSuggestion(' + i + ')">' +
+          ech(sg.jour) + ' · ' + ech(sg.heure) + ' · ' + ech(sg.nom) + '</span>';
+      }).join('') + '</div><div class="mini">Un appui remplit la date, l\'heure et la personne. ' +
+      'Ajoute le second du binôme si besoin, puis Enregistrer.</div>';
+  }, function(){ var z = $('adSugg'); if(z) z.innerHTML = ''; });
+}
+function prendreSuggestion(i){
+  var sg = AD_SUGG[i];
+  if(!sg) return;
+  if($('adDate')) $('adDate').value = sg.date;
+  if($('adHeure')) $('adHeure').value = sg.heure;
+  AD_PRESTA = '';
+  choisirPresta(sg.nom);
+  Array.prototype.forEach.call(document.querySelectorAll('#adSugg .puce'), function(e, k){
+    e.classList.toggle('on', k === i);
+  });
 }
 
 /* Le nouveau chantier passe désormais par le formulaire « Nouvel événement »
@@ -6211,6 +6313,7 @@ function peindreFicheChantier(c, neuf){
       '<input id="adDate" type="date" value="' + ech(c.date||'') + '">' +
       '<label>Heure</label>' +
       '<input id="adHeure" type="time" value="' + ech(c.heure||'') + '">' +
+      '<div id="adSugg"></div>' +
       '<label>Intervenants <span class="mini">(un ou plusieurs)</span></label>' +
       '<div class="row" style="flex-wrap:wrap;gap:6px">' +
         gens.map(function(n){
@@ -6476,6 +6579,33 @@ function lireContrat(){
   var h = v('ct_heure'); if(h !== undefined) CT.heure = h;
   var f = v('ct_fin'); if(f !== undefined) CT.fin = f;
   var j = v('ct_jusqua'); if(j !== undefined) CT.jusquA = j;
+  var dl = v('ct_devis'); if(dl !== undefined) CT.devisLie = dl;
+}
+
+/* v99 — « toutes les interventions doivent être reliées à un devis, et par
+   la suite à une facture ». Le formulaire propose les devis du tableau, ceux
+   du client tapé d'abord. « Sans devis » reste possible (dépannage), mais
+   l'écran dit ce que cela coûte : pas de prix pour la facture. */
+function optionsDevisLie(c){
+  var cl = String(c.client || '').trim().toLowerCase();
+  var l = ((TABLEAU||{}).devis||[]).filter(function(d){
+    return String(d.statut || '').toUpperCase() !== 'REFUSE';
+  }).map(function(d){
+    var nom = String(d.client || '').toLowerCase();
+    var proche = cl.length >= 3 && (nom.indexOf(cl) >= 0 || cl.indexOf(nom) >= 0) ? 1 : 0;
+    return {d: d, proche: proche};
+  });
+  l.sort(function(a, b){
+    if(a.proche !== b.proche) return b.proche - a.proche;
+    return String(b.d.date || '') < String(a.d.date || '') ? -1 : 1;
+  });
+  return '<option value="">Sans devis (dépannage, prix à indiquer dans la description)</option>' +
+    l.slice(0, 80).map(function(x){
+      var d = x.d;
+      return '<option value="' + ech(d.numero) + '"' + (c.devisLie === d.numero ? ' selected' : '') + '>' +
+        ech((x.proche ? '★ ' : '') + (d.client || '') + ' · ' + d.numero + ' · ' + eur(d.ht) + ' HT' +
+            (String(d.statut||'').toUpperCase() === 'SIGNE' ? ' · signé' : '')) + '</option>';
+    }).join('');
 }
 
 function ctPoser(k, val){ lireContrat(); CT[k] = val; peindreContrat(); }
@@ -6615,6 +6745,14 @@ function peindreContrat(){
       : '') +
   '</div>' +
 
+  (c.mode === 'neuf' && !c.devis
+    ? '<div class="card"><label for="ct_devis">Devis lié</label>' +
+      '<select id="ct_devis" onchange="lireContrat();peindreContrat()">' + optionsDevisLie(c) + '</select>' +
+      '<div class="mini">' + (c.devisLie
+        ? 'L\'intervention sera facturée au prix de ce devis.'
+        : '<span style="color:var(--warn)">Sans devis, la facture reprendra le prix écrit dans la description ' +
+          '(par exemple « 235 € HT »).</span>') + '</div></div>'
+    : '') +
   '<div class="card">' +
     ch('adresse', 'Où ?', c.adresse, 'type="text" placeholder="Adresse"') +
     '<div class="row" style="gap:8px">' +
@@ -6652,7 +6790,7 @@ function envoiContrat(){
     intervalle: c.rec === 'MOIS2' ? 2 : 1,
     debut:c.date, fin:c.jusquA || '',
     heure: c.journee ? '' : c.heure, duree: duree > 0 ? duree : '',
-    devis: c.devis || ''
+    devis: c.devis || c.devisLie || ''
   };
 }
 
@@ -6672,7 +6810,8 @@ function enregistrerContrat(btn){
       ? minutesDe(c.fin) - minutesDe(c.heure) : '';
     return posterChantierNeuf({ client:c.client.trim(), adresse:c.adresse, cp:c.cp, ville:c.ville,
       acces:c.acces, note:c.note, nature:c.nature, date:c.date,
-      heure:c.journee ? '' : c.heure, duree: d0 > 0 ? d0 : '', prestataire:c.prestataire }, btn);
+      heure:c.journee ? '' : c.heure, duree: d0 > 0 ? d0 : '', prestataire:c.prestataire,
+      devis: c.devisLie || '' }, btn);
   }
 
   var moi = session();
