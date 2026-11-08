@@ -15,6 +15,7 @@ var REMISE = {valeur:0, muet:false};
 var NATURE = null;      // 'ENTRETIEN' | 'VITRERIE' | 'FACADE' | 'CHANTIER' | 'REMISE'
 var ETAT = 'NORMAL';    // état du site constaté : 'NORMAL' | 'TRES_SALE'
 var PASSAGES = 0;       // par mois, seulement pour un entretien
+var ENGAGEMENT = { mois: 0, tacite: true };   // v103 — durée d'engagement d'un contrat
 var ETAPE = 1;
 var TYPE = null;           // 'PRO' ou 'PART' — choisi au début de chaque devis
 var PLUS2ANS = null;       // particulier : logement de plus de deux ans (true/false)
@@ -359,7 +360,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v102';
+var VERSION_APP = 'v103';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -1344,6 +1345,7 @@ function peindreRythme(){
   var r = rythmeDe(PASSAGES), m = $('mRythme'), m4 = $('mRythme4');
   var txt = r && r.calc ? r.calc + ' = ' + nb(r.v) + ' passages par mois en moyenne. Le prix mensuel est le même chaque mois.' : '';
   if(m) m.textContent = txt; if(m4) m4.textContent = txt;
+  try{ peindreEngagement(); }catch(e){}
 }
 
 function setPassages(v, surValidation){
@@ -1450,7 +1452,7 @@ function estRecurrent(){
    d'elle-même. */
 var MAIL_TON = 'vous', MAIL_TOUCHE = false;
 function prenomCommercial(){
-  var n = String((session() || {}).nom || '').trim().split(/\s+/)[0] || '';
+  var n = String(nomDocument((session() || {}).nom) || '').trim().split(/\s+/)[0] || '';
   return n ? n.charAt(0).toUpperCase() + n.slice(1).toLowerCase() : '';
 }
 function appelMail(tu){
@@ -1480,8 +1482,10 @@ function texteMailPropose(forcer){
         : 'Suite à mon passage, je vous transmets ci-joint le devis correspondant à votre demande') +
     (ry ? ', soit ' + ry.mot : '') + '.\n\n' +
     (tu ? 'N\'hésite pas si tu as la moindre question.' : 'Je reste disponible si vous avez la moindre question.') + '\n\n' +
-    (tu ? 'Belle journée !' : 'Je vous souhaite une agréable journée,') + '\n\n' +
-    'Cordialement,\n' + (prenomCommercial() || 'Simon') + ' - BREIZH BRILLANCE';
+    (tu ? 'Belle journée !' : 'Je vous souhaite une agréable journée,');
+  /* v103 — la signature (« CORDIALEMENT, Simon - BREIZH BRILLANCE ») et le
+     bandeau sont ajoutés par le bureau, comme dans Gmail : ne pas l'écrire ici,
+     sinon le client la lirait deux fois. */
   if($('fMailTexte')) $('fMailTexte').value = t;
   if($('fMailObjet') && (forcer || !$('fMailObjet').value)) $('fMailObjet').value = sujetMailPropose();
   MAIL_TOUCHE = false;
@@ -1501,10 +1505,11 @@ function majMailClient(){
   if($('tonTu')) $('tonTu').classList.toggle('on', MAIL_TON === 'tu');
   if(!$('fMailTexte').value) texteMailPropose(true);
   var signe = !!(typeof SIG !== 'undefined' && SIG && SIG.image);
-  if($('mMailSig')) $('mMailSig').textContent = signe
+  if($('mMailSig')) $('mMailSig').textContent = (signe
     ? 'Le devis signé à l\'écran est joint en PDF.'
     : 'Le PDF est joint, et un bouton « Signer le devis en ligne » est ajouté sous ton message. ' +
-      'Quand le client signe, le devis passe à « signé » tout seul et l\'intervention arrive dans le Planning, à placer.';
+      'Quand le client signe, le devis passe à « signé » tout seul et l\'intervention arrive dans le Planning, à placer.') +
+    ' Ta signature (' + signatureCourte() + ') et le bandeau sont ajoutés automatiquement en bas : ne les écris pas.';
 }
 function mailClient(){
   if(!$('fEnvoi') || !$('fEnvoi').checked) return null;
@@ -3114,7 +3119,7 @@ function sauverBrouillon(){
                     plus2ans:PLUS2ANS, taux:TAUX, dateSouhaitee:val('fDate'),
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
-                    nature:NATURE, passages:PASSAGES, etat:ETAT,
+                    nature:NATURE, passages:PASSAGES, etat:ETAT, engagement:ENGAGEMENT,
                     km:KM, kmAuto:KM_AUTO, origine:ORIGINE, lieu:LIEU,
                     modif:MODIF});
 }
@@ -3156,6 +3161,9 @@ function restaurer(b){
     $('c'+k).value = c[k.toLowerCase()]||''; });
   majKm();
   $('fObjet').value = b.objet||'';
+  ENGAGEMENT = b.engagement && typeof b.engagement === 'object'
+    ? { mois: Number(b.engagement.mois) || 0, tacite: b.engagement.tacite !== false } : { mois: 0, tacite: true };
+  peindreEngagement();
   $('fDate').value = b.dateSouhaitee||'';
   $('fDelai').value = b.delai||'';
   PLUS2ANS = (b.plus2ans === true || b.plus2ans === false) ? b.plus2ans : null;
@@ -3321,6 +3329,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       origine: ORIGINE,                       // 'PROSPECTION' | 'ENTRANT', pour le suivi
       lieuSignature: TYPE === 'PART' ? LIEU : '',   // commande le formulaire de rétractation
       passages: estRecurrent() ? PASSAGES : 0,
+      engagement: estRecurrent() ? { mois: ENGAGEMENT.mois, tacite: ENGAGEMENT.tacite } : null,
       notes: val('fNotes'),
       signataire: val('fSignataire'),
       signature: SIG.image || '',
@@ -4053,6 +4062,9 @@ function ouvrirModification(id, btn){
     LIEU = (d.lieuSignature === 'AGENCE') ? 'AGENCE' : 'CLIENT';
     majOrigine();
     $('fObjet').value = d.objet || '';
+    ENGAGEMENT = d.engagement && typeof d.engagement === 'object'
+      ? { mois: Number(d.engagement.mois) || 0, tacite: d.engagement.tacite !== false } : { mois: 0, tacite: true };
+    peindreEngagement();
     $('fDate').value = d.dateSouhaitee || '';
     $('fDelai').value = d.delai || '';
     $('fNotes').value = d.notes || '';
@@ -4214,6 +4226,7 @@ function badgeArchive(d){
 }
 
 function rendreArchive(){
+  try{ peindreChiffresCommercial(); }catch(e){}
   var z = $('arListe');
   if(!z) return;
   /* Le menu des mois se refait ici aussi : la liste du bureau arrive après
@@ -4815,6 +4828,12 @@ function taches(t){
     .filter(function(c){ return !c.date || c.date >= isoJour(new Date(Date.now() - 7*86400000)); }).length;
   if(soucis) l.push({ n:soucis, mot:'problème' + (soucis>1?'s':'') + ' signalé' + (soucis>1?'s':'') + ' par l\'équipe cette semaine',
                        go:"allerPlanning('liste')", ton:'danger' });
+  var ech45 = isoJour(new Date(Date.now() + 45*86400000));
+  var echeances = (t.recurrents || []).filter(function(s){
+    return s.actif && s.fin && s.fin >= auj && s.fin <= ech45 && s.reconduction !== 'TACITE';
+  }).length;
+  if(echeances) l.push({ n:echeances, mot:'contrat' + (echeances>1?'s':'') + ' arrive' + (echeances>1?'nt':'') +
+                          ' à échéance dans moins de 45 jours (renouveler ?)', go:'listeContrats()', ton:'warn' });
   var dv = t.devis || [];
   var contrats = dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat; }).length;
   if(contrats) l.push({ n:contrats, mot:'contrat' + (contrats>1?'s':'') + ' signé' + (contrats>1?'s':'') +
@@ -6273,6 +6292,7 @@ function ficheChantier(id){
   erreur(''); window.scrollTo(0,0);
   peindreFicheChantier(c, false);
   if((!c.date || !c.prestataire) && !estAnnule(c)) chargerSuggestions(c.id);
+  try{ peindreChoixDate(c, !c.date || !c.prestataire); }catch(e){}
 }
 
 /* v99 — le placement automatique est coupé : Simon choisit. L'appli propose
@@ -6467,6 +6487,7 @@ function peindreFicheChantier(c, neuf){
       '<label>Heure</label>' +
       '<input id="adHeure" type="time" value="' + ech(c.heure||'') + '">' +
       '<div id="adSugg"></div>' +
+      (neuf ? '' : '<div id="adSuggLoc"></div><div id="adMiniCal"></div>') +
       '<label>Intervenants <span class="mini">(un ou plusieurs)</span></label>' +
       '<div class="row" style="flex-wrap:wrap;gap:6px">' +
         gens.map(function(n){
@@ -6989,6 +7010,7 @@ function peindreContrat(){
     '<textarea id="ct_note" rows="3" placeholder="Ce que le salarié verra en arrivant">' + ech(c.note) + '</textarea>' +
   '</div>' +
   blocFicheForm(c) +
+  (c.mode === 'modif' ? blocEcheance(c.id) : '') +
 
   '<button class="btn" id="bCtEnr" onclick="enregistrerContrat(this)">Enregistrer</button>' +
   (c.mode === 'modif'
@@ -7232,7 +7254,11 @@ function listeContrats(){
       '<div class="chTete"><b style="flex:1">' + ech(s.client) + '</b><span class="mini">' + ech(s.id) + '</span></div>' +
       '<div class="chSous">' + ech(libelleRythme(s)) + '</div>' +
       '<div class="mini">' + ech(quiLisible(s.prestataire) || 'personne') + (s.ville ? ' · ' + ech(s.ville) : '') +
-        (s.fin ? ' · jusqu\'au ' + ech(jjmmaa(s.fin)) : '') + '</div>' +
+        (s.fin ? ' · jusqu\'au ' + ech(jjmmaa(s.fin)) : '') +
+        (s.engagement ? ' · engagement ' + s.engagement + ' mois' + (s.reconduction === 'TACITE' ? ', reconduction tacite' : '') : '') + '</div>' +
+      (vivant(s) && s.fin && s.fin <= isoJour(new Date(Date.now() + 45*86400000))
+        ? '<div class="mini" style="color:var(--warn);font-weight:600">Échéance le ' + ech(jjmmaa(s.fin)) +
+          (s.reconduction === 'TACITE' ? ' · sera reconduit tout seul 30 jours avant' : ' · à renouveler') + '</div>' : '') +
     '</div>';
   };
   $('adFiche').innerHTML =
@@ -7792,7 +7818,7 @@ function nouveauDevis(){
   debloquer($('bSuiv'));
   LIGNES = [];
   REMISE = {valeur:0, muet:false};
-  NATURE = null; PASSAGES = 0;
+  NATURE = null; PASSAGES = 0; ENGAGEMENT = { mois: 0, tacite: true }; try{ peindreEngagement(); }catch(e){}
   ETAT = 'NORMAL';
   KM = ''; KM_AUTO = true;
   GRP = {};
@@ -9279,4 +9305,254 @@ function modeEmploiFactures(){
     'puis valide et envoie. Rien ne part au client tant que tu ne l\'as pas fait.</li>' +
     '<li>Une carte grisée dit ce qui manque (adresse, prix…) : complète le devis, la note de l\'intervention ou l\'onglet CONTRATS.</li>' +
     '</ol></details>';
+}
+
+/* ====================== v103 ====================== */
+
+/* Le nom imprimé pour un compte (REGLAGES noms_documents : « TITEMA=Simon »). */
+function nomDocument(nom){
+  var n = String(nom || '').trim();
+  var s = String(((CFG||{}).reglages||{}).noms_documents || '').trim();
+  if(!n || !s) return n;
+  var r = n, k = n.toLowerCase();
+  s.split(/\s*;\s*/).forEach(function(p){
+    var m = p.match(/^([^=]+)=(.+)$/);
+    if(m && m[1].trim().toLowerCase() === k) r = m[2].trim();
+  });
+  return r;
+}
+function signatureCourte(){
+  var s = String(((CFG||{}).reglages||{}).signature_mail || '').trim() || 'CORDIALEMENT, Simon - BREIZH BRILLANCE';
+  return s.replace(/\s*\n+\s*/g, ' ');
+}
+
+/* ---- la durée d'engagement d'un contrat, sur le devis ----
+   « Les contrats ayant une échéance, il faut les placer sur la durée à partir
+   de la signature. » Le commercial choisit la durée (ou sans engagement) et la
+   reconduction ; le devis l'imprime ; à la signature, le contrat reçoit sa fin. */
+var ENGAGEMENTS = [0, 3, 6, 12, 24];
+function peindreEngagement(){
+  var z = $('blocEngag');
+  if(!z) return;
+  var on = estRecurrent();
+  z.classList.toggle('hide', !on);
+  if(!on) return;
+  z.innerHTML = '<label>Durée d\'engagement</label>' +
+    '<div class="row" style="flex-wrap:wrap;gap:6px">' + ENGAGEMENTS.map(function(m){
+      return '<span class="puce' + (ENGAGEMENT.mois === m ? ' on' : '') + '" onclick="choisirEngagement(' + m + ')">' +
+        (m ? m + ' mois' : 'Sans engagement') + '</span>';
+    }).join('') + '</div>' +
+    (ENGAGEMENT.mois
+      ? '<label style="display:flex;gap:10px;align-items:center;margin-top:10px">' +
+        '<input type="checkbox" style="width:20px;height:20px;flex:none"' + (ENGAGEMENT.tacite ? ' checked' : '') +
+        ' onchange="ENGAGEMENT.tacite = this.checked; sauverBrouillon(); peindreEngagement()">' +
+        '<span>Renouvelable par tacite reconduction</span></label>' +
+        '<div class="mini">' + (ENGAGEMENT.tacite
+          ? 'Le contrat court ' + ENGAGEMENT.mois + ' mois à partir de la signature, puis se renouvelle de lui-même par périodes de ' +
+            ENGAGEMENT.mois + ' mois. Le planning continue sans rien faire.'
+          : 'Le contrat s\'arrête au bout de ' + ENGAGEMENT.mois + ' mois. Le bureau sera prévenu 45 jours avant pour le renouveler.') + '</div>'
+      : '<div class="mini">Le client peut arrêter quand il veut. Le planning continue tant que le contrat n\'est pas arrêté.</div>');
+}
+function choisirEngagement(m){
+  ENGAGEMENT.mois = Number(m) || 0;
+  sauverBrouillon();
+  peindreEngagement();
+}
+
+/* ---- l'échéance d'un contrat, dans sa fiche ---- */
+function blocEcheance(id){
+  var s = contratDe(id + '|');
+  if(!s) return '';
+  var auj = isoJour();
+  var mois = s.engagement || 12;
+  return '<div class="card"><b>Échéance</b><div class="mini" style="margin:4px 0 8px">' +
+    (s.fin ? 'Le contrat court jusqu\'au <b>' + ech(jjmmaa(s.fin)) + '</b>' +
+      (s.engagement ? ' (engagement de ' + s.engagement + ' mois)' : '') + '. ' +
+      (s.reconduction === 'TACITE' ? 'Reconduction tacite : il sera prolongé de ' + mois + ' mois tout seul, 30 jours avant.'
+                                   : 'Sans reconduction : il s\'arrête à cette date si tu ne le renouvelles pas.')
+           : 'Pas d\'échéance : le contrat continue jusqu\'à ce que tu l\'arrêtes.') + '</div>' +
+    (s.fin ? '<div class="row" style="gap:8px;flex-wrap:wrap">' +
+      [6, 12, 24].map(function(m){
+        return '<button class="btn sec sm" style="flex:1" onclick="renouvelerContrat(\'' + ech(id) + '\',' + m + ', this)">Renouveler ' + m + ' mois</button>';
+      }).join('') + '</div>' : '') + '</div>';
+}
+function renouvelerContrat(id, mois, btn){
+  var moi = session();
+  if(btn) occuper(btn, '…');
+  poster({action:'recurrentRenouveler', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:id, mois:mois}, 40000).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) || attenteLisible());
+    AD_MOT_T = 0; AD_MOT = 'Contrat ' + id + ' renouvelé jusqu\'au ' + jjmmaa(r.fin);
+    CT = null; retourTableau(); chargerTableau();
+  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+}
+
+/* ---- choisir une date sans quitter la fiche ----
+   « Pour les prestations à replacer à cause des fériés, il faut me suggérer
+   une date, ou me permettre de choisir sur le calendrier sur la même page. »
+   Calculé ici, avec le planning déjà chargé : trois jours proches de la date
+   d'origine (même heure, même équipe, sans dimanche ni férié, en préférant les
+   jours où l'équipe est libre à cette heure-là), et un petit calendrier du
+   mois où chaque jour dit combien d'interventions l'équipe a déjà. */
+var MINI_MOIS = '', MINI_C = null;
+function dateOrigine(c){
+  var k = String(c.recurrent || '');
+  if(k.indexOf('|') > 0) return k.split('|')[1];
+  return String(c.date || '').slice(0, 10) || isoJour(new Date(Date.now() + 86400000));
+}
+function chargeEquipe(iso, qui, sauf){
+  var noms = nomsQui(qui);
+  return ((TABLEAU||{}).chantiers||[]).filter(function(x){
+    if(x.id === sauf || estAnnule(x) || String(x.date||'').slice(0,10) !== iso) return false;
+    if(!noms.length) return true;
+    return nomsQui(x.prestataire).some(function(n){ return noms.indexOf(n) >= 0; });
+  });
+}
+function minutesDeH(h){ var m = String(h||'').match(/^(\d{1,2}):(\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }
+function libreA(iso, c){
+  var h = minutesDeH(c.heure), d = Number(c.duree) || 60;
+  if(h === null) return true;
+  return !chargeEquipe(iso, c.prestataire, c.id).some(function(x){
+    var hx = minutesDeH(x.heure), dx = Number(x.duree) || 60;
+    return hx !== null && hx < h + d && h < hx + dx;
+  });
+}
+function suggestionsLocales(c){
+  var o = dateOrigine(c), auj = isoJour(), out = [];
+  var base = new Date(o + 'T12:00:00');
+  var ecarts = [-1, 1, -2, 2, 3, -3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+  ecarts.forEach(function(k){
+    var d = new Date(base); d.setDate(d.getDate() + k);
+    var iso = isoJour(d);
+    if(iso <= auj || d.getDay() === 0 || nomFerie(iso)) return;
+    out.push({ iso: iso, libre: libreA(iso, c), n: chargeEquipe(iso, c.prestataire, c.id).length, k: Math.abs(k) });
+  });
+  out.sort(function(a, b){ return (a.libre === b.libre ? 0 : (a.libre ? -1 : 1)) || a.k - b.k || a.n - b.n; });
+  return out.slice(0, 3);
+}
+function peindreChoixDate(c, ouvert){
+  MINI_C = c;
+  var z = $('adSuggLoc');
+  if(z && ouvert){
+    var l = suggestionsLocales(c);
+    var fer = c.ferie && c.ferie.nom ? 'Passage du ' + jourLisible(c.ferie.date) + ' (' + c.ferie.nom + ') à replacer. ' : '';
+    z.innerHTML = l.length ? '<label>Dates proches proposées</label><div class="mini" style="margin-top:0">' + ech(fer) +
+      'Même heure, même équipe' + (c.heure ? ' (' + ech(c.heure) + ')' : '') + '.</div>' +
+      '<div class="row" style="flex-wrap:wrap;gap:6px">' + l.map(function(s){
+        return '<span class="puce" onclick="prendreDateLocale(\'' + s.iso + '\', this)">' + ech(jourLisible(s.iso)) +
+          (s.libre ? ' · libre' : ' · déjà ' + s.n + ' interv.') + '</span>';
+      }).join('') + '</div>' : '';
+  }
+  var o = String(($('adDate') && $('adDate').value) || dateOrigine(c)).slice(0, 7);
+  MINI_MOIS = o;
+  var m = $('adMiniCal');
+  if(m) m.innerHTML = ouvert ? miniCalHtml() :
+    '<button class="lienTexte" onclick="MINI_MOIS=\'' + o + '\';$(\'adMiniCal\').innerHTML=miniCalHtml()">Choisir sur le calendrier</button>';
+}
+function prendreDateLocale(iso, el){
+  if($('adDate')) $('adDate').value = iso;
+  if(MINI_C && $('adHeure') && !$('adHeure').value && MINI_C.heure) $('adHeure').value = MINI_C.heure;
+  Array.prototype.forEach.call(document.querySelectorAll('#adSuggLoc .puce'), function(e){ e.classList.toggle('on', e === el); });
+  var m = $('adMiniCal'); if(m && m.querySelector('.miniCal')){ MINI_MOIS = iso.slice(0, 7); m.innerHTML = miniCalHtml(); }
+}
+function miniCalBouger(n){
+  var a = Number(MINI_MOIS.slice(0, 4)), mo = Number(MINI_MOIS.slice(5, 7)) - 1 + n;
+  var d = new Date(a, mo, 1, 12);
+  MINI_MOIS = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+  $('adMiniCal').innerHTML = miniCalHtml();
+}
+function miniCalHtml(){
+  var c = MINI_C || {}, p = MINI_MOIS, auj = isoJour();
+  var choisi = String(($('adDate') && $('adDate').value) || '');
+  var lundi = lundiDe(p + '-01'), d = new Date(lundi + 'T12:00:00');
+  var a = Number(p.slice(0, 4)), mo = Number(p.slice(5, 7));
+  var dernier = isoJour(new Date(a, mo, 0, 12));
+  var h = '<div class="miniCal"><div class="row" style="align-items:center;gap:6px;margin:10px 0 6px">' +
+    '<button type="button" class="btn sec sm" style="width:auto" onclick="miniCalBouger(-1)">◀</button>' +
+    '<b style="flex:1;text-align:center">' + ech(libelleMoisCal(p)) + '</b>' +
+    '<button type="button" class="btn sec sm" style="width:auto" onclick="miniCalBouger(1)">▶</button></div>' +
+    '<div class="miniGrille">' + ['L','M','M','J','V','S','D'].map(function(j){ return '<span class="miniT">' + j + '</span>'; }).join('');
+  for(var i = 0; i < 42; i++){
+    var iso = isoJour(d);
+    if(i % 7 === 0 && i >= 28 && iso > dernier) break;
+    var n = chargeEquipe(iso, c.prestataire, c.id).length, fer = nomFerie(iso);
+    var passe = iso < auj, dehors = iso.slice(0, 7) !== p;
+    h += '<button type="button" class="miniJ' + (dehors ? ' miniHors' : '') + (passe || fer || d.getDay() === 0 ? ' miniOff' : '') +
+      (iso === choisi ? ' miniOn' : '') + (iso === auj ? ' miniAuj' : '') + '"' +
+      (passe ? ' disabled' : '') + ' onclick="choisirMiniJour(\'' + iso + '\')" title="' + ech(fer || (n + ' intervention(s)')) + '">' +
+      '<b>' + d.getDate() + '</b><i>' + (fer ? 'férié' : (n ? n : '')) + '</i></button>';
+    d.setDate(d.getDate() + 1);
+  }
+  h += '</div>';
+  if(choisi){
+    var l = chargeEquipe(choisi, c.prestataire, c.id).sort(function(x, y){ return String(x.heure||'99') < String(y.heure||'99') ? -1 : 1; });
+    h += '<div class="mini" style="margin-top:6px"><b>' + ech(jourLisible(choisi)) + '</b> · ' +
+      (l.length ? l.map(function(x){ return ech((x.heure ? x.heure + ' ' : '') + (x.client || '')); }).join(' · ')
+                : 'rien de prévu pour cette équipe') + '</div>';
+  }
+  return h + '<div class="mini">Le chiffre de chaque jour : interventions déjà prévues pour ' +
+    ech(quiLisible(c.prestataire) || 'toute l\'équipe') + '.</div></div>';
+}
+function choisirMiniJour(iso){
+  if($('adDate')) $('adDate').value = iso;
+  if(MINI_C && $('adHeure') && !$('adHeure').value && MINI_C.heure) $('adHeure').value = MINI_C.heure;
+  $('adMiniCal').innerHTML = miniCalHtml();
+}
+
+/* ---- le chiffre et la commission du commercial ----
+   « Sur leur interface, outre les devis, ils doivent voir leur CA de devis
+   signés et leur commission prévue pour chaque prestation vendue. » Les taux
+   sont dans REGLAGES (commissions), provisoires en attendant les définitifs. */
+function tauxCommission(){
+  var s = String(((CFG||{}).reglages||{}).commissions || '');
+  var t = {};
+  s.split(/\s*;\s*/).forEach(function(p){ var m = p.match(/^([A-Z_]+)=([\d.,]+)$/i); if(m) t[m[1].toUpperCase()] = Number(m[2].replace(',', '.')); });
+  return t;
+}
+function commissionDevis(d, t){
+  var nat = String(d.nature || '').toUpperCase(), part = d.typeClient === 'PART';
+  var contrat = (nat === 'ENTRETIEN' || nat === 'VITRERIE') && Number(d.passages) > 0 && Number(d.mensuel) > 0;
+  if(contrat){
+    var mois = t.BASE_CONTRAT_MOIS || 12;
+    var base = Number(d.mensuel) * mois;
+    var taux = part ? t.CONTRAT_PART : t.CONTRAT_PRO;
+    var tr = part ? t.RENOUV_PART : t.RENOUV_PRO;
+    return { contrat: true, base: base, taux: taux || 0, com: base * (taux || 0) / 100,
+             renouv: tr ? base * tr / 100 : 0, tauxR: tr || 0, max: t.RENOUV_MAX || 0 };
+  }
+  var tx = nat === 'VITRERIE' ? (part ? t.VITRERIE_PART : t.VITRERIE_PRO) : (t[nat] || t.REMISE || 0);
+  var b = Number(d.ht) || 0;
+  return { contrat: false, base: b, taux: tx || 0, com: b * (tx || 0) / 100 };
+}
+function peindreChiffresCommercial(){
+  var z = $('mesChiffres');
+  if(!z) return;
+  var t = tauxCommission();
+  var signes = (typeof ARCH !== 'undefined' && ARCH ? ARCH : []).filter(function(d){ return String(d.statut).toUpperCase() === 'SIGNE'; });
+  if(!signes.length){ z.innerHTML = ''; z.classList.add('hide'); return; }
+  z.classList.remove('hide');
+  var mois = isoJour().slice(0, 7), an = isoJour().slice(0, 4);
+  var somme = function(l){ return l.reduce(function(s, d){ var c = commissionDevis(d, t); s.ca += c.base; s.com += c.com; return s; }, {ca: 0, com: 0}); };
+  var quand = function(d){ return String(d.signeLe || d.date || ''); };
+  var sm = somme(signes.filter(function(d){ return quand(d).slice(0, 7) === mois; }));
+  var sa = somme(signes.filter(function(d){ return quand(d).slice(0, 4) === an; }));
+  z.innerHTML = '<div style="display:flex;gap:10px;align-items:baseline"><h2 style="flex:1;margin:0">Mon chiffre</h2>' +
+    '<span class="mini">taux provisoires</span></div>' +
+    '<div class="row" style="gap:8px;margin-top:8px">' +
+      '<div class="card" style="flex:1;margin:0"><div class="mini">Ce mois-ci</div><b style="font-size:18px">' + eur(sm.ca) + '</b>' +
+        '<div class="mini">signé HT · commission ' + eur(sm.com) + '</div></div>' +
+      '<div class="card" style="flex:1;margin:0"><div class="mini">Depuis janvier</div><b style="font-size:18px">' + eur(sa.ca) + '</b>' +
+        '<div class="mini">signé HT · commission ' + eur(sa.com) + '</div></div></div>' +
+    '<details style="margin-top:10px"><summary class="mini">Détail par devis signé (' + signes.length + ')</summary>' +
+    signes.slice(0, 60).map(function(d){
+      var c = commissionDevis(d, t);
+      return '<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>' + ech(d.client) + '</b>' +
+        '<div class="mini">' + ech(jjmmaa(quand(d))) + ' · ' + ech(natureVue(d.nature) ? natureVue(d.nature).nom : (d.nature || '')) +
+        (d.typeClient === 'PART' ? ' · particulier' : ' · pro') + '</div>' +
+        '<div class="mini">' + (c.contrat
+          ? 'Contrat ' + eur(d.mensuel) + '/mois → ' + eur(c.base) + ' sur la 1re année × ' + nb(c.taux) + ' % = <b>' + eur(c.com) + '</b>' +
+            (c.renouv ? ', puis ' + eur(c.renouv) + ' par reconduction (' + nb(c.tauxR) + ' %' + (c.max ? ', ' + c.max + ' fois au plus' : '') + ')' : '')
+          : eur(c.base) + ' HT × ' + nb(c.taux) + ' % = <b>' + eur(c.com) + '</b>') + '</div></div>';
+    }).join('') + '</details>' +
+    '<div class="mini" style="margin-top:6px">Calculé sur les devis signés du bureau. Les taux définitifs seront fixés par la direction.</div>';
 }

@@ -53,6 +53,17 @@ var PDF = (function () {
     if (n === 0.33) return '1 passage tous les 3 mois';
     return nbPassages(n) + ' passage' + (n > 1 ? 's' : '') + ' par mois';
   }
+  /* v103 — le nom imprimé pour un compte (REGLAGES noms_documents : « TITEMA=Simon »). */
+  function nomAffiche(nom, reg) {
+    var n = String(nom || '').trim(), s = String((reg && reg.noms_documents) || '').trim();
+    if (!n || !s) return n;
+    var r = n;
+    s.split(/\s*;\s*/).forEach(function (p) {
+      var m = p.match(/^([^=]+)=(.+)$/);
+      if (m && m[1].trim().toLowerCase() === n.toLowerCase()) r = m[2].trim();
+    });
+    return r;
+  }
   function dateFr(d) {
     d = new Date(d);
     return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear();
@@ -223,6 +234,15 @@ var PDF = (function () {
       police('normal', 9, [55, 65, 81]);
       doc.text('Objet : ' + nomNature, M + 4, y + 3.4);
       y += 5;
+      /* v103 — la durée d'engagement d'un contrat, quand le devis la porte. */
+      var eng = devis.engagement;
+      if (eng && typeof eng === 'object' && (natD === 'ENTRETIEN' || natD === 'VITRERIE') && nbP > 0) {
+        var mE = Number(eng.mois) || 0;
+        doc.text(mE ? 'Durée : ' + mE + ' mois à compter de la signature' +
+                      (eng.tacite === false ? ', sans reconduction tacite.' : ', renouvelable par tacite reconduction par périodes de ' + mE + ' mois.')
+                    : 'Durée : sans engagement.', M + 4, y + 3.4);
+        y += 5;
+      }
     }
 
     /* ---------------- tableau ---------------- */
@@ -481,7 +501,7 @@ var PDF = (function () {
     }
     police('normal', 7, GRIS);
     var infos = ['Devis valable jusqu\'au ' + dateFr(devis.validite),
-                 'Établi par ' + txt(devis.commercial)];
+                 'Établi par ' + txt(nomAffiche(devis.commercial, reg))];
     /* La date d'intervention est une vraie date depuis la v46 ; la phrase du
        commercial ne la remplace plus, elle la complète. Les devis d'avant ne
        portent que la phrase : on l'imprime telle quelle. */

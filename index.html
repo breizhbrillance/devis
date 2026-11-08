@@ -697,7 +697,7 @@
   .factTitre{font-size:15px;margin:18px 2px 6px;color:var(--txt,inherit)}
   /* v100 — les cinq onglets du tableau */
   .adOngs{gap:4px;flex-wrap:nowrap}
-  .ctDevisRes{display:flex;flex-direction:column;gap:6px;margin-top:6px}.ctDevisLigne{text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line,#334);background:transparent;color:inherit;font-size:14px;cursor:pointer}.ctDevisLigne:active{opacity:.7}.ctDevisChoisi{display:flex;gap:8px;align-items:center;justify-content:space-between}.calFer{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(220,38,38,.07) 6px 12px)}.calFerL{display:inline-block;font-size:10px;font-weight:600;color:var(--danger);margin-left:4px;vertical-align:middle}.semFer{display:block;font-size:10px;font-style:normal;color:var(--danger);font-weight:600}.lienTexte{background:none;border:0;color:var(--acc);text-decoration:underline;font-size:12px;cursor:pointer;padding:4px}.factOngs .btn.on{background:var(--acc);color:#fff;border-color:var(--acc)}.factAide summary{cursor:pointer}.adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ctDevisRes{display:flex;flex-direction:column;gap:6px;margin-top:6px}.ctDevisLigne{text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line,#334);background:transparent;color:inherit;font-size:14px;cursor:pointer}.ctDevisLigne:active{opacity:.7}.ctDevisChoisi{display:flex;gap:8px;align-items:center;justify-content:space-between}.calFer{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(220,38,38,.07) 6px 12px)}.calFerL{display:inline-block;font-size:10px;font-weight:600;color:var(--danger);margin-left:4px;vertical-align:middle}.semFer{display:block;font-size:10px;font-style:normal;color:var(--danger);font-weight:600}.lienTexte{background:none;border:0;color:var(--acc);text-decoration:underline;font-size:12px;cursor:pointer;padding:4px}.factOngs .btn.on{background:var(--acc);color:#fff;border-color:var(--acc)}.factAide summary{cursor:pointer}.miniGrille{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}.miniT{text-align:center;font-size:11px;color:var(--sub)}.miniJ{border:1px solid var(--line);background:transparent;color:inherit;border-radius:8px;padding:4px 0;display:flex;flex-direction:column;align-items:center;min-height:40px;cursor:pointer}.miniJ b{font-size:13px}.miniJ i{font-size:10px;font-style:normal;color:var(--sub);min-height:12px}.miniHors{opacity:.45}.miniOff{opacity:.4}.miniOn{background:var(--acc);color:#fff;border-color:var(--acc)}.miniOn i{color:#fff}.miniAuj{outline:2px solid var(--acc)}.adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
   <!-- Les notifications. Le SDK vit chez OneSignal : sans réseau il ne se
        charge pas, et l'application s'en passe — le reste fonctionne hors
@@ -856,6 +856,7 @@
         <select id="fPassages" onchange="setPassages(this.value)"></select>
         <div class="mini" id="mRythme"></div>
         <div class="mini" id="mFreq">Tu peux laisser vide : la question revient avant d'enregistrer le devis.</div>
+        <div id="blocEngag" class="hide"></div>
       </div>
     </div>
   </section>
@@ -1140,6 +1141,7 @@
 
   <!-- ÉTAPE 6 : HISTORIQUE -->
   <section id="e6" class="hide">
+    <div class="card hide" id="mesChiffres"></div>
     <div class="card">
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">
         <h2 style="flex:1;margin:0">Mes devis</h2>
@@ -1616,11 +1618,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=102"></script>
-<script src="jspdf.umd.min.js?v=102"></script>
-<script src="police.js?v=102"></script>
-<script src="logo.js?v=102"></script>
-<script src="pdf.js?v=102"></script>
-<script src="app.js?v=102"></script>
+<script src="config.js?v=103"></script>
+<script src="jspdf.umd.min.js?v=103"></script>
+<script src="police.js?v=103"></script>
+<script src="logo.js?v=103"></script>
+<script src="pdf.js?v=103"></script>
+<script src="app.js?v=103"></script>
 </body>
 </html>

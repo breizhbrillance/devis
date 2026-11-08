@@ -147,7 +147,9 @@ var ENTETES_RECURRENTS_ = [
      lui qui empêche d'écrire deux fois le même contrat. */
   'DEVIS',
   /* v101 — la fiche chantier du contrat, recopiée sur chaque passage. */
-  'FICHE', 'FICHE_NOM'
+  'FICHE', 'FICHE_NOM',
+  /* v103 — l'engagement : durée en mois et reconduction (TACITE / NON). */
+  'ENGAGEMENT_MOIS', 'RECONDUCTION'
 ];
 
 /* A PLANIFIER : le devis est signé, personne ni date encore posés.
@@ -357,7 +359,10 @@ var ENTETES_DEVIS_ = [
      de rétractation du devis imprimé (art. L221-1 du Code de la consommation,
      « y compris à la suite d'une sollicitation du consommateur »). Vide sur un
      devis professionnel, qui n'ouvre pas ce droit. */
-  'LIEU_SIGNATURE'
+  'LIEU_SIGNATURE',
+  /* v103 — la durée d'engagement d'un contrat (mois, vide = sans engagement)
+     et sa reconduction (TACITE ou NON). */
+  'ENGAGEMENT_MOIS', 'RECONDUCTION'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -587,6 +592,12 @@ var REGLAGES_DEFAUT_ = [
    'OUI : la route entre deux chantiers d\'une même journée est calculée par Google Maps, d\'une adresse à l\'autre. NON : on compte toujours trajet_minutes'],
   ['trajet_minutes', '30',
    'Temps de route compté, en minutes, quand l\'itinéraire ne peut pas être calculé (adresse manquante, Google Maps muet)'],
+  ['signature_mail', 'CORDIALEMENT,\n\nSimon - BREIZH BRILLANCE',
+   'Signature ajoutée sous les mails aux clients (devis, factures), avant le bandeau'],
+  ['noms_documents', 'TITEMA=Simon',
+   'Le nom imprimé sur les devis et les factures pour un compte : COMPTE=Nom ; COMPTE2=Nom2'],
+  ['commissions', 'CONTRAT_PART=5;CONTRAT_PRO=6;RENOUV_PART=2;RENOUV_PRO=3;RENOUV_MAX=3;VITRERIE_PART=6;VITRERIE_PRO=7;CHANTIER=8;REMISE=8;FACADE=8;BASE_CONTRAT_MOIS=12',
+   'Taux de commission des commerciaux, en % (provisoires). Contrat : sur la 1re année'],
   ['equipe_par_jour', '',
    'Qui fait les passages selon le jour : LUNDI=VICTOR;SAMEDI=MAXIME;AUTRES=MAXIME, VICTOR. Vide : la série décide'],
   ['travail_jours_feries', 'NON',
@@ -1011,7 +1022,7 @@ function doPost(e) {
                    'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
                    'mesDevis', 'devisArchive',
                    'poserDevis', 'suggestions', 'lienSignature',
-                   'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise'];
+                   'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1065,7 +1076,7 @@ function doPost(e) {
          /* La fiche chantier : le gérant la joint, la remplace, la retire. */
          'ficheJointe', 'ficheRetirer', 'ficheLire',
          /* Remettre « À faire » à zéro : un écran à lui. */
-         'aFaireRemise',
+         'aFaireRemise', 'recurrentRenouveler',
          'mesDevis', 'devisArchive']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire']
@@ -1097,6 +1108,7 @@ function doPost(e) {
     if (d.action === 'chantier') return reponse_(enregistrerChantier_(d, com));
     if (d.action === 'ficheLire') return reponse_(lireFiche_(d, com));
     if (d.action === 'aFaireRemise') return reponse_(remiseAFaire_(com));
+    if (d.action === 'recurrentRenouveler') { lock.waitLock(30000); return reponse_(recurrentRenouveler_(d, com)); }
     if (d.action === 'ficheJointe' || d.action === 'ficheRetirer') {
       lock.waitLock(30000);
       return reponse_(d.action === 'ficheJointe' ? joindreFiche_(d, com) : retirerFiche_(d, com));
@@ -1436,8 +1448,11 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
     LIEU_SIGNATURE: String(c.type || '').toUpperCase() === 'PART' ? lieuDevis_(devis.lieuSignature) : '',
     PASSAGES_MOIS: Number(devis.passages) || '',
     NOTES: devis.notes || '',
-    CONTROLE_TARIF: controle
+    CONTROLE_TARIF: controle,
+    ENGAGEMENT_MOIS: engagementMois_(devis),
+    RECONDUCTION: reconductionDevis_(devis)
   };
+  colonneAssuree_(SH.DEVIS, 'ENGAGEMENT_MOIS'); colonneAssuree_(SH.DEVIS, 'RECONDUCTION');
   majDevis_(numero, maj);
 
   /* Les lignes aussi : leur remise et leur montant ont changé. On réécrit
@@ -1720,7 +1735,9 @@ function enregistrer_(d, com) {
     KM_AGENCE: kmDevis,
     ORIGINE: origineDevis_(devis.origine),
     LIEU_SIGNATURE: String(c.type || '').toUpperCase() === 'PART' ? lieuDevis_(devis.lieuSignature) : '',
-    PASSAGES_MOIS: Number(devis.passages) || ''
+    PASSAGES_MOIS: Number(devis.passages) || '',
+    ENGAGEMENT_MOIS: engagementMois_(devis),
+    RECONDUCTION: reconductionDevis_(devis)
   };
   if (controleTarif) {
     tracerServeur_(devis.commercial || com.nom, 'ECART TARIF', controleTarif,
@@ -3907,6 +3924,7 @@ function occurrencesRecurrent_(r, du, au) {
  */
 function genererRecurrents_() {
   var bilan = { poses: 0, annules: 0, series: 0, motif: '' };
+  try { bilan.reconduits = reconduireContrats_(); } catch (eRc) { bilan.reconduits = 0; }
   var ss = SpreadsheetApp.getActive();
   var shR = ss.getSheetByName(SH.RECURRENTS);
   var sh = ss.getSheetByName(SH.CHANTIERS);
@@ -4161,7 +4179,9 @@ function contratDepuisDevis_(numero, qui) {
     ACCES: String(devis.NOTE_COMMERCIAL || '').trim(),
     FREQUENCE: r.frequence, JOUR_MOIS: r.frequence === 'MENSUEL' ? premier.getDate() : '',
     DEBUT: new Date(premier.getFullYear(), premier.getMonth(), premier.getDate(), 12),
-    FIN: '', ACTIF: 'OUI', NATURE: natureOuVide_(devis.NATURE),
+    FIN: finEngagement_(devis), ACTIF: 'OUI', NATURE: natureOuVide_(devis.NATURE),
+    ENGAGEMENT_MOIS: Math.round(Number(devis.ENGAGEMENT_MOIS) || 0) || '',
+    RECONDUCTION: String(devis.RECONDUCTION || '').toUpperCase().trim(),
     PRESTATIONS: natureLisible_(devis.NATURE),
     NOTE: 'Devis ' + num + (mensuel ? ' — ' + String(mensuel.toFixed(2)).replace('.', ',') + ' € HT par mois' : ''),
     DEVIS: num
@@ -4249,6 +4269,8 @@ function recurrentsPourAdmin_() {
       nature: natureOuVide_(r.NATURE),
       prestations: String(r.PRESTATIONS || r.NOTE || ''),
       devis: String(r.DEVIS || '').trim(),
+      engagement: Math.round(Number(r.ENGAGEMENT_MOIS) || 0) || 0,
+      reconduction: String(r.RECONDUCTION || '').toUpperCase().trim(),
       fiche: String(r.FICHE || '').trim() ? (String(r.FICHE_NOM || '').trim() || 'Fiche chantier') : ''
     };
   });
@@ -5661,7 +5683,12 @@ function mesDevis_(d, com) {
       objet: String(o.OBJET || ''),
       nature: String(o.NATURE || ''),
       validite: o.VALIDITE ? isoJour_(o.VALIDITE) : '',
-      pdf: String(o.LIEN_PDF || '').trim() ? true : false
+      pdf: String(o.LIEN_PDF || '').trim() ? true : false,
+      /* v103 — pour le chiffre et la commission du commercial. */
+      typeClient: /^PART/i.test(String(o.TYPE_CLIENT || '')) ? 'PART' : 'PRO',
+      passages: Number(o.PASSAGES_MOIS) || 0,
+      signeLe: o.DATE_STATUT instanceof Date && String(o.STATUT || '').toUpperCase() === 'SIGNE' ? isoJour_(o.DATE_STATUT) : '',
+      engagement: Math.round(Number(o.ENGAGEMENT_MOIS) || 0) || 0
     });
   });
   out.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
@@ -7283,7 +7310,7 @@ function mailPerso_(d, c) {
    d'interprété comme du HTML), puis le bouton de signature en ligne si le
    devis n'est pas déjà signé. */
 function corpsMailPerso_(devis, texte, reg) {
-  var paras = String(texte).replace(/\r/g, '').split(/\n{2,}/).map(function (p) {
+  var paras = sansSignature_(texte).split(/\n{2,}/).map(function (p) {
     return '<p style="margin:0 0 14px">' + echHtml_(p).replace(/\n/g, '<br>') + '</p>';
   }).join('');
   var bouton = (devis && devis.numero && !devis.signature)
@@ -7293,7 +7320,7 @@ function corpsMailPerso_(devis, texte, reg) {
       'aussitôt votre copie signée. Le devis est aussi en pièce jointe.</p>'
     : '';
   return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1f2937">' +
-    paras + bouton + '</div>';
+    paras + bouton + signatureHtml_(reg) + '</div>';
 }
 
 function corpsMail_(devis, reg, com, revise) {
@@ -7313,7 +7340,7 @@ function corpsMail_(devis, reg, com, revise) {
     '<p>Si vous avez des questions ou quoi que ce soit d\'autre, je reste disponible' +
     (tel ? ' par téléphone au ' + tel : '') + '.</p>' +
     '<p>Belle fin de journée,<br>Cordialement,</p>' +
-    '<p>' + echHtml_(devis.commercial) + ' — ' + echHtml_(reg.societe_nom) + '</p>' +
+    '<p>' + echHtml_(nomDocument_(devis.commercial, reg)) + ' — ' + echHtml_(reg.societe_nom) + '</p>' +
     '</div>';
 }
 
@@ -10155,4 +10182,201 @@ function miseEnPlaceV102() {
              'À faire : ' + z.devis + ' devis et ' + z.interventions + ' intervention(s) mis de côté.');
   return { equipe: e, planning: g, remise: z };
 }
+
+/** La durée d'engagement d'un devis reçu de l'appli, en mois ('' = sans). */
+function engagementMois_(devis) {
+  var e = devis && devis.engagement;
+  var n = Math.round(Number(e && e.mois) || 0);
+  return n > 0 && n <= 60 ? n : '';
+}
+function reconductionDevis_(devis) {
+  var e = devis && devis.engagement;
+  if (!e || !(Number(e.mois) > 0)) return '';
+  return e.tacite === false ? 'NON' : 'TACITE';
+}
+/** La fin d'un contrat signé : signature + durée − 1 jour, ou '' sans engagement. */
+function finEngagement_(devis) {
+  var m = Math.round(Number(devis && devis.ENGAGEMENT_MOIS) || 0);
+  if (m < 1) return '';
+  var s = devis.DATE_STATUT instanceof Date ? new Date(devis.DATE_STATUT) : new Date();
+  s.setMonth(s.getMonth() + m); s.setDate(s.getDate() - 1); s.setHours(12, 0, 0, 0);
+  return s;
+}
+
+
+/* ====================== v103 ====================== */
+
+/* La signature des mails aux clients. Simon, 8 novembre 2026 : « sur Gmail il
+   y a ça de pré-écrit (CORDIALEMENT, Simon - BREIZH BRILLANCE et le bandeau),
+   donc ne pas écrire deux fois, arrête-toi à Belle journée ». Un mail parti
+   du script ne reçoit pas la signature de Gmail : c'est donc le script qui la
+   pose, une seule fois, et retire celle qu'un texte ancien porterait encore. */
+function signatureMail_(reg) {
+  var s = String((reg && reg.signature_mail) || '').trim() || 'CORDIALEMENT,\n\nSimon - BREIZH BRILLANCE';
+  return s;
+}
+function sansSignature_(texte) {
+  var t = String(texte || '').replace(/\r/g, '').replace(/\s+$/, '');
+  /* « Cordialement, <prénom> - BREIZH BRILLANCE » (ou seul) en fin de texte. */
+  t = t.replace(/\n*\s*cordialement\s*,?\s*(\n+\s*[^\n]{0,60}breizh\s*brillance\s*)?$/i, '');
+  t = t.replace(/\n*\s*[^\n]{0,40}-\s*breizh\s*brillance\s*$/i, '');
+  return t.replace(/\s+$/, '');
+}
+function signatureHtml_(reg) {
+  return '<p style="margin:18px 0 0">' + echHtml_(signatureMail_(reg)).replace(/\n\n/g, '</p><p style="margin:14px 0 0">')
+    .replace(/\n/g, '<br>') + '</p>';
+}
+
+/* Le nom imprimé sur les devis et les factures. Simon : « au nom de Simon, pas
+   Titema ». REGLAGES noms_documents : « TITEMA=Simon ; AUTRE=Nom ». Le compte
+   garde son nom (numérotation, commissions) ; seul l'affichage change. */
+function nomDocument_(nom, reg) {
+  var n = String(nom || '').trim();
+  var s = String((reg && reg.noms_documents) || '').trim();
+  if (!n || !s) return n;
+  var r = n;
+  s.split(/\s*;\s*/).forEach(function (p) {
+    var m = p.match(/^([^=]+)=(.+)$/);
+    if (m && normNom_(m[1]) === normNom_(n)) r = m[2].trim();
+  });
+  return r;
+}
+
+/* ====================== LES CONTRATS À ÉCHÉANCE ======================
+   Simon : « les contrats ayant une échéance, il faut les placer sur la durée à
+   partir de la signature, et après tu me suggères quoi pour valider le
+   renouvellement ». Le devis porte la durée d'engagement (ENGAGEMENT_MOIS) et
+   la reconduction (TACITE / NON). À la signature, la série reçoit sa FIN
+   (signature + durée) : la nuit pose les passages, deux mois devant, jusqu'à
+   l'échéance, et pas au-delà.
+   Le renouvellement :
+   — 45 jours avant, « À faire » l'annonce ; un bouton « Renouveler » prolonge
+     d'une durée (recurrentRenouveler) ;
+   — reconduction TACITE : sans geste du gérant, 30 jours avant l'échéance la
+     série est prolongée d'elle-même de la même durée, le journal et une
+     notification le disent. Rien ne s'arrête par oubli. */
+function reconduireContrats_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.RECURRENTS);
+  if (!sh || sh.getLastRow() < 2) return 0;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var cF = en.indexOf('FIN'), cR = en.indexOf('RECONDUCTION'), cM = en.indexOf('ENGAGEMENT_MOIS'),
+      cA = en.indexOf('ACTIF'), cC = en.indexOf('CLIENT');
+  if (cF < 0 || cR < 0 || cM < 0) return 0;
+  var auj = minuit_(new Date()), n = 0;
+  for (var i = 1; i < v.length; i++) {
+    if (!String(v[i][0] || '').trim() || !estActif_(v[i][cA])) continue;
+    if (String(v[i][cR] || '').toUpperCase().trim() !== 'TACITE') continue;
+    var mois = Math.round(Number(v[i][cM]) || 0);
+    if (mois < 1 || !v[i][cF]) continue;
+    var fin = minuit_(v[i][cF]);
+    if (isNaN(fin.getTime())) continue;
+    var jours = Math.round((fin - auj) / 86400000);
+    if (jours > 30 || jours < -60) continue;
+    var nf = new Date(fin); nf.setMonth(nf.getMonth() + mois); nf.setHours(12, 0, 0, 0);
+    sh.getRange(i + 1, cF + 1).setValue(nf);
+    n++;
+    tracerServeur_('SYSTEME', 'CONTRAT RECONDUIT', String(v[i][0]) + ' · ' + String(v[i][cC] || '') +
+                   ' · jusqu\'au ' + isoJour_(nf), '', '');
+    try {
+      lireAdmins_().forEach(function (a) {
+        notifier_(a.nom, 'Contrat reconduit', String(v[i][cC] || '') + ' · jusqu\'au ' +
+                  Utilities.formatDate(nf, 'Europe/Paris', 'dd/MM/yyyy'), '');
+      });
+    } catch (eN) {}
+  }
+  return n;
+}
+
+function recurrentRenouveler_(d, com) {
+  var id = String(d.id || '').trim();
+  var L = ligneSerie_(id);
+  if (!L) return { ok: false, erreur: 'contrat introuvable' };
+  var mois = Math.round(Number(d.mois) || Number(L.o.ENGAGEMENT_MOIS) || 12);
+  if (mois < 1 || mois > 60) return { ok: false, erreur: 'durée illisible' };
+  var auj = minuit_(new Date());
+  var fin = L.o.FIN ? minuit_(L.o.FIN) : null;
+  var base = (fin && !isNaN(fin.getTime()) && fin > auj) ? fin : auj;
+  var nf = new Date(base); nf.setMonth(nf.getMonth() + mois); nf.setHours(12, 0, 0, 0);
+  ecrireCase_(L, 'FIN', nf);
+  ecrireCase_(L, 'ACTIF', 'OUI');
+  if (!Number(L.o.ENGAGEMENT_MOIS)) ecrireCase_(L, 'ENGAGEMENT_MOIS', mois);
+  var b = genererRecurrents_();
+  tracerServeur_(com ? com.nom : '', 'CONTRAT RENOUVELE', id + ' · ' + String(L.o.CLIENT || '') + ' · ' + mois +
+                 ' mois · jusqu\'au ' + isoJour_(nf), '', d.appareil || '');
+  return { ok: true, fin: isoJour_(nf), poses: b.poses || 0 };
+}
+
+/* ====================== LES CLIENTS DES CONTRATS DANS PENNYLANE ======================
+   « Les clients récurrents sont-ils déjà prêts sur Pennylane ? » La même
+   recherche que pour un brouillon (identifiant, SIREN, nom exact, nom sans
+   accents), sans rien créer. Avec creer=true, crée ceux qui manquent et note
+   leur identifiant dans CONTRATS. */
+function clientsContratsPennylane_(creer) {
+  if (!pennylaneJeton_()) return { ok: false, erreur: 'Pennylane n\'est pas connecté' };
+  var sh = SpreadsheetApp.getActive().getSheetByName('CONTRATS');
+  if (!sh || sh.getLastRow() < 2) return { ok: false, erreur: 'onglet CONTRATS vide' };
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var c = function (h) { return en.indexOf(h); };
+  var vus = {}, out = { ok: true, trouves: [], crees: [], manquants: [], erreurs: [] };
+  for (var i = 1; i < v.length; i++) {
+    var contrat = String(v[i][c('CONTRAT')] || '').trim();
+    if (!contrat || vus[contrat]) continue;
+    if (c('ACTIF') >= 0 && /^N/i.test(String(v[i][c('ACTIF')] || ''))) continue;
+    vus[contrat] = true;
+    var nom = String(v[i][c('CLIENT_FACTURE')] || '').trim() || contrat;
+    var cli = { nom: nom, siren: v[i][c('SIREN')], email: v[i][c('EMAIL')], adresse: v[i][c('ADRESSE')],
+                cp: v[i][c('CP')], ville: v[i][c('VILLE')], particulier: /^O/i.test(String(v[i][c('PARTICULIER')] || '')),
+                idConnu: c('ID_PENNYLANE') >= 0 ? v[i][c('ID_PENNYLANE')] : '' };
+    try {
+      if (cli.idConnu) { out.trouves.push(nom); continue; }
+      if (!creer) {
+        /* Recherche seule : pennylaneClient_ créerait ; on l'appelle sans adresse
+           pour qu'il s'arrête avant la création. */
+        var essai = {}; for (var k in cli) essai[k] = cli[k];
+        essai.adresse = ''; essai.cp = ''; essai.ville = '';
+        try { pennylaneClient_(essai); out.trouves.push(nom); }
+        catch (eR) {
+          if (/adresse de facturation/.test(String(eR.message))) out.manquants.push(nom + (cli.adresse && cli.cp && cli.ville ? '' : ' (adresse incomplète dans CONTRATS)'));
+          else throw eR;
+        }
+        continue;
+      }
+      var r = pennylaneClient_(cli);
+      (r.neuf ? out.crees : out.trouves).push(nom);
+      if (c('ID_PENNYLANE') >= 0) {
+        for (var j = 1; j < v.length; j++) {
+          if (String(v[j][c('CONTRAT')] || '').trim() === contrat) sh.getRange(j + 1, c('ID_PENNYLANE') + 1).setValue(r.id);
+        }
+      }
+    } catch (e) { out.erreurs.push(nom + ' : ' + String(e && e.message || e).slice(0, 120)); }
+  }
+  return out;
+}
+function verifierClientsPennylane() {
+  var r = clientsContratsPennylane_(false);
+  Logger.log(JSON.stringify(r));
+  return r;
+}
+
+/* La mise en place du 8 novembre au soir (v103), lancée une fois depuis l'éditeur. */
+function miseEnPlaceV103() {
+  var reg = lireReglages_();
+  if (!String(reg.signature_mail || '').trim()) ecrireReglage_('signature_mail', 'CORDIALEMENT,\n\nSimon - BREIZH BRILLANCE');
+  if (!String(reg.noms_documents || '').trim()) ecrireReglage_('noms_documents', 'TITEMA=Simon');
+  if (!String(reg.commissions || '').trim()) ecrireReglage_('commissions', COMMISSIONS_DEFAUT_);
+  ['ENGAGEMENT_MOIS', 'RECONDUCTION'].forEach(function (h) {
+    colonneAssuree_(SH.DEVIS, h); colonneAssuree_(SH.RECURRENTS, h);
+  });
+  var p = clientsContratsPennylane_(false);
+  Logger.log('Pennylane : ' + JSON.stringify(p));
+  return p;
+}
+
+/* Les taux de commission, provisoires (Simon enverra le détail). Lus par l'appli
+   des commerciaux. Contrat : % de la première année (mensuel × 12), puis un
+   taux de renouvellement sur les 3 premières reconductions. Ponctuel : % du HT. */
+var COMMISSIONS_DEFAUT_ = 'CONTRAT_PART=5;CONTRAT_PRO=6;RENOUV_PART=2;RENOUV_PRO=3;RENOUV_MAX=3;' +
+  'VITRERIE_PART=6;VITRERIE_PRO=7;CHANTIER=8;REMISE=8;FACADE=8;BASE_CONTRAT_MOIS=12';
 
