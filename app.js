@@ -360,7 +360,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v103';
+var VERSION_APP = 'v104';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4744,7 +4744,7 @@ function semaineHtml(chantiers, surClic, glisser){
          (glisser ? ' data-jour="' + ech(j) + '"' : '') + '>' +
          '<div class="semTete"><b>' + SEM_JOURS[i].slice(0,3) + '</b>' +
          '<span>' + d.getDate() + '</span>' +
-         (nomFerie(j) ? '<em class="semFer">Férié · ' + ech(nomFerie(j)) + '</em>' : '') + '</div>';
+         (nomFerie(j) ? '<em class="semFer">Férié · ' + ech(nomFerie(j)) + '</em>' : '') + etiquetteConge(j, 'semAbs', true) + '</div>';
     if(!liste.length){
       h += '<div class="semRien">—</div>';
     } else {
@@ -4834,6 +4834,23 @@ function taches(t){
   }).length;
   if(echeances) l.push({ n:echeances, mot:'contrat' + (echeances>1?'s':'') + ' arrive' + (echeances>1?'nt':'') +
                           ' à échéance dans moins de 45 jours (renouveler ?)', go:'listeContrats()', ton:'warn' });
+  /* v104 — une intervention posée pendant un congé de celui qui la fait. */
+  var pendantConge = ch.filter(function(c){
+    return c.date && c.date.slice(0,10) >= auj && st(c) !== 'FAIT' && absentsDe(c.date.slice(0,10), c.prestataire, t).length;
+  }).length;
+  if(pendantConge) l.push({ n:pendantConge, mot:'intervention' + (pendantConge>1?'s':'') + ' pendant un congé (à replacer ou à confier)',
+                            go:'listeConges()', ton:'danger' });
+  /* v104 — contrats-cadres BB : un an ferme, reconduction tacite, préavis de
+     trois mois avant l'échéance. Le mois qui précède la fin du préavis est le
+     moment de proposer une révision de prix (ou de l'entendre). */
+  var d90 = isoJour(new Date(Date.now() + 90*86400000)), d120 = isoJour(new Date(Date.now() + 120*86400000));
+  var preavis = {};
+  (t.recurrents || []).forEach(function(s){
+    if(s.actif && s.fin && s.reconduction === 'TACITE' && s.fin > d90 && s.fin <= d120) preavis[String(s.client).split(' — ')[0]] = 1;
+  });
+  var nPre = Object.keys(preavis).length;
+  if(nPre) l.push({ n:nPre, mot:'contrat' + (nPre>1?'s':'') + ' à moins de 4 mois de l\'échéance annuelle (préavis de 3 mois : révision de prix ?)',
+                    go:'listeContrats()', ton:'' });
   var dv = t.devis || [];
   var contrats = dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat; }).length;
   if(contrats) l.push({ n:contrats, mot:'contrat' + (contrats>1?'s':'') + ' signé' + (contrats>1?'s':'') +
@@ -5079,7 +5096,7 @@ function moisHtml(chantiers, avecBac){
          (iso === CAL_JOUR ? ' calOn' : '') + '" data-jour="' + iso + '" role="button" tabindex="0" ' +
          'aria-label="' + ech(jourLisible(iso)) + (fer ? ', férié' : '') + ', ' + l.length + ' chantier' + (l.length > 1 ? 's' : '') + '" ' +
          'onclick="calChoisir(\'' + iso + '\')"><b class="calN">' + d.getDate() + '</b>' +
-         (fer ? '<span class="calFerL" title="' + ech(fer) + '">Férié</span>' : '');
+         (fer ? '<span class="calFerL" title="' + ech(fer) + '">Férié</span>' : '') + etiquetteConge(iso, 'calAbsL');
     l.slice(0, CAL_PAR_CASE).forEach(function(c){
       var n = natureVue(c.nature);
       h += '<span class="calEv" data-ch="' + ech(String(c.id)) + '"' +
@@ -5123,7 +5140,7 @@ function journeeHtml(iso, l){
   var h = '<div class="card calJourne" id="calJourne" data-jour="' + iso + '">' +
     '<div style="display:flex;align-items:baseline;gap:8px">' +
     '<b style="flex:1;font-size:16px">' + ech(jourLisible(iso)) +
-      (nomFerie(iso) ? ' <span class="calFerL">Férié · ' + ech(nomFerie(iso)) + '</span>' : '') + '</b>' +
+      (nomFerie(iso) ? ' <span class="calFerL">Férié · ' + ech(nomFerie(iso)) + '</span>' : '') + etiquetteConge(iso, 'calAbsL', true) + '</b>' +
     '<span class="mini">' + (l.length ? l.length + ' chantier' + (l.length > 1 ? 's' : '') : 'rien de prévu') +
     '</span></div>' +
     '<div class="row" style="gap:8px;margin-top:10px">' +
@@ -6566,6 +6583,8 @@ function enregistrerPlanif(btn){
 function rouvrirFiche(){
   var f = AD_FICHE;
   if(!f) return;
+  if(f.type === 'conges'){ peindreConges(); return; }
+  if(f.type === 'contrats') return;
   if(f.type === 'devis'){
     var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === f.cle; })[0];
     if(d) peindreFicheDevis(d);
@@ -9425,9 +9444,13 @@ function suggestionsLocales(c){
     var d = new Date(base); d.setDate(d.getDate() + k);
     var iso = isoJour(d);
     if(iso <= auj || d.getDay() === 0 || nomFerie(iso)) return;
-    out.push({ iso: iso, libre: libreA(iso, c), n: chargeEquipe(iso, c.prestataire, c.id).length, k: Math.abs(k) });
+    /* v104 — un jour où toute l'équipe est en congé (ou la maison fermée)
+       n'est pas proposé ; un jour où l'un des deux manque passe après. */
+    if(equipeAbsente(iso, c.prestataire)) return;
+    var abs = absentsDe(iso, c.prestataire);
+    out.push({ iso: iso, libre: libreA(iso, c), n: chargeEquipe(iso, c.prestataire, c.id).length, k: Math.abs(k), abs: abs });
   });
-  out.sort(function(a, b){ return (a.libre === b.libre ? 0 : (a.libre ? -1 : 1)) || a.k - b.k || a.n - b.n; });
+  out.sort(function(a, b){ return (a.abs.length - b.abs.length) || (a.libre === b.libre ? 0 : (a.libre ? -1 : 1)) || a.k - b.k || a.n - b.n; });
   return out.slice(0, 3);
 }
 function peindreChoixDate(c, ouvert){
@@ -9440,7 +9463,7 @@ function peindreChoixDate(c, ouvert){
       'Même heure, même équipe' + (c.heure ? ' (' + ech(c.heure) + ')' : '') + '.</div>' +
       '<div class="row" style="flex-wrap:wrap;gap:6px">' + l.map(function(s){
         return '<span class="puce" onclick="prendreDateLocale(\'' + s.iso + '\', this)">' + ech(jourLisible(s.iso)) +
-          (s.libre ? ' · libre' : ' · déjà ' + s.n + ' interv.') + '</span>';
+          (s.libre ? ' · libre' : ' · déjà ' + s.n + ' interv.') + (s.abs.length ? ' · sans ' + ech(s.abs.join(', ')) : '') + '</span>';
       }).join('') + '</div>' : '';
   }
   var o = String(($('adDate') && $('adDate').value) || dateOrigine(c)).slice(0, 7);
@@ -9477,15 +9500,22 @@ function miniCalHtml(){
     if(i % 7 === 0 && i >= 28 && iso > dernier) break;
     var n = chargeEquipe(iso, c.prestataire, c.id).length, fer = nomFerie(iso);
     var passe = iso < auj, dehors = iso.slice(0, 7) !== p;
+    var absM = absentsDe(iso, c.prestataire), toutAbs = equipeAbsente(iso, c.prestataire);
+    if(!fer && absM.length) fer = toutAbs ? (absencesDuJour(iso).ferme ? 'fermé' : 'congé') : '';
     h += '<button type="button" class="miniJ' + (dehors ? ' miniHors' : '') + (passe || fer || d.getDay() === 0 ? ' miniOff' : '') +
+      (absM.length && !toutAbs ? ' miniDemi' : '') +
       (iso === choisi ? ' miniOn' : '') + (iso === auj ? ' miniAuj' : '') + '"' +
-      (passe ? ' disabled' : '') + ' onclick="choisirMiniJour(\'' + iso + '\')" title="' + ech(fer || (n + ' intervention(s)')) + '">' +
-      '<b>' + d.getDate() + '</b><i>' + (fer ? 'férié' : (n ? n : '')) + '</i></button>';
+      (passe ? ' disabled' : '') + ' onclick="choisirMiniJour(\'' + iso + '\')" title="' +
+      ech(fer || ((absM.length ? absM.join(', ') + ' en congé · ' : '') + n + ' intervention(s)')) + '">' +
+      '<b>' + d.getDate() + '</b><i>' + (fer ? (fer === 'congé' || fer === 'fermé' ? fer : 'férié') : (n ? n : '')) + '</i></button>';
     d.setDate(d.getDate() + 1);
   }
   h += '</div>';
   if(choisi){
     var l = chargeEquipe(choisi, c.prestataire, c.id).sort(function(x, y){ return String(x.heure||'99') < String(y.heure||'99') ? -1 : 1; });
+    var absC = absentsDe(choisi, c.prestataire);
+    if(absC.length) h += '<div class="mini" style="margin-top:6px;color:var(--danger);font-weight:600">' +
+      (absencesDuJour(choisi).ferme ? 'Fermeture ce jour-là.' : ech(absC.join(' et ')) + ' en congé ce jour-là.') + '</div>';
     h += '<div class="mini" style="margin-top:6px"><b>' + ech(jourLisible(choisi)) + '</b> · ' +
       (l.length ? l.map(function(x){ return ech((x.heure ? x.heure + ' ' : '') + (x.client || '')); }).join(' · ')
                 : 'rien de prévu pour cette équipe') + '</div>';
@@ -9537,7 +9567,7 @@ function peindreChiffresCommercial(){
   var sm = somme(signes.filter(function(d){ return quand(d).slice(0, 7) === mois; }));
   var sa = somme(signes.filter(function(d){ return quand(d).slice(0, 4) === an; }));
   z.innerHTML = '<div style="display:flex;gap:10px;align-items:baseline"><h2 style="flex:1;margin:0">Mon chiffre</h2>' +
-    '<span class="mini">taux provisoires</span></div>' +
+    '</div>' +
     '<div class="row" style="gap:8px;margin-top:8px">' +
       '<div class="card" style="flex:1;margin:0"><div class="mini">Ce mois-ci</div><b style="font-size:18px">' + eur(sm.ca) + '</b>' +
         '<div class="mini">signé HT · commission ' + eur(sm.com) + '</div></div>' +
@@ -9554,5 +9584,112 @@ function peindreChiffresCommercial(){
             (c.renouv ? ', puis ' + eur(c.renouv) + ' par reconduction (' + nb(c.tauxR) + ' %' + (c.max ? ', ' + c.max + ' fois au plus' : '') + ')' : '')
           : eur(c.base) + ' HT × ' + nb(c.taux) + ' % = <b>' + eur(c.com) + '</b>') + '</div></div>';
     }).join('') + '</details>' +
-    '<div class="mini" style="margin-top:6px">Calculé sur les devis signés du bureau. Les taux définitifs seront fixés par la direction.</div>';
+    '<div class="mini" style="margin-top:6px">Calculé sur les devis signés du bureau, aux taux fixés par la direction.</div>';
+}
+
+
+/* ====================== LES CONGÉS (v104) ======================
+   « Congés des salariés saisis dans l'appli, pour que les créneaux proposés
+   en tiennent compte. » Le gérant les saisit ici ; le bureau les range dans
+   l'onglet ABSENCES (qui, du, au — jamais le motif). Le planning les montre,
+   les dates proposées les évitent, et la nuit ne pose plus un passage de
+   contrat sur quelqu'un qui est en congé. */
+function absencesDuJour(iso, t){
+  var r = { ferme: false, noms: [] };
+  (((t || TABLEAU) || {}).absences || []).forEach(function(a){
+    if(iso < a.du || iso > a.au) return;
+    if(!a.qui) r.ferme = true;
+    else if(!r.noms.some(function(n){ return normNom(n) === normNom(a.qui); })) r.noms.push(a.qui);
+  });
+  return r;
+}
+/* Ceux de l'équipe « qui » qui sont absents ce jour-là (tous si c'est fermé). */
+function absentsDe(iso, qui, t){
+  var a = absencesDuJour(String(iso || '').slice(0, 10), t), noms = nomsQui(qui);
+  if(a.ferme) return noms.length ? noms : ['tout le monde'];
+  return noms.filter(function(n){ return a.noms.some(function(x){ return normNom(x) === normNom(n); }); });
+}
+function equipeAbsente(iso, qui){
+  if(absencesDuJour(iso).ferme) return true;
+  var n = nomsQui(qui);
+  return n.length > 0 && absentsDe(iso, qui).length === n.length;
+}
+function etiquetteConge(iso, classe, long){
+  var a = absencesDuJour(iso);
+  if(!a.ferme && !a.noms.length) return '';
+  var txt = a.ferme ? 'Fermé' : (long ? 'Congé · ' + a.noms.join(', ') : 'Congé ' + a.noms.map(function(n){ return n.charAt(0).toUpperCase() + '.'; }).join(' '));
+  return '<span class="' + classe + '" title="' + ech(a.ferme ? 'Fermeture' : a.noms.join(', ') + ' en congé') + '">' + ech(txt) + '</span>';
+}
+
+function listeConges(){
+  AD_FICHE = {type:'conges', cle:''};
+  montrer('eAd2');
+  $('hTitre').textContent = 'Les congés';
+  erreur(''); window.scrollTo(0,0);
+  peindreConges();
+}
+function peindreConges(){
+  var t = TABLEAU || {}, auj = isoJour();
+  var l = (t.absences || []).slice();
+  var gens = (t.prestataires || []);
+  var conflits = (t.chantiers || []).filter(function(c){
+    return !estAnnule(c) && c.date && c.date.slice(0,10) >= auj && String(c.statut||'').toUpperCase() !== 'FAIT' &&
+           absentsDe(c.date.slice(0,10), c.prestataire).length;
+  }).sort(function(a, b){ return a.date < b.date ? -1 : 1; });
+  var h = bandeauMot() + '<div class="card"><h2>Poser un congé</h2>' +
+    '<label for="cgQui">Qui</label><select id="cgQui">' +
+      gens.map(function(n){ return '<option value="' + ech(n) + '">' + ech(n) + '</option>'; }).join('') +
+      '<option value="TOUS">Tout le monde (fermeture)</option></select>' +
+    '<div class="row" style="gap:8px"><div style="flex:1"><label for="cgDu">Du</label><input id="cgDu" type="date" min="' + auj + '"></div>' +
+    '<div style="flex:1"><label for="cgAu">Au (inclus)</label><input id="cgAu" type="date" min="' + auj + '"></div></div>' +
+    '<button class="btn" style="margin-top:12px" onclick="ajouterConge(this)">Enregistrer le congé</button>' +
+    '<div class="mini">Pendant un congé, la nuit ne pose plus de passage de contrat sur la personne : un binôme part avec l\'autre seul, ' +
+    'un passage où il n\'y a qu\'elle va dans « À placer ». Les dates proposées pour replacer une intervention évitent ces jours-là. ' +
+    'À l\'enregistrement, la personne est retirée des binômes déjà posés sur la période.</div></div>';
+  h += '<h2 style="margin:16px 0 8px">En cours et à venir (' + l.length + ')</h2>' +
+    (l.length ? l.map(function(a){
+      return '<div class="card" style="margin-bottom:8px;display:flex;gap:10px;align-items:center">' +
+        '<div style="flex:1"><b>' + ech(a.qui || 'Fermeture (tout le monde)') + '</b>' +
+        '<div class="mini">' + (a.du === a.au ? 'le ' + ech(jourLisible(a.du)) : 'du ' + ech(jourLisible(a.du)) + ' au ' + ech(jourLisible(a.au))) + '</div></div>' +
+        '<button class="btn sec sm" style="width:auto" onclick="retirerConge(' + a.rang + ',\'' + ech(a.du) + '\',\'' + ech(a.qui).replace(/'/g, '&#39;') + '\', this)">Retirer</button></div>';
+    }).join('') : '<div class="card"><div class="empty">Aucun congé prévu.</div></div>');
+  if(conflits.length){
+    h += '<h2 style="margin:16px 0 8px;color:var(--danger)">Interventions pendant un congé (' + conflits.length + ')</h2>' +
+      '<div class="mini" style="margin:-4px 0 8px">Ouvre-la pour changer la date (les dates proposées tiennent compte des congés) ou la personne.</div>' +
+      conflits.map(function(c){
+        return '<div class="card chC" style="cursor:pointer;margin-bottom:8px" onclick="ficheChantier(\'' + ech(String(c.id)) + '\')">' +
+          '<div class="chTete"><b style="flex:1">' + ech(c.client || 'Intervention') + '</b><span class="mini">' + ech(jourLisible(c.date)) + '</span></div>' +
+          '<div class="mini">' + ech(quiLisible(c.prestataire)) + ' · ' + ech(absentsDe(c.date.slice(0,10), c.prestataire).join(' et ')) + ' en congé</div></div>';
+      }).join('');
+  }
+  h += '<button class="btn sec" style="margin-top:12px" onclick="retourTableau()">Retour au tableau</button>';
+  $('adFiche').innerHTML = h;
+}
+function ajouterConge(btn){
+  var qui = $('cgQui').value, du = $('cgDu').value, au = $('cgAu').value || du;
+  if(!du) return erreur('Choisis la date de début.');
+  if(au < du) return erreur('La fin est avant le début.');
+  var moi = session();
+  occuper(btn, '…');
+  poster({action:'absenceAjouter', nom:moi.nom, code:moi.code, appareil:APPAREIL, qui:qui, du:du, au:au}, 40000).then(function(r){
+    libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) || attenteLisible());
+    AD_MOT_T = 0;
+    AD_MOT = 'Congé enregistré' + (r.retires ? ' · retiré de ' + r.retires + ' binôme' + (r.retires > 1 ? 's' : '') : '') +
+      (r.conflits ? ' · ' + r.conflits + ' intervention' + (r.conflits > 1 ? 's' : '') + ' à replacer' : '');
+    $('cgDu').value = ''; $('cgAu').value = '';
+    chargerTableau();
+  }, function(){ libere(btn); erreur(attenteLisible()); });
+}
+function retirerConge(rang, du, qui, btn){
+  var moi = session();
+  occuper(btn, '…');
+  poster({action:'absenceRetirer', nom:moi.nom, code:moi.code, appareil:APPAREIL, rang:rang, du:du, qui:qui}, 40000).then(function(r){
+    libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) || attenteLisible());
+    TABLEAU.absences = (TABLEAU.absences || []).filter(function(a){ return a.rang !== rang; })
+      .map(function(a){ if(a.rang > rang) a.rang--; return a; });
+    peindreConges();
+    chargerTableau();
+  }, function(){ libere(btn); erreur(attenteLisible()); });
 }

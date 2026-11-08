@@ -1022,7 +1022,8 @@ function doPost(e) {
                    'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
                    'mesDevis', 'devisArchive',
                    'poserDevis', 'suggestions', 'lienSignature',
-                   'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler'];
+                   'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
+                   'absenceAjouter', 'absenceRetirer'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1077,6 +1078,8 @@ function doPost(e) {
          'ficheJointe', 'ficheRetirer', 'ficheLire',
          /* Remettre « À faire » à zéro : un écran à lui. */
          'aFaireRemise', 'recurrentRenouveler',
+         /* v104 — les congés des salariés, saisis par le gérant. */
+         'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire']
@@ -1109,6 +1112,10 @@ function doPost(e) {
     if (d.action === 'ficheLire') return reponse_(lireFiche_(d, com));
     if (d.action === 'aFaireRemise') return reponse_(remiseAFaire_(com));
     if (d.action === 'recurrentRenouveler') { lock.waitLock(30000); return reponse_(recurrentRenouveler_(d, com)); }
+    if (d.action === 'absenceAjouter' || d.action === 'absenceRetirer') {
+      lock.waitLock(30000);
+      return reponse_(d.action === 'absenceAjouter' ? absenceAjouter_(d, com) : absenceRetirer_(d, com));
+    }
     if (d.action === 'ficheJointe' || d.action === 'ficheRetirer') {
       lock.waitLock(30000);
       return reponse_(d.action === 'ficheJointe' ? joindreFiche_(d, com) : retirerFiche_(d, com));
@@ -2060,6 +2067,7 @@ function tableauAdmin_() {
   var hier = new Date(); hier.setDate(hier.getDate() - 30); hier.setHours(0, 0, 0, 0);
   var loin = new Date(); loin.setDate(loin.getDate() + 90);
   var natures = naturesParDevis_();
+  var calT = calendrier_(reg);
   var chantiers = [];
   /* Combien de chantiers chaque devis a-t-il déjà, et combien lui restent à
      poser ? Compté avant le filtre de dates, sinon un devis dont les passages
@@ -2112,7 +2120,8 @@ function tableauAdmin_() {
          d'origine, pour que « À placer » dise pourquoi il est là. */
       ferie: (!o.DATE && String(o.RECURRENT || '').indexOf('|') > 0)
         ? (function () { var iso = String(o.RECURRENT).split('|')[1];
-                         var n = nomFerieIso_(iso); return n ? { nom: n, date: iso } : ''; })()
+                         var n = nomFerieIso_(iso) || motifAbsence_(calT, iso, o.PRESTATAIRE);
+                         return n ? { nom: n, date: iso } : ''; })()
         : '',
       duree: Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || ''
     });
@@ -2154,6 +2163,9 @@ function tableauAdmin_() {
        montre une répétition sans fin. */
     /* v102 — ce que « À faire » a mis de côté lors de la dernière remise à zéro. */
     aFaireIgnores: ignoresAFaire_(),
+    /* v104 — les congés en cours et à venir : le planning les montre, et les
+       dates que l'appli propose les évitent. */
+    absences: absencesPourAdmin_(),
     recurrents: recurrentsPourAdmin_(),
     clients: clientsPourAdmin_(),
     horizon: (function () {
@@ -3976,19 +3988,30 @@ function genererRecurrents_() {
       if (deja[cle]) return;
       var fer = ferie_(cal, d);
       if (fer) bilan.feries++;
+      /* v104 — les congés. L'équipe du jour, moins qui est en congé : un
+         binôme dont l'un est absent part avec l'autre seul ; si personne ne
+         reste, ou si la maison est fermée, le passage va dans « À placer »,
+         comme un férié. */
+      var isoD = isoJour_(d);
+      var equipe = (regleQ && equipeRemplacable_(regleQ, r.PRESTATAIRE) && equipeDuJour_(regleQ, d))
+        ? equipeDuJour_(regleQ, d) : String(r.PRESTATAIRE || '');
+      var ferme = !fer && estAbsent_(cal, '', isoD, true);
+      var presents = nomsQui_(equipe).filter(function (n) { return !estAbsent_(cal, normNom_(n), isoD); });
+      var tousAbsents = nomsQui_(equipe).length > 0 && !presents.length;
+      if (!fer && (ferme || tousAbsents)) bilan.absences = (bilan.absences || 0) + 1;
+      var aPlacer = !!fer || ferme || tousAbsents;
       var v2 = {
         ID: 'CH-' + ('000' + (suivant + rang)).slice(-4),
         NUMERO: '',
         CLIENT: String(r.CLIENT || ''),
         ADRESSE: String(r.ADRESSE || ''), CP: String(r.CP || ''), VILLE: String(r.VILLE || ''),
         ACCES: String(r.ACCES || ''),
-        DATE: fer ? '' : d, HEURE: heureTexte_(r.HEURE),
-        PRESTATAIRE: (regleQ && equipeRemplacable_(regleQ, r.PRESTATAIRE) && equipeDuJour_(regleQ, d))
-          ? equipeDuJour_(regleQ, d) : String(r.PRESTATAIRE || ''),
+        DATE: aPlacer ? '' : d, HEURE: heureTexte_(r.HEURE),
+        PRESTATAIRE: aPlacer ? equipe : presents.join(', '),
         /* Date et salarié posés : le chantier est planifié, il part sur le
            téléphone. Sans salarié, il reste à planifier et remonte en tête de
            l'écran du gérant. Un férié : à placer. */
-        STATUT: (!fer && (String(r.PRESTATAIRE || '').trim() || (regleQ && equipeDuJour_(regleQ, d)))) ? 'PLANIFIE' : 'A PLANIFIER',
+        STATUT: (!aPlacer && presents.length) ? 'PLANIFIE' : 'A PLANIFIER',
         ARRIVEE: '', DEPART: '', MINUTES: '',
         PRESTATIONS_FAITES: '', SIGNALEMENT: '', PHOTOS: 0,
         /* Sans devis derrière, la fiche de travail du salarié serait vide :
@@ -10380,3 +10403,116 @@ function miseEnPlaceV103() {
 var COMMISSIONS_DEFAUT_ = 'CONTRAT_PART=5;CONTRAT_PRO=6;RENOUV_PART=2;RENOUV_PRO=3;RENOUV_MAX=3;' +
   'VITRERIE_PART=6;VITRERIE_PRO=7;CHANTIER=8;REMISE=8;FACADE=8;BASE_CONTRAT_MOIS=12';
 
+
+
+/* ====================== LES CONGÉS (v104) ======================
+   Simon, 8 novembre 2026 : « congés des salariés saisis dans l'appli, pour
+   que les créneaux proposés en tiennent compte ». L'onglet ABSENCES existait
+   (PRESTATAIRE, DU, AU — sans motif, volontairement) et le serveur s'en
+   servait déjà pour poser les chantiers d'un devis. Il manquait :
+   — de quoi les saisir depuis le téléphone du gérant ;
+   — que les passages des contrats les respectent : un binôme dont l'un est en
+     congé part avec l'autre seul ; seul et absent, le passage va dans
+     « À placer », comme un férié ;
+   — que le planning les montre, et que les dates proposées les évitent.
+   Les interventions déjà posées ne sont jamais déplacées en silence : à la
+   saisie d'un congé, l'absent est retiré des binômes de la période (l'autre
+   reste), et ce qui reste à une seule personne absente est signalé dans
+   « À faire » pour être replacé ou confié à quelqu'un d'autre. */
+function motifAbsence_(cal, iso, qui) {
+  if (!cal || !iso) return '';
+  if (estAbsent_(cal, '', iso, true)) return 'fermeture';
+  var l = nomsQui_(qui).filter(function (n) { return estAbsent_(cal, normNom_(n), iso); });
+  return l.length ? 'congé de ' + l.map(function (n) { return n.charAt(0) + n.slice(1).toLowerCase(); }).join(' et ') : '';
+}
+
+function absencesPourAdmin_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.ABSENCES);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim().toUpperCase(); });
+  var iQui = en.indexOf('PRESTATAIRE'), iDu = en.indexOf('DU'), iAu = en.indexOf('AU');
+  if (iDu < 0) return [];
+  var depuis = new Date(); depuis.setDate(depuis.getDate() - 1);
+  var lim = isoJour_(depuis), out = [];
+  for (var i = 1; i < v.length; i++) {
+    var du = jourDe_(v[i][iDu]);
+    if (!du) continue;
+    var au = (iAu >= 0 ? jourDe_(v[i][iAu]) : '') || du;
+    if (au < du) { var x = du; du = au; au = x; }
+    if (au < lim) continue;
+    var qui = iQui >= 0 ? String(v[i][iQui] || '').trim() : '';
+    var cle = normNom_(qui);
+    var tous = !cle || cle === 'tous' || cle === 'tout le monde' || cle === 'fermeture';
+    out.push({ rang: i + 1, qui: tous ? '' : qui, du: du, au: au });
+  }
+  out.sort(function (a, b) { return a.du < b.du ? -1 : (a.du > b.du ? 1 : 0); });
+  return out;
+}
+
+function absenceAjouter_(d, com) {
+  var du = jourDe_(d.du), au = jourDe_(d.au) || du;
+  if (!du) return { ok: false, erreur: 'date de début illisible' };
+  if (au < du) { var x = du; du = au; au = x; }
+  if ((dateIso_(au) - dateIso_(du)) / 86400000 > 366) return { ok: false, erreur: 'période de plus d\'un an' };
+  var qui = String(d.qui || '').trim(), cle = '';
+  if (qui && !/^(tous|tout le monde|fermeture)$/i.test(qui)) {
+    var qc = quiConnus_(qui);
+    if (!qc.ok) return { ok: false, erreur: qc.erreur };
+    if (nomsQui_(qc.valeur).length !== 1) return { ok: false, erreur: 'une personne à la fois' };
+    qui = qc.valeur; cle = normNom_(qui);
+  } else qui = 'TOUS';
+  var sh = creerOnglet_(SpreadsheetApp.getActive(), SH.ABSENCES, ENTETES_ABSENCES_);
+  sh.appendRow([qui, dateIso_(du), dateIso_(au)]);
+  var b = ajusterPourAbsence_({ cle: cle, du: du, au: au });
+  tracerServeur_(com ? com.nom : '', 'CONGE AJOUTE', (cle ? qui : 'fermeture') + ' · du ' + du + ' au ' + au +
+                 (b.retires ? ' · retiré de ' + b.retires + ' binôme(s)' : '') +
+                 (b.conflits ? ' · ' + b.conflits + ' intervention(s) à replacer' : ''), '', d.appareil || '');
+  return { ok: true, retires: b.retires, conflits: b.conflits };
+}
+
+function absenceRetirer_(d, com) {
+  var rang = Math.round(Number(d.rang) || 0);
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.ABSENCES);
+  if (!sh || rang < 2 || rang > sh.getLastRow()) return { ok: false, erreur: 'congé introuvable' };
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim().toUpperCase(); });
+  var l = sh.getRange(rang, 1, 1, sh.getLastColumn()).getValues()[0];
+  var iDu = en.indexOf('DU'), iQui = en.indexOf('PRESTATAIRE');
+  /* La ligne a pu bouger depuis que l'écran l'a lue : on vérifie qu'elle dit
+     bien ce que le gérant a sous les yeux avant de l'effacer. */
+  if (jourDe_(l[iDu]) !== jourDe_(d.du) ||
+      (iQui >= 0 && normNom_(l[iQui]).replace(/^(tous|tout le monde|fermeture)$/, '') !== normNom_(d.qui || ''))) {
+    return { ok: false, erreur: 'la liste des congés a changé : actualise et recommence' };
+  }
+  sh.deleteRow(rang);
+  tracerServeur_(com ? com.nom : '', 'CONGE RETIRE', (d.qui || 'fermeture') + ' · du ' + jourDe_(d.du), '', d.appareil || '');
+  return { ok: true };
+}
+
+/* Les interventions à venir déjà posées pendant le congé : l'absent quitte les
+   binômes, le reste est compté pour « À faire ». */
+function ajusterPourAbsence_(a) {
+  var b = { retires: 0, conflits: 0 };
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  if (!sh || sh.getLastRow() < 2) return b;
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var e = v[0].map(function (x) { return String(x).trim(); });
+  var cD = e.indexOf('DATE'), cQ = e.indexOf('PRESTATAIRE'), cS = e.indexOf('STATUT');
+  if (cD < 0 || cQ < 0) return b;
+  var auj = isoJour_(new Date());
+  for (var i = 1; i < v.length; i++) {
+    var d = v[i][cD];
+    if (!(d instanceof Date) || isNaN(d.getTime())) continue;
+    var iso = isoJour_(d);
+    if (iso < auj || iso < a.du || iso > a.au) continue;
+    var st = cS >= 0 ? String(v[i][cS] || '').toUpperCase().trim() : '';
+    if (st !== 'PLANIFIE' && st !== 'A PLANIFIER' && st !== '') continue;
+    var noms = nomsQui_(v[i][cQ]);
+    if (!a.cle) { b.conflits++; continue; }
+    if (!noms.some(function (n) { return normNom_(n) === a.cle; })) continue;
+    var reste = noms.filter(function (n) { return normNom_(n) !== a.cle; });
+    if (reste.length) { sh.getRange(i + 1, cQ + 1).setValue(reste.join(', ')); b.retires++; }
+    else b.conflits++;
+  }
+  return b;
+}
