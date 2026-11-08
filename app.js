@@ -6133,7 +6133,7 @@ function chargerSuggestions(id){
   var zone = $('adSugg');
   if(!moi || !zone || !navigator.onLine) return;
   zone.innerHTML = '<div class="mini">Recherche de créneaux libres…</div>';
-  poster({action:'suggestions', id:id, nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(r){
+  poster({action:'suggestions', id:id, nom:moi.nom, code:moi.code, appareil:APPAREIL}, 45000).then(function(r){
     var z = $('adSugg');
     if(!z) return;
     if(!r || !r.ok){ z.innerHTML = ''; return; }

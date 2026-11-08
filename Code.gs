@@ -2538,7 +2538,10 @@ function suggestionsPlacement_(d) {
   }
   var gens = prestatairesPlanning_();
   if (!gens.length) return { ok: true, suggestions: [], motif: 'aucun salarié décrit dans PRESTATAIRES (jours, plages)' };
-  var charge = chargeActuelle_();
+  /* La route au forfait : interroger Google Maps pour chaque journée de
+     chaque salarié prend plus de temps qu'un téléphone n'en accorde. Une
+     suggestion n'a pas besoin de la minute près. */
+  var charge = chargeActuelle_(true);
   var out = [];
   for (var k = 0; k < 3; k++) {
     var c = creneauPour_(minutes, depuis, gens, charge, '', 60, adresse);
@@ -2708,7 +2711,7 @@ function cleSemaine_(d) {
    On lit la durée prévue quand elle est là, et l'on compte une demi-journée
    par défaut pour une fiche ancienne qui n'en porte pas — mieux vaut un
    planning prudent qu'un salarié en retard toute la journée. */
-function chargeActuelle_() {
+function chargeActuelle_(auForfait) {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
   var reg = lireReglages_();
   /* Le trajet et le calendrier voyagent avec la charge : tout ce qui cherche
@@ -2716,7 +2719,7 @@ function chargeActuelle_() {
      « lieu » retient, par salarié et par jour, l'adresse du dernier chantier
      posé : c'est de là qu'il partira pour le suivant. */
   var charge = { jour: {}, semaine: {}, lieu: {},
-                 trajet: trajetMinutes_(reg), calcule: trajetCalcule_(reg), routes: {},
+                 trajet: trajetMinutes_(reg), calcule: auForfait ? false : trajetCalcule_(reg), routes: {},
                  cal: calendrier_(reg) };
   if (!sh || sh.getLastRow() < 2) return charge;
   var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
