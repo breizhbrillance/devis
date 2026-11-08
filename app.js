@@ -359,7 +359,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v93';
+var VERSION_APP = 'v95';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4593,6 +4593,127 @@ function basculerSemaine(qui){
   else vueChantiers(SEM_VUE ? 'liste' : 'semaine');
 }
 
+/* ====================== AUJOURD'HUI ======================
+   Demande de Simon, 8 novembre 2026 : « je ne trouve pas l'appli très simple
+   de compréhension ». Le tableau s'ouvre désormais sur une seule question :
+   qu'est-ce qui se passe aujourd'hui, et qu'est-ce qui m'attend ?
+
+   En haut, la liste « À traiter » : chaque ligne est un nombre, une phrase
+   en mots de tous les jours, et un appui qui mène à l'endroit où l'on règle
+   la chose. Rien à traiter : on le dit, et on passe à la journée.
+   Puis la journée, personne par personne, dans l'ordre des heures ; puis
+   demain, pour préparer. */
+function dateLongue(iso){
+  var s = jourDe(iso).toLocaleDateString('fr-FR', {weekday:'long', day:'numeric', month:'long'});
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function allerPlanning(vue, qui){
+  AD_ONGLET = 'chantiers';
+  try{ ls('adOnglet2', 'chantiers'); }catch(e){}
+  AD_VUE = vue || 'mois'; SEM_VUE = (AD_VUE === 'semaine');
+  try{ ls('adVue', AD_VUE); }catch(e){}
+  AD_QUI = qui || '';
+  peindreTableau(); window.scrollTo(0,0);
+}
+function allerDevis(){ ongletAdmin('devis'); window.scrollTo(0,0); }
+
+function taches(t){
+  var auj = isoJour(), hier = isoJour(new Date(Date.now() - 86400000));
+  var ch = (t.chantiers||[]).filter(function(c){ return !estAnnule(c); });
+  var st = function(c){ return String(c.statut||'').toUpperCase(); };
+  var l = [];
+  var sansDate = ch.filter(function(c){ return !c.date; }).length;
+  if(sansDate) l.push({ n:sansDate, mot:'intervention' + (sansDate>1?'s':'') + ' à placer dans le planning',
+                         go:"allerPlanning('mois')", ton:'warn' });
+  var sansQui = ch.filter(function(c){ return c.date && c.date >= auj && !c.prestataire; }).length;
+  if(sansQui) l.push({ n:sansQui, mot:'intervention' + (sansQui>1?'s':'') + ' sans personne pour la faire',
+                        go:"allerPlanning('liste','(non affectés)')", ton:'warn' });
+  var oublis = ch.filter(function(c){ return c.date && c.date.slice(0,10) === hier && st(c) !== 'FAIT'; }).length;
+  if(oublis) l.push({ n:oublis, mot:'intervention' + (oublis>1?'s':'') + ' d\'hier pas pointée' + (oublis>1?'s':'') +
+                       ' (faite ou pas ?)', go:"allerPlanning('liste')", ton:'danger' });
+  var soucis = ch.filter(function(c){ return st(c) === 'PROBLEME' || String(c.signalement||'').trim(); })
+    .filter(function(c){ return !c.date || c.date >= isoJour(new Date(Date.now() - 7*86400000)); }).length;
+  if(soucis) l.push({ n:soucis, mot:'problème' + (soucis>1?'s':'') + ' signalé' + (soucis>1?'s':'') + ' par l\'équipe cette semaine',
+                       go:"allerPlanning('liste')", ton:'danger' });
+  var dv = t.devis || [];
+  var contrats = dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat; }).length;
+  if(contrats) l.push({ n:contrats, mot:'contrat' + (contrats>1?'s':'') + ' signé' + (contrats>1?'s':'') +
+                         ' à mettre au calendrier', go:'allerDevis()', ton:'warn' });
+  var aPoser = dv.filter(function(d){ return d.statut === 'SIGNE' && !d.recurrent && Number(d.aPoser||0) > 0; }).length;
+  if(aPoser) l.push({ n:aPoser, mot:'devis signé' + (aPoser>1?'s':'') + ' dont le travail n\'est pas planifié',
+                       go:'allerDevis()', ton:'warn' });
+  var limite = isoJour(new Date(Date.now() - 10*86400000));
+  var relances = dv.filter(function(d){
+    var s = String(d.statut||'').toUpperCase();
+    return s !== 'SIGNE' && s !== 'REFUSE' && String(d.date||'').slice(0,10) && String(d.date||'').slice(0,10) <= limite;
+  }).length;
+  if(relances) l.push({ n:relances, mot:'devis envoyé' + (relances>1?'s':'') + ' sans réponse depuis plus de 10 jours',
+                         go:'allerDevis()', ton:'' });
+  return l;
+}
+
+function ligneJournee(c){
+  var s = String(c.statut||'').toUpperCase(), n = natureVue(c.nature);
+  var etat = s === 'FAIT' ? '<span class="acEt acOk">fait</span>'
+           : s === 'EN COURS' ? '<span class="acEt acEnc">en cours</span>'
+           : s === 'PROBLEME' ? '<span class="acEt acPb">problème</span>' : '';
+  return '<button class="acLigne" onclick="ficheChantier(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\')"' +
+    (n ? ' style="--nT:' + n.t + '"' : '') + '>' +
+    '<span class="acH">' + ech(c.heure ? String(c.heure).replace(':','h') : '—') + '</span>' +
+    '<span class="acC"><b>' + ech(c.client || 'Intervention') + '</b>' +
+    '<i>' + ech([c.ville, n ? n.nom : ''].filter(String).join(' · ')) + '</i></span>' + etat + '</button>';
+}
+
+function journeeParPersonne(liste, compact){
+  if(!liste.length) return '<div class="mini acVide">Rien de prévu.</div>';
+  var par = {}, ordre = [];
+  liste.forEach(function(c){
+    var k = c.prestataire || 'Personne n\'est affecté';
+    if(!par[k]){ par[k] = []; ordre.push(k); }
+    par[k].push(c);
+  });
+  ordre.sort(function(a, b){ return a.localeCompare(b); });
+  return ordre.map(function(k){
+    var l = par[k].sort(function(a, b){ return String(a.heure||'99') < String(b.heure||'99') ? -1 : 1; });
+    return '<div class="card acPers">' +
+      '<div class="acNom"><b>' + ech(k) + '</b><span class="mini">' + l.length + ' intervention' +
+      (l.length>1?'s':'') + '</span></div>' +
+      (compact ? '<div class="mini">' + l.map(function(c){
+          return ech((c.heure ? String(c.heure).replace(':','h') + ' ' : '') + (c.client||''));
+        }).join(' · ') + '</div>'
+        : l.map(ligneJournee).join('')) + '</div>';
+  }).join('');
+}
+
+function accueilHtml(t){
+  var auj = isoJour(), dem = isoJour(new Date(Date.now() + 86400000));
+  var ch = (t.chantiers||[]).filter(function(c){ return !estAnnule(c); });
+  var duJour = ch.filter(function(c){ return String(c.date||'').slice(0,10) === auj; });
+  var deDemain = ch.filter(function(c){ return String(c.date||'').slice(0,10) === dem; });
+  var faits = duJour.filter(function(c){ return String(c.statut||'').toUpperCase() === 'FAIT'; }).length;
+  var l = taches(t);
+  var h = '<div class="acTete"><div class="acDate">' + ech(dateLongue(auj)) + '</div>' +
+    '<div class="mini">' + (duJour.length
+      ? duJour.length + ' intervention' + (duJour.length>1?'s':'') + ' aujourd\'hui' +
+        (faits ? ' · ' + faits + ' faite' + (faits>1?'s':'') : '')
+      : 'Aucune intervention aujourd\'hui') + '</div></div>';
+
+  h += '<h3 class="acTitre">À traiter</h3>';
+  h += l.length ? '<div class="card acTaches">' + l.map(function(x){
+      return '<button class="acTache' + (x.ton ? ' ac-' + x.ton : '') + '" onclick="' + x.go + '">' +
+        '<b>' + x.n + '</b><span>' + ech(x.mot) + '</span><i aria-hidden="true">›</i></button>';
+    }).join('') + '</div>'
+    : '<div class="card acRien">Rien en attente. Tout est à jour.</div>';
+
+  h += '<h3 class="acTitre">Aujourd\'hui</h3>' + journeeParPersonne(duJour, false);
+  h += '<h3 class="acTitre">Demain <span class="mini">· ' + ech(dateLongue(dem)) + '</span></h3>' +
+       journeeParPersonne(deDemain, true);
+  h += '<div class="row" style="gap:8px;margin-top:14px">' +
+    '<button class="btn" style="flex:1" onclick="nouveauChantier()">+ Nouvelle intervention</button>' +
+    '<button class="btn sec" style="flex:1" onclick="allerPlanning(\'semaine\')">Voir la semaine</button></div>';
+  return h;
+}
+
 /* ====================== LE MOIS ======================
    Demande de Simon, 7 novembre 2026 : « dans Chantiers je veux une vue
    mensuelle du calendrier en plus », et sur le tableau « une vue du
@@ -4611,7 +4732,7 @@ var CAL_MOIS = '';            // « 2026-11 » ; vide = le mois en cours
 var CAL_JOUR = '';            // la journée ouverte sous la grille
 var AD_VUE = (function(){       // l'onglet Chantiers : liste, semaine ou mois
   var v = ls('adVue');
-  return (v === 'semaine' || v === 'mois') ? v : 'liste';
+  return (v === 'semaine' || v === 'liste') ? v : 'mois';     // v95 : le mois d'abord
 })();
 SEM_VUE = (AD_VUE === 'semaine');
 var CAL_PAR_CASE = 3;         // barres montrées dans une case avant « +n »
@@ -4779,8 +4900,10 @@ var TABLEAU = null;           // le dernier tableau reçu du bureau
    dernière fois. La facturation ne se rouvre pas d'elle-même : elle a sa
    propre lecture, lancée en arrivant sur l'onglet. */
 var AD_ONGLET = (function(){
-  var o = ls('adOnglet');
-  return (o === 'devis' || o === 'chantiers' || o === 'calendrier') ? o : 'calendrier';
+  /* v95 : « Aujourd'hui » d'abord. Une clé neuve, pour que chacun la voie
+     une première fois, quel que soit l'onglet gardé avant. */
+  var o = ls('adOnglet2');
+  return (o === 'devis' || o === 'chantiers' || o === 'aujourdhui') ? o : 'aujourdhui';
 })();
 var AD_QUI = '';              // filtre : un nom, ou vide pour tout le monde
 var AD_FICHE = null;          // la fiche ouverte
@@ -4913,8 +5036,9 @@ function badgeDevis(st){
 }
 
 function ongletAdmin(quoi){
+  if(quoi === 'calendrier'){ quoi = 'chantiers'; AD_VUE = 'mois'; SEM_VUE = false; }
   AD_ONGLET = quoi;
-  if(quoi !== 'factures') ls('adOnglet', quoi);
+  if(quoi !== 'factures') ls('adOnglet2', quoi);
   AD_QUI = '';
   AD_PASSE = false;             // chaque retour sur l'onglet repart du travail à venir
   if(quoi === 'factures'){
@@ -4952,7 +5076,7 @@ function peindreTableau(){
   $('adMaj').textContent = (t && t.maj)
     ? 'Mis à jour le ' + quandLisible(t.maj)
     : 'Jamais rafraîchi sur cet appareil.';
-  $('bOngCal').classList.toggle('on', AD_ONGLET === 'calendrier');
+  $('bOngJour').classList.toggle('on', AD_ONGLET === 'aujourdhui');
   $('bOngDevis').classList.toggle('on', AD_ONGLET === 'devis');
   $('bOngChantiers').classList.toggle('on', AD_ONGLET === 'chantiers');
   $('bOngFactures').classList.toggle('on', AD_ONGLET === 'factures');
@@ -4962,7 +5086,7 @@ function peindreTableau(){
   /* Un devis neuf se commence depuis l'onglet des devis. Au-dessus du planning
      il ne servait qu'à repousser le travail plus bas. */
   $('bAdDevisNeuf').classList.toggle('hide', AD_ONGLET !== 'devis');
-  var planning = AD_ONGLET === 'chantiers' || AD_ONGLET === 'calendrier';
+  var planning = AD_ONGLET === 'chantiers';
   $('adActions').classList.toggle('hide', !planning);
   $('adVues').classList.toggle('hide', AD_ONGLET !== 'chantiers');
   ['liste','semaine','mois'].forEach(function(v){
@@ -5011,8 +5135,12 @@ function peindreTableau(){
 
   var noms = (AD_ONGLET === 'devis' ? (t.commerciaux||[]) : (t.prestataires||[])).slice();
   if(AD_ONGLET === 'chantiers') { noms.unshift('(non affectés)'); noms.push('(annulés)'); }
-  if(AD_ONGLET === 'calendrier') noms.unshift('(non affectés)');
-  if(AD_QUI === '(annulés)' && AD_ONGLET === 'calendrier') AD_QUI = '';
+  /* v95 : l'accueil n'a pas de filtre — il parle de tout le monde. */
+  if(AD_ONGLET === 'aujourdhui'){
+    $('adFiltres').innerHTML = '';
+    $('adListe').innerHTML = bandeauMot() + bandeauAnnuler() + accueilHtml(t);
+    return;
+  }
   $('adFiltres').innerHTML = ['<span class="puce' + (AD_QUI===''?' on':'') +
       '" onclick="filtreAdmin(\'\')">Tout le monde</span>']
     .concat(noms.map(function(n){
@@ -5021,15 +5149,9 @@ function peindreTableau(){
     })).join('');
 
   /* Le calendrier : le mois, avec le bac de ce qui reste à placer. */
-  if(AD_ONGLET === 'calendrier' || (AD_ONGLET === 'chantiers' && AD_VUE === 'mois')){
-    var duMois = chantiersDuCalendrier(t);
-    var sansDate = duMois.filter(function(c){ return !c.date; }).length;
-    $('adListe').innerHTML = bandeauMot() + bandeauAnnuler() +
-      (AD_ONGLET === 'chantiers' && sansDate
-        ? '<div class="card" style="border-color:var(--warn);margin-bottom:10px"><b>' + sansDate +
-          ' chantier' + (sansDate>1?'s':'') + ' sans date</b><div class="mini">Ils sont dans le bac ' +
-          'de l\'onglet Calendrier, ou dans la liste.</div></div>' : '') +
-      moisHtml(duMois, AD_ONGLET === 'calendrier');
+  if(AD_ONGLET === 'chantiers' && AD_VUE === 'mois'){
+    /* v95 : un seul planning. Le mois porte le bac de ce qui reste à placer. */
+    $('adListe').innerHTML = bandeauMot() + bandeauAnnuler() + moisHtml(chantiersDuCalendrier(t), true);
     return;
   }
 

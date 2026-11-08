@@ -619,6 +619,38 @@
   .calJourne{border-color:var(--acc-b);margin-top:2px}
   @media (min-width:760px){ .calJ{min-height:104px} .calEv{font-size:12px} }
 
+  /* ====== v95 — AUJOURD'HUI ====== */
+  .acTete{padding:4px 2px 2px}
+  .acDate{font-size:22px;font-weight:700;letter-spacing:-.2px}
+  .acTitre{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);
+    margin:18px 2px 8px;font-weight:700}
+  .acTaches{padding:4px 0}
+  .acTache{display:flex;align-items:center;gap:12px;width:100%;background:none;border:0;
+    border-bottom:1px solid var(--line);padding:12px 14px;text-align:left;color:var(--txt);
+    font:inherit;cursor:pointer}
+  .acTache:last-child{border-bottom:0}
+  .acTache:active{background:var(--press)}
+  .acTache b{font-size:20px;min-width:30px;text-align:center;color:var(--acc)}
+  .acTache.ac-warn b{color:var(--warn)}
+  .acTache.ac-danger b{color:var(--danger)}
+  .acTache span{flex:1;font-size:15px;line-height:1.3}
+  .acTache i{font-style:normal;font-size:22px;color:var(--mut)}
+  .acRien{color:var(--ok);font-weight:600}
+  .acPers{padding:10px 12px;margin-bottom:8px}
+  .acNom{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px}
+  .acLigne{display:flex;align-items:center;gap:10px;width:100%;background:var(--sub);border:0;
+    border-left:4px solid var(--nT,#9aa3ad);border-radius:8px;padding:9px 10px;margin-top:6px;
+    text-align:left;color:var(--txt);font:inherit;cursor:pointer}
+  .acLigne:active{background:var(--press)}
+  .acH{font-variant-numeric:tabular-nums;font-weight:700;min-width:46px}
+  .acC{flex:1;display:flex;flex-direction:column;min-width:0}
+  .acC b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .acC i{font-style:normal;font-size:12.5px;color:var(--mut)}
+  .acEt{font-size:12px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap}
+  .acOk{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
+  .acEnc{background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn)}
+  .acPb{background:color-mix(in srgb,var(--danger) 20%,transparent);color:var(--danger)}
+  .acVide{padding:4px 2px 2px}
   /* ====== v93 — LE MODE SOMBRE ======
      Demandé par Simon (« je trouve plus agréable »). Il est mis par défaut,
      et chacun peut revenir au clair d'un appui, sous la ligne « Connecté ».
@@ -1328,10 +1360,11 @@
             onclick="devisAdmin(this)">Nouveau devis</button>
 
     <div class="row" style="margin-top:12px">
-      <button class="btn sec sm" style="flex:1" id="bOngCal" onclick="ongletAdmin('calendrier')">Calendrier</button>
+      <!-- v95 : quatre onglets, dans l'ordre d'une journée. -->
+      <button class="btn sec sm" style="flex:1" id="bOngJour" onclick="ongletAdmin('aujourdhui')">Aujourd'hui</button>
+      <button class="btn sec sm" style="flex:1" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Planning</button>
       <button class="btn sec sm" style="flex:1" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
-      <button class="btn sec sm" style="flex:1" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Chantiers</button>
-      <button class="btn sec sm" style="flex:1" id="bOngFactures" onclick="ongletAdmin('factures')">Facturer</button>
+      <button class="btn sec sm" style="flex:1" id="bOngFactures" onclick="ongletAdmin('factures')">Factures</button>
     </div>
     <!-- La facturation : le mois regardé, et les mensualités d'entretien
          préparées d'un seul geste. Ne concerne que l'onglet « Facturer ». -->
@@ -1347,7 +1380,7 @@
     <!-- Poser un chantier à la main, et agir sur plusieurs d'un coup. Les deux
          ne concernent que l'onglet des chantiers. -->
     <div class="row hide" id="adActions" style="margin-top:10px;gap:8px">
-      <button class="btn sm" style="flex:1" onclick="nouveauChantier()">+ Nouveau</button>
+      <button class="btn sm" style="flex:1" onclick="nouveauChantier()">+ Intervention</button>
       <button class="btn sec sm" style="flex:1" onclick="listeContrats()">Contrats</button>
       <button class="btn sec sm" style="flex:1" id="bAdSel" onclick="basculerSelection()">Sélectionner</button>
       <button class="btn sec sm" style="flex:1" id="bAdSem"
@@ -1355,9 +1388,9 @@
     </div>
     <!-- v93 : trois façons de lire les chantiers. -->
     <div class="prOng hide" id="adVues" role="group" aria-label="Affichage des chantiers" style="margin:10px 0 0">
-      <button id="bVue_liste" onclick="vueChantiers('liste')">Liste</button>
-      <button id="bVue_semaine" onclick="vueChantiers('semaine')">Semaine</button>
       <button id="bVue_mois" onclick="vueChantiers('mois')">Mois</button>
+      <button id="bVue_semaine" onclick="vueChantiers('semaine')">Semaine</button>
+      <button id="bVue_liste" onclick="vueChantiers('liste')">Liste</button>
     </div>
     <div id="adLot" class="card hide" style="margin-top:10px;border-color:var(--acc-b)"></div>
     <div id="adFiltres" class="row adFil" style="gap:6px;margin-top:10px"></div>
@@ -1552,11 +1585,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=93"></script>
-<script src="jspdf.umd.min.js?v=93"></script>
-<script src="police.js?v=93"></script>
-<script src="logo.js?v=93"></script>
-<script src="pdf.js?v=93"></script>
-<script src="app.js?v=93"></script>
+<script src="config.js?v=95"></script>
+<script src="jspdf.umd.min.js?v=95"></script>
+<script src="police.js?v=95"></script>
+<script src="logo.js?v=95"></script>
+<script src="pdf.js?v=95"></script>
+<script src="app.js?v=95"></script>
 </body>
 </html>

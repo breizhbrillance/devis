@@ -3432,6 +3432,14 @@ function recurrentDevis_(nature, passages) {
  * La fonction est idempotente — un même devis ne génère ses chantiers qu'une
  * fois, même si le résultat est renvoyé deux fois par un téléphone entêté.
  */
+/** Un devis dont le client est Breizh Brillance elle-même : un essai. */
+function devisEssai_(d) {
+  var nom = sansAccent_(String(d && d.CLIENT || '')).replace(/[^A-Z0-9]/g, '');
+  if (!nom) return false;
+  var soc = sansAccent_(String(lireReglages_().societe_nom || 'BREIZH BRILLANCE')).replace(/[^A-Z0-9]/g, '');
+  return nom === soc || nom === 'BREIZHBRILLANCE';
+}
+
 function genererChantiers_(numero) {
   var ss = SpreadsheetApp.getActive();
   var sh = ss.getSheetByName(SH.CHANTIERS);
@@ -3454,6 +3462,9 @@ function genererChantiers_(numero) {
     if (String(d.NUMERO).trim() === String(numero).trim()) devis = d;
   });
   if (!devis) return 0;
+  /* v95 : un devis au nom de la maison est un essai. Il ne pose rien au
+     planning (26 interventions d'essai à 8 h y étaient arrivées ainsi). */
+  if (devisEssai_(devis)) return 0;
 
   var reg = lireReglages_();
   var lignes = lignesParDevis_()[String(numero).trim()] || [];
@@ -6104,10 +6115,12 @@ function lireContrats_() {
 /** Ce que la note d'une série dit du contrat : nom, prestation, montant. */
 function contratDeNote_(note, client) {
   var s = String(note || '');
-  var m = s.match(/Contrat\s+([^:]+?)\s*:\s*(.*?)\s*(\d[\d\s ]*(?:[.,]\d+)?)\s*€\s*HT\s*\/\s*mois/i);
+  /* Le montant : « 1 400 » (espace des milliers suivie de trois chiffres)
+     ou « 57,6 » — jamais « 12 57,6 », où 12 appartient au nom (« Berval 12 »). */
+  var m = s.match(/Contrat\s+([^:]+?)\s*:\s*(.*?)\s*(\d{1,3}(?:[   ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*€\s*HT\s*\/\s*mois/i);
   if (m) {
     return { contrat: m[1].trim().replace(/\s*\/.*$/, ''), ligne: m[2].replace(/[—–-]\s*$/, '').trim(),
-             montant: Number(m[3].replace(/[\s ]/g, '').replace(',', '.')) };
+             montant: Number(m[3].replace(/[\s  ]/g, '').replace(',', '.')) };
   }
   var d = s.match(/Devis\s+(\S+)\s*[—–-]\s*(\d[\d\s ]*(?:[.,]\d+)?)\s*€\s*HT\s*par\s*mois/i);
   if (d) return { contrat: String(client || '').trim(), ligne: '', montant: Number(d[2].replace(/[\s ]/g, '').replace(',', '.')),
@@ -8601,6 +8614,7 @@ function etatFacturation_(periode) {
     if (String(d.STATUT || '').toUpperCase() !== 'SIGNE') return;
     var num = String(d.NUMERO || '').trim();
     if (!num) return;
+    if (devisEssai_(d)) return;                 // v95 : un essai ne se facture pas
     var ch = (parNum[num] || []).filter(function (c) {
       return String(c.STATUT || '').toUpperCase() !== 'ANNULE';
     });
