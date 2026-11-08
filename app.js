@@ -359,7 +359,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v99';
+var VERSION_APP = 'v100';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -1438,6 +1438,78 @@ function estMajorableKm(){ return estEntretien() || estVitrerie() || estFacade()
    nature seule, qui commande la mensualisation du total et la planification. */
 function estRecurrent(){
   return estEntretien() || (estVitrerie() && PASSAGES > 0);
+}
+
+/* v100 — LE MAIL AU CLIENT, À SA MANIÈRE.
+   Texte proposé d'après les mails que Simon envoie déjà depuis
+   contact@breizhbrillance : « Bonjour Guillaume, J'espère que tu vas bien.
+   Je te transmets ci-dessous le devis correspondant à… Belle journée !
+   Cordialement, Simon - BREIZH BRILLANCE ». Il choisit tu ou vous, et
+   réécrit ce qu'il veut : une fois le texte touché, l'appli n'y revient plus
+   d'elle-même. */
+var MAIL_TON = 'vous', MAIL_TOUCHE = false;
+function prenomCommercial(){
+  var n = String((session() || {}).nom || '').trim().split(/\s+/)[0] || '';
+  return n ? n.charAt(0).toUpperCase() + n.slice(1).toLowerCase() : '';
+}
+function appelMail(tu){
+  var c = String(val('cContact') || '').trim();
+  if(tu) return c ? c.split(/\s+/)[0] : '';
+  var civ = String(val('cCiv') || '').trim().toUpperCase();
+  var mots = c.split(/\s+/);
+  if(civ && c) return (civ === 'MME' ? 'Madame ' : 'Monsieur ') + mots[mots.length - 1];
+  if(c) return c;
+  return TYPE === 'PRO' ? 'Madame, Monsieur' : '';
+}
+function sujetMailPropose(){
+  var n = String(NATURE || '').toUpperCase();
+  var quoi = n === 'ENTRETIEN' ? 'entretien des locaux' : n === 'VITRERIE' ? 'nettoyage des vitrages'
+           : n === 'FACADE' ? 'nettoyage de façade' : n === 'REMISE' ? 'remise en état'
+           : n === 'CHANTIER' ? 'nettoyage de fin de chantier' : 'prestation de nettoyage';
+  return 'Devis ' + quoi + ' — BREIZH BRILLANCE';
+}
+function texteMailPropose(forcer){
+  if(MAIL_TOUCHE && !forcer) return;
+  var tu = MAIL_TON === 'tu';
+  var qui = appelMail(tu);
+  var ry = (estRecurrent() && PASSAGES) ? rythmeDe(PASSAGES) : null;
+  var t = 'Bonjour' + (qui ? ' ' + qui : '') + ',\n\n' +
+    (tu ? 'J\'espère que tu vas bien.' : 'J\'espère que vous allez bien.') + '\n\n' +
+    (tu ? 'Je te transmets ci-joint le devis correspondant à ta demande'
+        : 'Suite à mon passage, je vous transmets ci-joint le devis correspondant à votre demande') +
+    (ry ? ', soit ' + ry.mot : '') + '.\n\n' +
+    (tu ? 'N\'hésite pas si tu as la moindre question.' : 'Je reste disponible si vous avez la moindre question.') + '\n\n' +
+    (tu ? 'Belle journée !' : 'Je vous souhaite une agréable journée,') + '\n\n' +
+    'Cordialement,\n' + (prenomCommercial() || 'Simon') + ' - BREIZH BRILLANCE';
+  if($('fMailTexte')) $('fMailTexte').value = t;
+  if($('fMailObjet') && (forcer || !$('fMailObjet').value)) $('fMailObjet').value = sujetMailPropose();
+  MAIL_TOUCHE = false;
+}
+function tonMail(t){
+  MAIL_TON = t;
+  if($('tonVous')) $('tonVous').classList.toggle('on', t === 'vous');
+  if($('tonTu')) $('tonTu').classList.toggle('on', t === 'tu');
+  texteMailPropose(true);
+}
+function majMailClient(){
+  var on = $('fEnvoi') && $('fEnvoi').checked;
+  if($('blocMail')) $('blocMail').classList.toggle('hide', !on);
+  if(!on) return;
+  if($('fMailA') && !$('fMailA').value) $('fMailA').value = val('cEmail') || '';
+  if($('tonVous')) $('tonVous').classList.toggle('on', MAIL_TON === 'vous');
+  if($('tonTu')) $('tonTu').classList.toggle('on', MAIL_TON === 'tu');
+  if(!$('fMailTexte').value) texteMailPropose(true);
+  var signe = !!(typeof SIG !== 'undefined' && SIG && SIG.image);
+  if($('mMailSig')) $('mMailSig').textContent = signe
+    ? 'Le devis signé à l\'écran est joint en PDF.'
+    : 'Le PDF est joint, et un bouton « Signer le devis en ligne » est ajouté sous ton message. ' +
+      'Quand le client signe, le devis passe à « signé » tout seul et l\'intervention arrive dans le Planning, à placer.';
+}
+function mailClient(){
+  if(!$('fEnvoi') || !$('fEnvoi').checked) return null;
+  return { a: String(val('fMailA') || val('cEmail') || '').trim(),
+           sujet: String(val('fMailObjet') || '').trim(),
+           texte: String(($('fMailTexte') || {}).value || '').trim() };
 }
 
 /* Le nom que le devis et le classeur donnent à la nature. */
@@ -2705,6 +2777,7 @@ function enregistrerModification(b, envoi, moi, secours, devis, pdf64){
     enr.pdf = pdf64;
     enr.nomFichier = PDF.nomFichier(devis);
     enr.envoyerClient = envoi;
+    enr.mail = mailClient();
     enr.statut = 'attente';
     enr.revision = true;              // le bureau remplace, il n'ajoute pas
     enr.nom = moi.nom; enr.code = moi.code; enr.appareil = APPAREIL;
@@ -3183,7 +3256,9 @@ function enregistrer(){
   if(TYPE === 'PRO' && !val('cSociete')) return erreur('Indique la raison sociale du client.');
   if(TYPE !== 'PRO' && !val('cContact')) return erreur('Indique le nom du client.');
   var envoi = $('fEnvoi').checked;
-  if(envoi && !val('cEmail')) return erreur('Pas d\'e-mail client : décoche l\'envoi ou renseigne l\'adresse.');
+  var mailPerso = mailClient();
+  if(envoi && !(mailPerso && mailPerso.a)) return erreur('Pas d\'e-mail client : décoche l\'envoi ou renseigne l\'adresse.');
+  if(envoi && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mailPerso.a)) return erreur('L\'adresse e-mail du client a l\'air fausse.');
   var moi = session();
   if(!moi) return erreur('Identifie-toi d\'abord.');
 
@@ -3257,7 +3332,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       id: 'd-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),
       numero: devis.numero, devis: devis, pdf: pdf64,
       nomFichier: PDF.nomFichier(devis),
-      envoyerClient: envoi, statut: 'attente', cree: Date.now(),
+      envoyerClient: envoi, mail: mailClient(), statut: 'attente', cree: Date.now(),
       nom: moi.nom, code: moi.code, appareil: APPAREIL, pdfUrl: '',
       photos: [],           // prises plus tard, depuis « Mes devis »
       // Un devis que le client a signé n'a pas de résultat à demander : il est
@@ -3651,7 +3726,7 @@ function envoyerDevis(enr){
     headers:{'Content-Type':'text/plain;charset=utf-8'},  // évite la requête preflight
     body: JSON.stringify({
       action:'sync', id:enr.id, nom:enr.nom, code:enr.code, appareil:enr.appareil,
-      envoyerClient:enr.envoyerClient, devis:enr.devis, pdf:enr.pdf, nomFichier:enr.nomFichier,
+      envoyerClient:enr.envoyerClient, mail:enr.mail || null, devis:enr.devis, pdf:enr.pdf, nomFichier:enr.nomFichier,
       revision: !!enr.revision
     })
   })
@@ -4711,7 +4786,7 @@ function dateLongue(iso){
 }
 function allerPlanning(vue, qui){
   AD_ONGLET = 'chantiers';
-  try{ ls('adOnglet2', 'chantiers'); }catch(e){}
+  try{ ls('adOnglet3', 'chantiers'); }catch(e){}
   AD_VUE = vue || 'mois'; SEM_VUE = (AD_VUE === 'semaine');
   try{ ls('adVue', AD_VUE); }catch(e){}
   AD_QUI = qui || '';
@@ -4726,10 +4801,10 @@ function taches(t){
   var l = [];
   var sansDate = ch.filter(function(c){ return !c.date; }).length;
   if(sansDate) l.push({ n:sansDate, mot:'intervention' + (sansDate>1?'s':'') + ' à placer dans le planning',
-                         go:"allerPlanning('mois')", ton:'warn' });
+                         go:"allerAPlacer()", ton:'warn' });
   var sansQui = ch.filter(function(c){ return c.date && c.date >= auj && !c.prestataire; }).length;
   if(sansQui) l.push({ n:sansQui, mot:'intervention' + (sansQui>1?'s':'') + ' sans personne pour la faire',
-                        go:"allerPlanning('liste','(non affectés)')", ton:'warn' });
+                        go:"allerAPlacer()", ton:'warn' });
   var oublis = ch.filter(function(c){ return c.date && c.date.slice(0,10) === hier && st(c) !== 'FAIT'; }).length;
   if(oublis) l.push({ n:oublis, mot:'intervention' + (oublis>1?'s':'') + ' d\'hier pas pointée' + (oublis>1?'s':'') +
                        ' (faite ou pas ?)', go:"allerPlanning('liste')", ton:'danger' });
@@ -4798,26 +4873,50 @@ function accueilHtml(t){
   var deDemain = ch.filter(function(c){ return String(c.date||'').slice(0,10) === dem; });
   var faits = duJour.filter(function(c){ return String(c.statut||'').toUpperCase() === 'FAIT'; }).length;
   var l = taches(t);
-  var h = '<div class="acTete"><div class="acDate">' + ech(dateLongue(auj)) + '</div>' +
-    '<div class="mini">' + (duJour.length
-      ? duJour.length + ' intervention' + (duJour.length>1?'s':'') + ' aujourd\'hui' +
-        (faits ? ' · ' + faits + ' faite' + (faits>1?'s':'') : '')
-      : 'Aucune intervention aujourd\'hui') + '</div></div>';
-
-  h += '<h3 class="acTitre">À traiter</h3>';
+  /* v100 — « juste ce qu'il y a à faire » : la liste, rien d'autre. La
+     journée se lit dans le Planning. */
+  var h = '<h3 class="acTitre">À faire</h3>';
   h += l.length ? '<div class="card acTaches">' + l.map(function(x){
       return '<button class="acTache' + (x.ton ? ' ac-' + x.ton : '') + '" onclick="' + x.go + '">' +
         '<b>' + x.n + '</b><span>' + ech(x.mot) + '</span><i aria-hidden="true">›</i></button>';
     }).join('') + '</div>'
     : '<div class="card acRien">Rien en attente. Tout est à jour.</div>';
-
-  h += '<h3 class="acTitre">Aujourd\'hui</h3>' + journeeParPersonne(duJour, false);
-  h += '<h3 class="acTitre">Demain <span class="mini">· ' + ech(dateLongue(dem)) + '</span></h3>' +
-       journeeParPersonne(deDemain, true);
-  h += '<div class="row" style="gap:8px;margin-top:14px">' +
-    '<button class="btn" style="flex:1" onclick="nouveauChantier()">+ Nouvelle intervention</button>' +
-    '<button class="btn sec" style="flex:1" onclick="allerPlanning(\'semaine\')">Voir la semaine</button></div>';
+  h += aPlacerHtml(t);
   return h;
+}
+
+/* v100 — « ne mets pas les trucs à planifier sur le Planning, laisse-les dans
+   À faire ». Les interventions sans date, ou datées mais sans personne, sont
+   ici ; un appui ouvre la fiche avec les créneaux proposés. */
+function aPlacerListe(t){
+  var auj = isoJour();
+  return ((t && t.chantiers) || []).filter(function(c){
+    if(estAnnule(c)) return false;
+    if(!c.date) return true;
+    return !c.prestataire && String(c.date).slice(0,10) >= auj;
+  }).sort(function(a, b){
+    if(!a.date !== !b.date) return a.date ? 1 : -1;
+    return String(a.date || '') < String(b.date || '') ? -1 : 1;
+  });
+}
+function aPlacerHtml(t){
+  var l = aPlacerListe(t);
+  if(!l.length) return '<div id="acPlacer"></div>';
+  return '<h3 class="acTitre" id="acPlacer">À placer <span class="mini">· touche pour voir les créneaux proposés</span></h3>' +
+    '<div class="card">' + l.slice(0, 80).map(function(c){
+      var n = natureVue(c.nature);
+      return '<button class="calEv calBacEv" style="display:block;width:100%;text-align:left;margin:0 0 6px;' +
+        (n ? '--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i : '') + '" ' +
+        'onclick="ficheChantier(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\')">' +
+        '<b>' + ech(c.client || 'Intervention') + '</b>' + (c.ville ? ' · ' + ech(c.ville) : '') +
+        '<span class="mini" style="display:block">' +
+        (c.date ? jourLisible(String(c.date).slice(0,10)) + ' · personne' : 'sans date') +
+        (c.numero ? ' · devis ' + ech(c.numero) : '') + '</span></button>';
+    }).join('') + '</div>';
+}
+function allerAPlacer(){
+  ongletAdmin('aujourdhui');
+  setTimeout(function(){ var e = $('acPlacer'); if(e) e.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
 }
 
 /* ====================== LE MOIS ======================
@@ -5008,8 +5107,12 @@ var TABLEAU = null;           // le dernier tableau reçu du bureau
 var AD_ONGLET = (function(){
   /* v95 : « Aujourd'hui » d'abord. Une clé neuve, pour que chacun la voie
      une première fois, quel que soit l'onglet gardé avant. */
-  var o = ls('adOnglet2');
-  return (o === 'devis' || o === 'chantiers' || o === 'aujourdhui') ? o : 'aujourdhui';
+  /* v100 — Simon : « je ne veux pas de l'onglet Aujourd'hui, mets direct sur
+     le planning ». Le tableau s'ouvre sur le Planning ; « À faire » ne garde
+     que la liste de ce qu'il y a à faire. Clé neuve pour que chacun arrive
+     sur le Planning une première fois. */
+  var o = ls('adOnglet3');
+  return (o === 'devis' || o === 'chantiers' || o === 'aujourdhui' || o === 'clients') ? o : 'chantiers';
 })();
 var AD_QUI = '';              // filtre : un nom, ou vide pour tout le monde
 var AD_FICHE = null;          // la fiche ouverte
@@ -5169,7 +5272,7 @@ function badgeDevis(st){
 function ongletAdmin(quoi){
   if(quoi === 'calendrier'){ quoi = 'chantiers'; AD_VUE = 'mois'; SEM_VUE = false; }
   AD_ONGLET = quoi;
-  if(quoi !== 'factures') ls('adOnglet2', quoi);
+  if(quoi !== 'factures') ls('adOnglet3', quoi);
   AD_QUI = '';
   AD_PASSE = false;             // chaque retour sur l'onglet repart du travail à venir
   if(quoi === 'factures'){
@@ -5209,9 +5312,15 @@ function peindreTableau(){
     ? 'Mis à jour le ' + quandLisible(t.maj)
     : 'Jamais rafraîchi sur cet appareil.';
   $('bOngJour').classList.toggle('on', AD_ONGLET === 'aujourdhui');
+  /* le nombre de choses à faire, sur l'onglet même */
+  try{
+    var nbAF = t ? taches(t).reduce(function(s, x){ return s + (Number(x.n) || 0); }, 0) : 0;
+    $('bOngJour').textContent = 'À faire' + (nbAF ? ' ' + nbAF : '');
+  }catch(e){}
   $('bOngDevis').classList.toggle('on', AD_ONGLET === 'devis');
   $('bOngChantiers').classList.toggle('on', AD_ONGLET === 'chantiers');
   $('bOngFactures').classList.toggle('on', AD_ONGLET === 'factures');
+  if($('bOngClients')) $('bOngClients').classList.toggle('on', AD_ONGLET === 'clients');
   $('adResume').textContent = AD_PLIE ? resumeChiffres(t) : 'Le tableau';
   $('adDetail').classList.toggle('hide', AD_PLIE);
   $('bAdPli').setAttribute('aria-expanded', AD_PLIE ? 'false' : 'true');
@@ -5266,7 +5375,12 @@ function peindreTableau(){
     '<div class="mini" style="margin-top:6px">Sur les ' + (t.fenetre||90) + ' derniers jours.</div>';
 
   var noms = (AD_ONGLET === 'devis' ? (t.commerciaux||[]) : (t.prestataires||[])).slice();
-  if(AD_ONGLET === 'chantiers') { noms.unshift('(non affectés)'); noms.push('(annulés)'); }
+  if(AD_ONGLET === 'chantiers') { noms.push('(annulés)'); }   // v100 : « à placer » vit dans À faire
+  if(AD_ONGLET === 'clients'){
+    $('adFiltres').innerHTML = '';
+    $('adListe').innerHTML = bandeauMot() + clientsHtml(t);
+    return;
+  }
   /* v95 : l'accueil n'a pas de filtre — il parle de tout le monde. */
   if(AD_ONGLET === 'aujourdhui'){
     $('adFiltres').innerHTML = '';
@@ -5283,7 +5397,7 @@ function peindreTableau(){
   /* Le calendrier : le mois, avec le bac de ce qui reste à placer. */
   if(AD_ONGLET === 'chantiers' && AD_VUE === 'mois'){
     /* v95 : un seul planning. Le mois porte le bac de ce qui reste à placer. */
-    $('adListe').innerHTML = bandeauMot() + bandeauAnnuler() + moisHtml(chantiersDuCalendrier(t), true);
+    $('adListe').innerHTML = bandeauMot() + bandeauAnnuler() + moisHtml(chantiersDuCalendrier(t), false);
     return;
   }
 
@@ -5297,11 +5411,7 @@ function peindreTableau(){
       if(AD_QUI === '(annulés)') return false;
       return aQui(c.prestataire, AD_QUI);
     });
-    var sans = vivants.filter(function(c){ return !c.date || !c.prestataire; }).length;
     $('adListe').innerHTML =
-      (sans ? '<div class="card" style="border-color:var(--warn);margin-bottom:10px"><b>' + sans +
-        ' chantier' + (sans>1?'s':'') + ' à planifier</b><div class="mini">Sans date ou sans ' +
-        'personne, ils n\'apparaissent dans aucune colonne.</div></div>' : '') +
       /* Le gérant déplace ; le salarié regarde. C'est le même tableau de
          semaine, mais on ne lui donne pas de prise. */
       semaineHtml(vivants, 'ficheChantier', true);
@@ -5708,6 +5818,7 @@ function listeChantiersAdmin(t){
   var tous = (t.chantiers||[]).filter(function(c){
     if(AD_QUI === '(annulés)') return estAnnule(c);
     if(estAnnule(c)) return false;
+    if(!c.date) return false;                  // v100 : sans date = dans « À faire »
     if(!AD_QUI) return true;
     if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
     return aQui(c.prestataire, AD_QUI);
@@ -5724,7 +5835,7 @@ function listeChantiersAdmin(t){
     : '';
   if(!l.length) return bandeauAnnuler() +
     '<div class="card"><div class="empty">Aucun chantier à venir.</div></div>' + pied;
-  var aFaire = l.filter(function(c){ return !estAnnule(c) && (!c.date || !c.prestataire); }).length;
+  var aFaire = 0;                             // v100 : le rappel vit dans « À faire »
   var tete = aFaire
     ? '<div class="card" style="border-color:var(--warn)"><b>' + aFaire + ' chantier' +
       (aFaire>1?'s':'') + ' à planifier</b><div class="mini">Sans date ou sans personne, ' +
@@ -6901,6 +7012,88 @@ function blocContratFiche(c){
 }
 
 /* ---- la liste des contrats ---- */
+/* ====================== LES CLIENTS (v100) ======================
+   Simon : « mets une rubrique clients/contrats à un autre endroit pour
+   répertorier les coordonnées, mais pas sur le planning ». Le classeur envoie
+   la liste des clients (devis, contrats, coordonnées de facturation) ; un
+   appui ouvre la fiche : appeler, écrire, l'itinéraire, ses devis, ses
+   contrats. */
+var CLI_CHERCHE = '';
+function clientsHtml(t){
+  var l = ((t && t.clients) || []).slice();
+  if(!l.length) return '<div class="card"><div class="empty">La liste des clients arrive avec « Actualiser ».</div></div>';
+  var q = CLI_CHERCHE.trim().toLowerCase();
+  var vus = l.filter(function(c){
+    return !q || [c.nom, c.contact, c.ville, c.email, c.tel].join(' ').toLowerCase().indexOf(q) >= 0;
+  });
+  var h = '<div class="card"><input id="cliCherche" type="search" placeholder="Chercher un client, une ville…" value="' +
+    ech(CLI_CHERCHE) + '" oninput="CLI_CHERCHE=this.value;peindreClientsListe()">' +
+    '<div class="row" style="gap:8px;margin-top:10px">' +
+    '<button class="btn sec sm" style="flex:1" onclick="listeContrats()">Tous les contrats</button></div></div>' +
+    '<div id="cliListe">' + cartesClients(vus) + '</div>';
+  return h;
+}
+function cartesClients(l){
+  if(!l.length) return '<div class="card"><div class="empty">Aucun client ne correspond.</div></div>';
+  return l.slice(0, 200).map(function(c, i){
+    return '<div class="card" style="cursor:pointer;margin-bottom:8px" onclick="ficheClient(' + JSON.stringify(c.cle).replace(/"/g,'&quot;') + ')">' +
+      '<div style="display:flex;gap:8px;align-items:baseline"><b style="flex:1">' + ech(c.nom) + '</b>' +
+      (c.contrats.length ? '<span class="vb vb-s">CONTRAT</span>' : '') + '</div>' +
+      '<div class="mini">' + ech([c.contact, c.ville, c.tel].filter(Boolean).join(' · ')) + '</div></div>';
+  }).join('');
+}
+function peindreClientsListe(){
+  var t = TABLEAU || {};
+  var q = CLI_CHERCHE.trim().toLowerCase();
+  var vus = (t.clients || []).filter(function(c){
+    return !q || [c.nom, c.contact, c.ville, c.email, c.tel].join(' ').toLowerCase().indexOf(q) >= 0;
+  });
+  var z = $('cliListe'); if(z) z.innerHTML = cartesClients(vus);
+}
+function ficheClient(cle){
+  var c = (((TABLEAU||{}).clients) || []).filter(function(x){ return x.cle === cle; })[0];
+  if(!c) return;
+  AD_FICHE = {type:'client', cle:cle};
+  montrer('eAd2');
+  $('hTitre').textContent = 'Client';
+  erreur(''); window.scrollTo(0,0);
+  var adr = [c.adresse, [c.cp, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  var lien = function(href, mot){ return '<a class="btn sec sm" style="flex:1;text-align:center;text-decoration:none" href="' +
+    ech(href) + '" target="_blank" rel="noopener">' + mot + '</a>'; };
+  var tel = String(c.tel || '').replace(/[^\d+]/g, '');
+  var h = '<div class="card"><b style="font-size:17px">' + ech(c.nom) + '</b>' +
+    (c.facture && c.facture !== c.nom ? '<div class="mini">Facturé à ' + ech(c.facture) + '</div>' : '') +
+    '<div class="mini" style="margin-top:6px">' + ech(c.type === 'PART' ? 'Particulier' : 'Professionnel') +
+      (c.siret ? ' · SIRET ' + ech(c.siret) : '') + '</div>' +
+    (c.contact ? ligneCh('Contact', ech(c.contact)) : '') +
+    (c.tel ? ligneCh('Téléphone', ech(c.tel)) : '') +
+    (c.email ? ligneCh('E-mail', ech(c.email)) : '') +
+    (adr ? ligneCh('Adresse', ech(adr)) : '') +
+    '<div class="row" style="gap:8px;margin-top:10px">' +
+      (tel ? lien('tel:' + tel, 'Appeler') : '') +
+      (c.email ? lien('mailto:' + c.email, 'E-mail') : '') +
+      (adr ? lien('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(adr), 'Itinéraire') : '') +
+    '</div></div>';
+  if(c.contrats.length){
+    h += '<div class="card"><h2>Contrats</h2>' + c.contrats.map(function(s){
+      return '<div style="padding:6px 0;border-top:1px solid var(--line);cursor:pointer" onclick="modifierContrat(\'' + ech(s.id) + '\',\'\')">' +
+        '<b>' + ech(s.libelle) + '</b>' + (s.mensuel ? ' · ' + eur(s.mensuel) + ' HT/mois' : '') +
+        '<div class="mini">' + ech([s.rythme, quiLisible(s.prestataire), s.id].filter(Boolean).join(' · ')) + '</div></div>';
+    }).join('') + '</div>';
+  }
+  if(c.devis.length){
+    h += '<div class="card"><h2>Devis</h2>' + c.devis.map(function(d){
+      var dansTableau = ((TABLEAU||{}).devis||[]).some(function(x){ return x.numero === d.numero; });
+      return '<div style="padding:6px 0;border-top:1px solid var(--line);' + (dansTableau ? 'cursor:pointer' : '') + '"' +
+        (dansTableau ? ' onclick="ficheDevis(\'' + ech(d.numero).replace(/'/g,'&#39;') + '\')"' : '') + '>' +
+        '<b>' + ech(d.numero) + '</b> · ' + eur(d.ht) + ' HT ' + badgeDevis(d.statut) +
+        '<div class="mini">' + ech(jjmmaa(d.date)) + '</div></div>';
+    }).join('') + '</div>';
+  }
+  h += '<button class="btn sec" onclick="retourTableau()">Retour</button>';
+  $('adFiche').innerHTML = h;
+}
+
 function listeContrats(){
   AD_FICHE = {type:'contrats', cle:''};
   montrer('eAd2');
@@ -7484,6 +7677,9 @@ function nouveauDevis(){
   ['cSociete','cSiret','cTva','cCiv','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate']
     .forEach(function(id){ if($(id)) $(id).value=''; });
   $('fEnvoi').checked = false;
+  ['fMailA','fMailObjet','fMailTexte'].forEach(function(id){ if($(id)) $(id).value = ''; });
+  MAIL_TOUCHE = false; MAIL_TON = 'vous';
+  if($('blocMail')) $('blocMail').classList.add('hide');
   $('mSiret').textContent = 'Le n° de TVA se complète tout seul à partir du SIRET.';
   effacerSignature();
   lsj('brouillon', null);

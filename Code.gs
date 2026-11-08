@@ -1448,13 +1448,15 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
     if (reg.email_copie) copie.push(String(reg.email_copie));
     var pj = d.pdf ? [Utilities.newBlob(Utilities.base64Decode(d.pdf), 'application/pdf',
       d.nomFichier || ('Devis ' + numeroFichier_(numero) + '.pdf'))] : [];
-    if (d.envoyerClient && c.email) {
+    var mpR = mailPerso_(d, c);
+    if (d.envoyerClient && mpR.a) {
       envoyerMail_({
-        to: c.email, cc: copie.join(','),
-        subject: 'Devis ' + numero + ' révisé — ' + (reg.societe_nom || ''),
+        to: mpR.a, cc: copie.join(','),
+        subject: mpR.sujet || ('Devis ' + numero + ' révisé — ' + (reg.societe_nom || '')),
         name: String(reg.societe_nom || 'Devis'),
         replyTo: (com && com.email) || String(reg.societe_email || ''),
-        htmlBody: corpsMail_(devis, reg, com, true), attachments: pj
+        htmlBody: mpR.texte ? corpsMailPerso_(devis, mpR.texte, reg) : corpsMail_(devis, reg, com, true),
+        attachments: pj
       }, reg);
     } else if (copie.length) {
       envoyerMail_({
@@ -1728,14 +1730,19 @@ function enregistrer_(d, com) {
     var copie = [];
     if (com.email) copie.push(com.email);
     if (reg.email_copie) copie.push(String(reg.email_copie));
-    if (d.envoyerClient && c.email) {
+    var mp = mailPerso_(d, c);
+    if (d.envoyerClient && mp.a) {
       envoyerMail_({
-        to: c.email, cc: copie.join(','),
-        subject: 'Devis ' + devis.numero + ' — ' + (reg.societe_nom || ''),
+        to: mp.a, cc: copie.join(','),
+        subject: mp.sujet || ('Devis ' + devis.numero + ' — ' + (reg.societe_nom || '')),
         name: String(reg.societe_nom || 'Devis'),
         replyTo: com.email || String(reg.societe_email || ''),
-        htmlBody: corpsMail_(devis, reg, com), attachments: pj
+        htmlBody: mp.texte ? corpsMailPerso_(devis, mp.texte, reg) : corpsMail_(devis, reg, com),
+        attachments: pj
       }, reg);
+      tracerServeur_(devis.commercial || com.nom, 'DEVIS ENVOYE AU CLIENT',
+                     mp.a + (mp.texte ? ' — message personnalisé' : '') + (devis.signature ? '' : ' — lien de signature'),
+                     devis.numero, d.appareil || '');
     } else if (copie.length) {
       envoyerMail_({
         to: copie.join(','),
@@ -2103,6 +2110,7 @@ function tableauAdmin_() {
        l'écran du gérant les prolonge lui-même en pointillé, comme un agenda
        montre une répétition sans fin. */
     recurrents: recurrentsPourAdmin_(),
+    clients: clientsPourAdmin_(),
     horizon: (function () {
       var h = new Date(); h.setDate(h.getDate() + semainesRecurrents_(reg) * 7);
       return isoJour_(h);
@@ -2562,6 +2570,61 @@ function jourFr_(d) {
   var p = Utilities.formatDate(x, 'Europe/Paris', 'yyyy-MM-dd').split('-');
   var jour = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
   return j[jour.getDay()] + ' ' + Number(p[2]) + ' ' + m[Number(p[1]) - 1];
+}
+
+ /* ================================================================
+   v100 — LE RÉPERTOIRE DES CLIENTS (onglet « Clients » du tableau)
+   ================================================================
+   Un client par nom (sans accents ni casse) : ses coordonnées tirées de ses
+   devis (le plus récent d'abord) et de l'onglet CONTRATS, ses devis, ses
+   séries au calendrier. Rien n'est écrit, tout est lu. */
+function clientsPourAdmin_() {
+  var par = {}, ordre = [];
+  var cle = function (n) { return sansAccent_(n).replace(/[^A-Z0-9]+/g, ' ').trim(); };
+  var prendre = function (nom) {
+    var k = cle(nom);
+    if (!k) return null;
+    if (!par[k]) { par[k] = { cle: k, nom: String(nom).trim(), contact: '', tel: '', email: '', adresse: '', cp: '', ville: '',
+                              siret: '', type: '', facture: '', devis: [], contrats: [] }; ordre.push(k); }
+    return par[k];
+  };
+  var remplir = function (c, champs) {
+    for (var f in champs) if (champs.hasOwnProperty(f) && !c[f] && String(champs[f] || '').trim()) c[f] = String(champs[f]).trim();
+  };
+  var dv = lireDevis_().slice().sort(function (a, b) {
+    return (b.DATE instanceof Date ? b.DATE.getTime() : 0) - (a.DATE instanceof Date ? a.DATE.getTime() : 0);
+  });
+  dv.forEach(function (d) {
+    if (devisEssai_(d)) return;
+    var c = prendre(d.CLIENT);
+    if (!c) return;
+    remplir(c, { contact: d.CONTACT, tel: d.TELEPHONE, email: d.EMAIL, adresse: d.ADRESSE, cp: d.CP, ville: d.VILLE,
+                 siret: d.SIRET_CLIENT, type: String(d.TYPE_CLIENT || '').toUpperCase().indexOf('PART') === 0 ? 'PART' : 'PRO' });
+    c.devis.push({ numero: String(d.NUMERO || ''), date: isoDe_(d.DATE) || '', statut: String(d.STATUT || ''),
+                   ht: Number(d.TOTAL_HT) || 0 });
+  });
+  lireContrats_().forEach(function (o) {
+    if (!estActif_(o.ACTIF)) return;
+    var c = prendre(o.CONTRAT);
+    if (!c) return;
+    remplir(c, { facture: o.CLIENT_FACTURE, email: o.EMAIL, adresse: o.ADRESSE, cp: o.CP, ville: o.VILLE, siret: o.SIREN,
+                 type: /^O/i.test(String(o.PARTICULIER || '')) ? 'PART' : 'PRO' });
+  });
+  var auj = isoJour_(new Date());
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    if (!String(r.ID || '').trim() || !estActif_(r.ACTIF)) return;
+    if (r.FIN && isoJour_(new Date(r.FIN)) < auj) return;
+    var nom = String(r.CLIENT || '').replace(/\s+[—–-]\s+.*$/, '');   // « LE LOCAL — WC » va chez LE LOCAL
+    var c = par[cle(nom)] || prendre(r.CLIENT);
+    if (!c) return;
+    remplir(c, { adresse: r.ADRESSE, cp: r.CP, ville: r.VILLE });
+    var m = contratDeNote_(r.NOTE, r.CLIENT);
+    c.contrats.push({ id: String(r.ID), libelle: String(r.CLIENT || ''), rythme: String(r.FREQUENCE || '').toLowerCase() +
+                      (r.JOUR ? ' · ' + String(r.JOUR).toLowerCase() : ''), prestataire: String(r.PRESTATAIRE || ''),
+                      mensuel: m && m.montant ? m.montant : 0 });
+  });
+  return ordre.map(function (k) { var c = par[k]; c.devis = c.devis.slice(0, 20); return c; })
+    .sort(function (a, b) { return a.nom.localeCompare(b.nom, 'fr'); });
 }
 
 /* 450 minutes → « 7 h 30 ». Pour un courriel que l'on lit d'un coup d'œil. */
@@ -7067,6 +7130,31 @@ function appelClient_(c) {
    chiffrage, avec SON téléphone (colonne TELEPHONE de l'onglet COMMERCIAUX) :
    c'est lui que le client doit pouvoir rappeler. Pas de numéro renseigné pour
    lui, c'est celui de la maison qui part. */
+/* v100 — le message que le commercial a écrit lui-même dans l'appli.
+   d.mail = { a, sujet, texte } ; à défaut, l'adresse de la fiche client. */
+function mailPerso_(d, c) {
+  var m = (d && d.mail && typeof d.mail === 'object') ? d.mail : {};
+  var a = String(m.a || (c && c.email) || '').trim();
+  if (a && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) a = String((c && c.email) || '').trim();
+  return { a: a, sujet: String(m.sujet || '').trim().slice(0, 200), texte: String(m.texte || '').trim().slice(0, 6000) };
+}
+/* Son texte tel quel (paragraphes et retours à la ligne gardés, rien
+   d'interprété comme du HTML), puis le bouton de signature en ligne si le
+   devis n'est pas déjà signé. */
+function corpsMailPerso_(devis, texte, reg) {
+  var paras = String(texte).replace(/\r/g, '').split(/\n{2,}/).map(function (p) {
+    return '<p style="margin:0 0 14px">' + echHtml_(p).replace(/\n/g, '<br>') + '</p>';
+  }).join('');
+  var bouton = (devis && devis.numero && !devis.signature)
+    ? '<p style="margin:24px 0 6px"><a href="' + lienSignature_(devis.numero) + '" style="background:#004C92;color:#fff;' +
+      'padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold">Signer le devis en ligne</a></p>' +
+      '<p style="font-size:12px;color:#6b7280;margin:0">Un clic, une signature au doigt ou à la souris, et vous recevez ' +
+      'aussitôt votre copie signée. Le devis est aussi en pièce jointe.</p>'
+    : '';
+  return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1f2937">' +
+    paras + bouton + '</div>';
+}
+
 function corpsMail_(devis, reg, com, revise) {
   var qui = echHtml_(appelClient_(devis.client));
   var tel = echHtml_(String((com && com.tel) || reg.societe_tel || '').trim());

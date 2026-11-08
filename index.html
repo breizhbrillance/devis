@@ -695,6 +695,9 @@
   html.sombre .ctAva span{background:var(--press)}
   /* v98 — titres de l'onglet Factures */
   .factTitre{font-size:15px;margin:18px 2px 6px;color:var(--txt,inherit)}
+  /* v100 — les cinq onglets du tableau */
+  .adOngs{gap:4px;flex-wrap:nowrap}
+  .adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
   <!-- Les notifications. Le SDK vit chez OneSignal : sans réseau il ne se
        charge pas, et l'application s'en passe — le reste fonctionne hors
@@ -1035,12 +1038,32 @@
         </div>
       </div>
     </div>
+    <!-- v100 — Envoyer le devis par e-mail, avec TON message. Simon : « je
+         veux pouvoir personnaliser le mail comme sur ma boîte mail, j'aime
+         toujours parler à mes clients de façon personnalisée ». Le texte est
+         proposé dans son style (relevé dans ses mails envoyés), il le change
+         comme il veut. Le PDF est joint et, s'il n'a pas signé à l'écran, un
+         bouton « Signer le devis en ligne » suit le message. -->
     <div class="card">
       <label style="display:flex;gap:10px;align-items:center;margin:0">
-        <input type="checkbox" id="fEnvoi" style="width:20px;height:20px;flex:none">
-        <span style="color:var(--txt);font-size:15px">Envoyer le PDF au client par e-mail</span>
+        <input type="checkbox" id="fEnvoi" style="width:20px;height:20px;flex:none" onchange="majMailClient()">
+        <span style="color:var(--txt);font-size:15px">Envoyer le devis au client par e-mail</span>
       </label>
-      <div class="mini">Part automatiquement au retour du réseau si tu es hors connexion.</div>
+      <div class="mini">Pour qu'il le lise et le signe à distance. Part au retour du réseau si tu es hors connexion.</div>
+      <div id="blocMail" class="hide">
+        <label for="fMailA">À</label>
+        <input id="fMailA" type="email" inputmode="email" placeholder="adresse du client">
+        <div class="row" style="gap:6px;margin-top:10px">
+          <span class="puce" id="tonVous" onclick="tonMail('vous')">Vouvoyer</span>
+          <span class="puce" id="tonTu" onclick="tonMail('tu')">Tutoyer</span>
+          <span class="puce" onclick="texteMailPropose(true)">Remettre le texte proposé</span>
+        </div>
+        <label for="fMailObjet">Objet</label>
+        <input id="fMailObjet">
+        <label for="fMailTexte">Ton message</label>
+        <textarea id="fMailTexte" rows="13" oninput="MAIL_TOUCHE = true"></textarea>
+        <div class="mini" id="mMailSig"></div>
+      </div>
     </div>
   </section>
 
@@ -1363,12 +1386,13 @@
     <button class="btn hide" id="bAdDevisNeuf" style="margin-top:12px"
             onclick="devisAdmin(this)">Nouveau devis</button>
 
-    <div class="row" style="margin-top:12px">
-      <!-- v95 : quatre onglets, dans l'ordre d'une journée. -->
-      <button class="btn sec sm" style="flex:1" id="bOngJour" onclick="ongletAdmin('aujourdhui')">Aujourd'hui</button>
-      <button class="btn sec sm" style="flex:1" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Planning</button>
-      <button class="btn sec sm" style="flex:1" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
-      <button class="btn sec sm" style="flex:1" id="bOngFactures" onclick="ongletAdmin('factures')">Factures</button>
+    <div class="row adOngs" style="margin-top:12px">
+      <!-- v100 : cinq onglets serrés pour tenir sur un téléphone. -->
+      <button class="btn sec sm" id="bOngJour" onclick="ongletAdmin('aujourdhui')">À faire</button>
+      <button class="btn sec sm" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Planning</button>
+      <button class="btn sec sm" id="bOngDevis" onclick="ongletAdmin('devis')">Devis</button>
+      <button class="btn sec sm" id="bOngFactures" onclick="ongletAdmin('factures')">Factures</button>
+      <button class="btn sec sm" id="bOngClients" onclick="ongletAdmin('clients')">Clients</button>
     </div>
     <!-- La facturation (v98) : le mois regardé ; contrats de l'onglet CONTRATS
          et interventions ponctuelles du mois, en brouillons Pennylane. -->
@@ -1385,7 +1409,6 @@
          ne concernent que l'onglet des chantiers. -->
     <div class="row hide" id="adActions" style="margin-top:10px;gap:8px">
       <button class="btn sm" style="flex:1" onclick="nouveauChantier()">+ Intervention</button>
-      <button class="btn sec sm" style="flex:1" onclick="listeContrats()">Contrats</button>
       <button class="btn sec sm" style="flex:1" id="bAdSel" onclick="basculerSelection()">Sélectionner</button>
       <button class="btn sec sm" style="flex:1" id="bAdSem"
               onclick="basculerSemaine('admin')">Voir la semaine</button>
@@ -1589,11 +1612,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=99"></script>
-<script src="jspdf.umd.min.js?v=99"></script>
-<script src="police.js?v=99"></script>
-<script src="logo.js?v=99"></script>
-<script src="pdf.js?v=99"></script>
-<script src="app.js?v=99"></script>
+<script src="config.js?v=100"></script>
+<script src="jspdf.umd.min.js?v=100"></script>
+<script src="police.js?v=100"></script>
+<script src="logo.js?v=100"></script>
+<script src="pdf.js?v=100"></script>
+<script src="app.js?v=100"></script>
 </body>
 </html>
