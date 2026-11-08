@@ -359,7 +359,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v101';
+var VERSION_APP = 'v102';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -566,6 +566,7 @@ function montrer(id){
   // lequel passent tous les changements d'écran.
   try{ document.body.classList.toggle('admin', estAdmin()); peindreLiensTheme(); }catch(e){}
   majOnglets();
+  try{ majRetourHaut(); }catch(e){}
 }
 
 /* La barre n'a de sens que pour le commercial qui prospecte : sans la
@@ -4796,6 +4797,7 @@ function allerPlanning(vue, qui){
 function allerDevis(){ ongletAdmin('devis'); window.scrollTo(0,0); }
 
 function taches(t){
+  t = sansIgnores(t);
   var auj = isoJour(), hier = isoJour(new Date(Date.now() - 86400000));
   var ch = (t.chantiers||[]).filter(function(c){ return !estAnnule(c); });
   var st = function(c){ return String(c.statut||'').toUpperCase(); };
@@ -4883,6 +4885,10 @@ function accueilHtml(t){
     }).join('') + '</div>'
     : '<div class="card acRien">Rien en attente. Tout est à jour.</div>';
   h += aPlacerHtml(t);
+  var ig = t && t.aFaireIgnores;
+  h += '<div class="mini" style="text-align:center;margin:14px 0 4px">' +
+    (ig && ig.quand ? 'Liste repartie de zéro le ' + ech(quandLisible(ig.quand)) + '. ' : '') +
+    '<button class="lienTexte" onclick="remiseAFaire(this)">Tout effacer et repartir de zéro</button></div>';
   return h;
 }
 
@@ -4890,6 +4896,7 @@ function accueilHtml(t){
    À faire ». Les interventions sans date, ou datées mais sans personne, sont
    ici ; un appui ouvre la fiche avec les créneaux proposés. */
 function aPlacerListe(t){
+  t = sansIgnores(t);
   var auj = isoJour();
   return ((t && t.chantiers) || []).filter(function(c){
     if(estAnnule(c)) return false;
@@ -8910,6 +8917,10 @@ function listeFacturesAdmin(){
          'La liste se lit, mais rien ne peut être préparé.</div></div>';
   }
 
+  h += modeEmploiFactures();
+  h += '<div class="row adOngs factOngs" style="margin:6px 0 10px">' +
+    '<button class="btn sec sm' + (FACT_VUE === 'ponctuels' ? ' on' : '') + '" onclick="vueFact(\'ponctuels\')">Ponctuels</button>' +
+    '<button class="btn sec sm' + (FACT_VUE === 'contrats' ? ' on' : '') + '" onclick="vueFact(\'contrats\')">Contrats (récurrents)</button></div>';
   var c = FACT.contrats, it = FACT.interventions;
   var cAFaire = c.filter(function(x){ return !x.facturee; });
   var cPrets = cAFaire.filter(function(x){ return !x.manque.length; });
@@ -8919,21 +8930,30 @@ function listeFacturesAdmin(){
   var iFaites = it.filter(function(x){ return x.facturee; });
   var totI = iAFaire.reduce(function(s, x){ return s + (Number(x.ht) || 0); }, 0);
 
-  h += '<div class="card"><b>' + ech(moisNom(FACT_MOIS)) + '</b><div class="mini">' +
-       cAFaire.length + ' contrat(s) à facturer · ' + eur(totC) + ' HT<br>' +
-       iAFaire.length + ' intervention(s) ponctuelle(s) · ' + eur(totI) + ' HT' +
+  if(FACT_VUE === 'ponctuels'){
+  h += '<div class="card"><b>Ponctuels · ' + ech(moisNom(FACT_MOIS)) + '</b><div class="mini">' +
+       iAFaire.length + ' intervention(s) à facturer · ' + eur(totI) + ' HT' +
        (iAFaire.some(function(x){ return !(x.ht > 0); }) ? ' (prix à compléter)' : '') +
-       '</div><div class="mini">Chaque bouton crée un <b>brouillon</b> dans Pennylane. ' +
-       'Rien n\'est envoyé au client avant que tu le fasses depuis Pennylane.</div></div>';
+       '<br>Une intervention apparaît ici une fois sa date passée. Avec devis : le prix et le client du devis. ' +
+       'Sans devis : le prix écrit dans la note, à vérifier.</div></div>';
 
   /* ---- les interventions ponctuelles ---- */
-  h += '<h3 class="factTitre">Interventions ponctuelles</h3>';
   if(!iAFaire.length) h += '<div class="card"><div class="mini">Aucune intervention ponctuelle à facturer en ' +
                            ech(moisNom(FACT_MOIS)) + '.</div></div>';
   iAFaire.forEach(function(x){ h += carteInter(x); });
+  if(iContrat.length){
+    h += '<h3 class="factTitre">Peut-être déjà dans un contrat</h3>' +
+         '<div class="card"><div class="mini">Ces interventions portent le nom d\'un client sous contrat. ' +
+         'Si elles sont comprises dans son forfait, marque-les « déjà facturée ». Sinon, facture-les ici.</div></div>';
+    iContrat.forEach(function(x){ h += carteInter(x); });
+  }
+  if(iFaites.length) h += dejaFaitesHtml(iFaites);
+  return h;
+  }
 
   /* ---- les contrats ---- */
-  h += '<h3 class="factTitre">Contrats d\'entretien</h3>' +
+  h += '<div class="card"><b>Contrats · ' + ech(moisNom(FACT_MOIS)) + '</b><div class="mini">' +
+       cAFaire.length + ' contrat(s) à facturer · ' + eur(totC) + ' HT</div></div>' +
        '<div class="card"><div class="mini">' +
        (c.length ? cAFaire.length + ' sur ' + c.length + ' à facturer pour ' + ech(moisNom(FACT_MOIS)) +
                    ' · forfait mensuel lissé sur 52 semaines.' : 'Aucun contrat actif dans l\'onglet CONTRATS.') +
@@ -8947,17 +8967,15 @@ function listeFacturesAdmin(){
                          ' contrat(s) à compléter d\'abord dans l\'onglet CONTRATS.</div>' : '') + '</div>';
   c.forEach(function(x){ if(!x.facturee) h += carteContratCt(x); });
 
-  if(iContrat.length){
-    h += '<h3 class="factTitre">Peut-être déjà dans un contrat</h3>' +
-         '<div class="card"><div class="mini">Ces interventions portent le nom d\'un client sous contrat. ' +
-         'Si elles sont comprises dans son forfait, marque-les « déjà facturée ». Sinon, facture-les ici.</div></div>';
-    iContrat.forEach(function(x){ h += carteInter(x); });
-  }
-
   var faitesC = c.filter(function(x){ return x.facturee; });
-  if(faitesC.length || iFaites.length){
+  if(faitesC.length) h += dejaFaitesHtml(faitesC);
+  return h;
+}
+function dejaFaitesHtml(l){
+  var h = '';
+  if(l.length){
     h += '<h3 class="factTitre">Déjà faites</h3><div class="card">' +
-      faitesC.concat(iFaites).map(function(x){
+      l.map(function(x){
         return '<div class="row" style="justify-content:space-between;padding:4px 0">' +
           '<span>' + ech(x.contrat || x.client) + '</span><span class="mini">' +
           (x.etat === 'DEJA FACTUREE' ? 'facturée ailleurs' : 'brouillon Pennylane') + '</span></div>';
@@ -9186,4 +9204,79 @@ function choisirSignatureDistance(){
   if(!c.checked){ c.checked = true; majMailClient(); }
   var b = $('blocMail') || c;
   setTimeout(function(){ b.scrollIntoView({behavior:'smooth', block:'start'}); var a = $('fMailA'); if(a && !a.value) a.focus(); }, 60);
+}
+
+/* ====================== v102 ====================== */
+
+/* « Il faut une flèche en haut de l'écran pour revenir en arrière, plutôt que
+   de descendre tout en bas de la page. » La flèche de l'en-tête (toujours
+   visible, l'en-tête reste collé en haut) fait ce que fait le bouton « Retour »
+   du bas de chaque écran. */
+var RETOUR_HAUT = {
+  eAd2: function(){ retourTableau(); },
+  eAg2: function(){ ecranPlanning(); },
+  eAg3: function(){ ecranPlanning(); },
+  e2: function(){ revenir(); }, e3: function(){ revenir(); }, e4: function(){ revenir(); },
+  e6: function(){ revenir(); }, e7: function(){ revenir(); }
+};
+function majRetourHaut(){
+  var b = $('bHaut'); if(!b) return;
+  b.classList.toggle('hide', !RETOUR_HAUT[ECRAN_VU]);
+}
+function retourHaut(){
+  var f = RETOUR_HAUT[ECRAN_VU];
+  if(f){ f(); window.scrollTo(0, 0); }
+}
+
+/* « Clear toutes les choses à faire, on part de 0 à partir de maintenant. »
+   Le classeur note ce qui était en attente à cet instant ; la liste ne le
+   montre plus. Rien n'est supprimé. */
+function sansIgnores(t){
+  var ig = t && t.aFaireIgnores;
+  if(!ig || t.__filtre) return t;
+  var dv = {}, ch = {};
+  (ig.devis || []).forEach(function(n){ dv[n] = 1; });
+  (ig.chantiers || []).forEach(function(n){ ch[n] = 1; });
+  var o = {};
+  for(var k in t) if(t.hasOwnProperty(k)) o[k] = t[k];
+  o.devis = (t.devis || []).filter(function(d){ return !dv[d.numero]; });
+  o.chantiers = (t.chantiers || []).filter(function(c){ return !ch[c.id]; });
+  o.__filtre = true;
+  return o;
+}
+function remiseAFaire(btn){
+  demander('Repartir de zéro ?', 'Tout ce qui est en attente maintenant disparaît de « À faire » ' +
+    '(rien n\'est supprimé du classeur). Ce qui arrivera ensuite s\'affichera normalement. ' +
+    'Les passages tombés un férié restent : ils sont à replacer.', 'Tout effacer').then(function(oui){
+    if(!oui) return;
+    var moi = session();
+    if(btn) occuper(btn, '…');
+    poster({action:'aFaireRemise', nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(r){
+      if(btn) libere(btn);
+      if(!r || !r.ok) return erreur((r && r.erreur) || attenteLisible());
+      AD_MOT_T = 0; AD_MOT = '« À faire » repart de zéro';
+      chargerTableau();
+    }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+  });
+}
+
+/* « Dans l'onglet Factures, j'aimerais comprendre concrètement comment
+   utiliser le module, et sépare le récurrent du ponctuel. » */
+var FACT_VUE = (function(){ var v = ls('factVue'); return v === 'contrats' ? 'contrats' : 'ponctuels'; })();
+function vueFact(v){ FACT_VUE = v === 'contrats' ? 'contrats' : 'ponctuels'; ls('factVue', FACT_VUE); peindreTableau(); }
+function modeEmploiFactures(){
+  var ouvert = ls('factAide') !== 'ferme';
+  return '<details class="card factAide"' + (ouvert ? ' open' : '') +
+    ' ontoggle="ls(\'factAide\', this.open ? \'ouvert\' : \'ferme\')"><summary><b>Comment ça marche</b></summary>' +
+    '<ol class="mini" style="padding-left:18px;margin:8px 0 0">' +
+    '<li><b>Choisis le mois</b> avec ◀ ▶ en haut, puis « Actualiser la facturation ».</li>' +
+    '<li><b>Ponctuels</b> : chaque intervention passée du mois a sa carte. Vérifie le libellé, le prix HT et la TVA ' +
+    '(10 % particulier, 20 % société), puis « Préparer la facture ». Déjà facturée ailleurs ou comprise dans un forfait : ' +
+    '« Déjà facturée ».</li>' +
+    '<li><b>Contrats</b> : un forfait mensuel par client (onglet CONTRATS du classeur). Au début du mois, « Préparer les factures » ' +
+    'fait tous les contrats du mois écoulé d\'un coup. Si la préparation automatique est activée, c\'est fait tout seul le 3.</li>' +
+    '<li>Chaque facture préparée est un <b>brouillon dans Pennylane</b>. Ouvre Pennylane → Ventes → Factures, relis, ' +
+    'puis valide et envoie. Rien ne part au client tant que tu ne l\'as pas fait.</li>' +
+    '<li>Une carte grisée dit ce qui manque (adresse, prix…) : complète le devis, la note de l\'intervention ou l\'onglet CONTRATS.</li>' +
+    '</ol></details>';
 }

@@ -587,6 +587,8 @@ var REGLAGES_DEFAUT_ = [
    'OUI : la route entre deux chantiers d\'une même journée est calculée par Google Maps, d\'une adresse à l\'autre. NON : on compte toujours trajet_minutes'],
   ['trajet_minutes', '30',
    'Temps de route compté, en minutes, quand l\'itinéraire ne peut pas être calculé (adresse manquante, Google Maps muet)'],
+  ['equipe_par_jour', '',
+   'Qui fait les passages selon le jour : LUNDI=VICTOR;SAMEDI=MAXIME;AUTRES=MAXIME, VICTOR. Vide : la série décide'],
   ['travail_jours_feries', 'NON',
    'OUI : l\'appli pose aussi des chantiers les jours fériés'],
   ['majoration_tres_sale', '30',
@@ -1009,7 +1011,7 @@ function doPost(e) {
                    'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
                    'mesDevis', 'devisArchive',
                    'poserDevis', 'suggestions', 'lienSignature',
-                   'ficheJointe', 'ficheRetirer', 'ficheLire'];
+                   'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1062,6 +1064,8 @@ function doPost(e) {
          'poserDevis', 'suggestions', 'lienSignature',
          /* La fiche chantier : le gérant la joint, la remplace, la retire. */
          'ficheJointe', 'ficheRetirer', 'ficheLire',
+         /* Remettre « À faire » à zéro : un écran à lui. */
+         'aFaireRemise',
          'mesDevis', 'devisArchive']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire']
@@ -1092,6 +1096,7 @@ function doPost(e) {
     }
     if (d.action === 'chantier') return reponse_(enregistrerChantier_(d, com));
     if (d.action === 'ficheLire') return reponse_(lireFiche_(d, com));
+    if (d.action === 'aFaireRemise') return reponse_(remiseAFaire_(com));
     if (d.action === 'ficheJointe' || d.action === 'ficheRetirer') {
       lock.waitLock(30000);
       return reponse_(d.action === 'ficheJointe' ? joindreFiche_(d, com) : retirerFiche_(d, com));
@@ -2130,6 +2135,8 @@ function tableauAdmin_() {
     /* Les contrats, et jusqu'où leurs passages sont déjà posés : au-delà,
        l'écran du gérant les prolonge lui-même en pointillé, comme un agenda
        montre une répétition sans fin. */
+    /* v102 — ce que « À faire » a mis de côté lors de la dernière remise à zéro. */
+    aFaireIgnores: ignoresAFaire_(),
     recurrents: recurrentsPourAdmin_(),
     clients: clientsPourAdmin_(),
     horizon: (function () {
@@ -3942,6 +3949,7 @@ function genererRecurrents_() {
      repose pas. */
   var cal = calendrier_(reg);
   bilan.feries = 0;
+  var regleQ = regleEquipe_(reg);
 
   series.forEach(function (r) {
     var id = String(r.ID).trim();
@@ -3957,11 +3965,12 @@ function genererRecurrents_() {
         ADRESSE: String(r.ADRESSE || ''), CP: String(r.CP || ''), VILLE: String(r.VILLE || ''),
         ACCES: String(r.ACCES || ''),
         DATE: fer ? '' : d, HEURE: heureTexte_(r.HEURE),
-        PRESTATAIRE: String(r.PRESTATAIRE || ''),
+        PRESTATAIRE: (regleQ && equipeRemplacable_(regleQ, r.PRESTATAIRE) && equipeDuJour_(regleQ, d))
+          ? equipeDuJour_(regleQ, d) : String(r.PRESTATAIRE || ''),
         /* Date et salarié posés : le chantier est planifié, il part sur le
            téléphone. Sans salarié, il reste à planifier et remonte en tête de
            l'écran du gérant. Un férié : à placer. */
-        STATUT: (!fer && String(r.PRESTATAIRE || '').trim()) ? 'PLANIFIE' : 'A PLANIFIER',
+        STATUT: (!fer && (String(r.PRESTATAIRE || '').trim() || (regleQ && equipeDuJour_(regleQ, d)))) ? 'PLANIFIE' : 'A PLANIFIER',
         ARRIVEE: '', DEPART: '', MINUTES: '',
         PRESTATIONS_FAITES: '', SIGNALEMENT: '', PHOTOS: 0,
         /* Sans devis derrière, la fiche de travail du salarié serait vide :
@@ -6809,8 +6818,8 @@ function facturerDepuisAppli_(d, com) {
 
 /**
  * La préparation automatique, une fois par heure, quand elle est activée
- * (menu 31) : les ponctuels terminés depuis deux heures, et du 1er au 5 du
- * mois les contrats du mois écoulé. Que des brouillons.
+ * (menu 31) : les ponctuels terminés depuis deux heures, et le 3 du mois
+ * les contrats du mois écoulé (rattrapage les 4 et 5). Que des brouillons.
  */
 function preparationAutomatique() {
   if (!pennylaneJeton_()) return;
@@ -6818,7 +6827,12 @@ function preparationAutomatique() {
   try { lock.waitLock(30000); } catch (e) { return; }
   try {
     facturesPonctuels_(null);
-    if (new Date().getDate() <= 5) facturesContrats_(moisEcoule_(), null);
+    /* v102 — Simon : « les factures de début de mois des récurrents, le 3,
+       comme c'était initialement ». Le 3 ; les 4 et 5 ne rattrapent que ce
+       qui aurait échoué (une référence déjà dans Pennylane n'est jamais
+       refaite). */
+    var jm = new Date().getDate();
+    if (jm >= 3 && jm <= 5) facturesContrats_(moisEcoule_(), null);
   } catch (e2) {
     tracerServeur_('SYSTEME', 'PREPARATION AUTO EN ECHEC', String(e2 && e2.message || e2).slice(0, 200), '', '');
   }
@@ -7168,7 +7182,7 @@ function activerPreparationAuto() {
   ScriptApp.newTrigger('preparationAutomatique').timeBased().everyHours(1).create();
   tracerServeur_('SYSTEME', 'PREPARATION AUTO ACTIVEE', '', '', '');
   ui.alert('Préparation automatique activée.\n\nToutes les heures : les chantiers terminés depuis deux heures, ' +
-    'et du 1er au 5 du mois les contrats du mois écoulé, deviennent des BROUILLONS dans Pennylane.\n\n' +
+    'et le 3 du mois les contrats du mois écoulé, deviennent des BROUILLONS dans Pennylane.\n\n' +
     'Rien n\'est envoyé aux clients.');
 }
 function arreterPreparationAuto_(sansMot) {
@@ -10004,3 +10018,141 @@ function lireFiche_(d, com) {
 function hexDe_(octets) {
   return (octets || []).map(function (b) { var v = (b < 0 ? b + 256 : b).toString(16); return v.length < 2 ? '0' + v : v; }).join('');
 }
+
+/* ====================== L'ÉQUIPE PAR JOUR (v102) ======================
+   Simon, 8 novembre 2026 : « pour le moment, mets toutes les prestations en
+   binôme Victor + Maxime, sauf le lundi uniquement Victor et uniquement
+   Maxime le samedi ». La règle vit dans REGLAGES (equipe_par_jour), pour se
+   changer sans toucher au code :
+     LUNDI=VICTOR;SAMEDI=MAXIME;AUTRES=MAXIME, VICTOR
+   Elle s'applique aux passages que la nuit pose, et une fois pour toutes
+   (equipeParJour_) aux interventions à venir déjà posées. Une intervention
+   confiée à quelqu'un d'autre (SIMON LG…) n'est jamais touchée : la règle ne
+   remplace que ses propres noms. Vide : plus de règle, la série décide. */
+function regleEquipe_(reg) {
+  var s = String((reg && reg.equipe_par_jour) || '').trim();
+  if (!s) return null;
+  var r = { jours: {}, autres: '', noms: {} };
+  s.split(/\s*;\s*/).forEach(function (p) {
+    var m = p.match(/^([^=]+)=(.*)$/);
+    if (!m) return;
+    var qui = nomsQui_(m[2]).join(', ');
+    nomsQui_(m[2]).forEach(function (n) { r.noms[normNom_(n)] = true; });
+    var k = normNom_(m[1]);
+    if (/^autre/.test(k) || k === '*') r.autres = qui;
+    else { var j = jourSemaineNum_(m[1]); if (j >= 0) r.jours[j] = qui; }
+  });
+  return r;
+}
+/** L'équipe que la règle donne à cette date, ou '' si la règle ne dit rien. */
+function equipeDuJour_(r, d) {
+  if (!r || !d) return '';
+  var j = new Date(d).getDay();
+  return r.jours.hasOwnProperty(j) ? r.jours[j] : r.autres;
+}
+/** La règle peut-elle remplacer ces noms-là ? Vide, ou seulement les siens. */
+function equipeRemplacable_(r, qui) {
+  var l = nomsQui_(qui);
+  return !l.length || l.every(function (n) { return r.noms[normNom_(n)]; });
+}
+
+/** Applique la règle aux séries et aux interventions à venir déjà posées. */
+function equipeParJour_(reg) {
+  var r = regleEquipe_(reg || lireReglages_());
+  var b = { series: 0, interventions: 0 };
+  if (!r) return b;
+  var ss = SpreadsheetApp.getActive(), auj = minuit_(new Date());
+  var shR = ss.getSheetByName(SH.RECURRENTS);
+  if (shR && shR.getLastRow() > 1) {
+    var vR = shR.getRange(1, 1, shR.getLastRow(), shR.getLastColumn()).getValues();
+    var eR = vR[0].map(function (x) { return String(x).trim(); });
+    var cJ = eR.indexOf('JOUR'), cP = eR.indexOf('PRESTATAIRE'), cF = eR.indexOf('FREQUENCE');
+    for (var i = 1; i < vR.length; i++) {
+      if (!String(vR[i][0] || '').trim() || !equipeRemplacable_(r, vR[i][cP])) continue;
+      var j = jourSemaineNum_(vR[i][cJ]);
+      var mensuelSansJour = String(vR[i][cF] || '').toUpperCase().trim() === 'MENSUEL' && j < 0;
+      var qui = mensuelSansJour || j < 0 ? r.autres : (r.jours.hasOwnProperty(j) ? r.jours[j] : r.autres);
+      if (qui && qui !== String(vR[i][cP] || '').trim()) { shR.getRange(i + 1, cP + 1).setValue(qui); b.series++; }
+    }
+  }
+  var sh = ss.getSheetByName(SH.CHANTIERS);
+  if (sh && sh.getLastRow() > 1) {
+    var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+    var e = v[0].map(function (x) { return String(x).trim(); });
+    var cD = e.indexOf('DATE'), cQ = e.indexOf('PRESTATAIRE'), cS = e.indexOf('STATUT'),
+        cA = e.indexOf('ARRIVEE'), cRc = e.indexOf('RECURRENT');
+    for (var k = 1; k < v.length; k++) {
+      var st = String(v[k][cS] || '').toUpperCase().trim();
+      if (st === 'FAIT' || st === 'EN COURS' || st === 'ANNULE') continue;
+      if (cA >= 0 && String(v[k][cA] || '').trim()) continue;
+      var d = v[k][cD] ? new Date(v[k][cD]) : null;
+      if (d && isNaN(d.getTime())) d = null;
+      if (!d) {
+        /* Sans date : seulement un passage de contrat (un férié à replacer),
+           dont la clé dit le jour d'origine. */
+        var cle = cRc >= 0 ? String(v[k][cRc] || '') : '';
+        d = cle.indexOf('|') > 0 ? dateIso_(cle.split('|')[1]) : null;
+        if (!d) continue;
+      } else if (minuit_(d) < auj) continue;
+      if (!equipeRemplacable_(r, v[k][cQ])) continue;
+      var q = equipeDuJour_(r, d);
+      if (!q || q === String(v[k][cQ] || '').trim()) continue;
+      sh.getRange(k + 1, cQ + 1).setValue(q);
+      if (v[k][cD] && st === 'A PLANIFIER') sh.getRange(k + 1, cS + 1).setValue('PLANIFIE');
+      b.interventions++;
+    }
+  }
+  tracerServeur_('SYSTEME', 'EQUIPE PAR JOUR', b.series + ' contrat(s), ' + b.interventions + ' intervention(s)', '', '');
+  return b;
+}
+
+/* ====================== « À FAIRE » : REPARTIR DE ZÉRO (v102) ======================
+   Simon, 8 novembre 2026 : « clear toutes les choses à faire, on part de 0 à
+   partir de maintenant ». Rien n'est effacé du classeur : on note ce qui est
+   en attente à cet instant (tous les devis, les interventions passées ou sans
+   date), et « À faire » ne le montre plus. Ce qui arrive ensuite s'affiche
+   normalement. Les passages tombés un férié, eux, restent : ils sont à
+   replacer. Les interventions à venir sans personne restent aussi : il faut
+   bien que quelqu'un y aille. */
+function remiseAFaire_(com) {
+  var auj = minuit_(new Date());
+  var devis = lireDevis_().map(function (x) { return String(x.NUMERO || '').trim(); }).filter(String);
+  var ch = [];
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    var id = String(o.ID || '').trim();
+    if (!id || String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') return;
+    if (!o.DATE) {
+      var cle = String(o.RECURRENT || '');
+      if (cle.indexOf('|') > 0 && nomFerieIso_(cle.split('|')[1])) return;
+      ch.push(id); return;
+    }
+    var d = minuit_(o.DATE);
+    if (!isNaN(d.getTime()) && d <= auj) ch.push(id);
+  });
+  var s = { quand: new Date().getTime(), devis: devis, chantiers: ch };
+  PropertiesService.getScriptProperties().setProperty('AFAIRE_IGNORES', JSON.stringify(s));
+  tracerServeur_(com ? com.nom : 'SYSTEME', 'A FAIRE REMIS A ZERO', devis.length + ' devis, ' + ch.length + ' intervention(s) mis de côté', '', '');
+  return { ok: true, devis: devis.length, interventions: ch.length, quand: s.quand };
+}
+function ignoresAFaire_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('AFAIRE_IGNORES') || 'null'); }
+  catch (e) { return null; }
+}
+
+/* La mise en place du 8 novembre au soir, lancée une fois depuis l'éditeur :
+   la règle d'équipe, les fériés retirés du calendrier, puis « À faire » à zéro. */
+function miseEnPlaceV102() {
+  var reg = lireReglages_();
+  if (!String(reg.equipe_par_jour || '').trim()) {
+    ecrireReglage_('equipe_par_jour', 'LUNDI=VICTOR;SAMEDI=MAXIME;AUTRES=MAXIME, VICTOR');
+    reg = lireReglages_();
+  }
+  var e = equipeParJour_(reg);
+  var g = genererRecurrents_();
+  var z = remiseAFaire_(null);
+  Logger.log('Équipe : ' + e.series + ' contrat(s), ' + e.interventions + ' intervention(s). ' +
+             'Planning : ' + g.poses + ' posé(s), ' + (g.ferieRetires || 0) + ' férié(s) retiré(s). ' +
+             'À faire : ' + z.devis + ' devis et ' + z.interventions + ' intervention(s) mis de côté.');
+  return { equipe: e, planning: g, remise: z };
+}
+

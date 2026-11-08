@@ -697,7 +697,7 @@
   .factTitre{font-size:15px;margin:18px 2px 6px;color:var(--txt,inherit)}
   /* v100 — les cinq onglets du tableau */
   .adOngs{gap:4px;flex-wrap:nowrap}
-  .ctDevisRes{display:flex;flex-direction:column;gap:6px;margin-top:6px}.ctDevisLigne{text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line,#334);background:transparent;color:inherit;font-size:14px;cursor:pointer}.ctDevisLigne:active{opacity:.7}.ctDevisChoisi{display:flex;gap:8px;align-items:center;justify-content:space-between}.calFer{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(220,38,38,.07) 6px 12px)}.calFerL{display:inline-block;font-size:10px;font-weight:600;color:var(--danger);margin-left:4px;vertical-align:middle}.semFer{display:block;font-size:10px;font-style:normal;color:var(--danger);font-weight:600}.adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ctDevisRes{display:flex;flex-direction:column;gap:6px;margin-top:6px}.ctDevisLigne{text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line,#334);background:transparent;color:inherit;font-size:14px;cursor:pointer}.ctDevisLigne:active{opacity:.7}.ctDevisChoisi{display:flex;gap:8px;align-items:center;justify-content:space-between}.calFer{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(220,38,38,.07) 6px 12px)}.calFerL{display:inline-block;font-size:10px;font-weight:600;color:var(--danger);margin-left:4px;vertical-align:middle}.semFer{display:block;font-size:10px;font-style:normal;color:var(--danger);font-weight:600}.lienTexte{background:none;border:0;color:var(--acc);text-decoration:underline;font-size:12px;cursor:pointer;padding:4px}.factOngs .btn.on{background:var(--acc);color:#fff;border-color:var(--acc)}.factAide summary{cursor:pointer}.adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
   <!-- Les notifications. Le SDK vit chez OneSignal : sans réseau il ne se
        charge pas, et l'application s'en passe — le reste fonctionne hors
@@ -734,6 +734,8 @@
 
 <header>
   <div class="l1">
+    <button class="lien hide" id="bHaut" onclick="retourHaut()" aria-label="Retour"
+            style="font-size:20px;line-height:1;padding:6px 12px;margin-right:8px">←</button>
     <img id="hLogo" alt="" class="hide">
     <div style="flex:1">
       <h1 id="hTitre">Devis</h1>
@@ -1614,11 +1616,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=101"></script>
-<script src="jspdf.umd.min.js?v=101"></script>
-<script src="police.js?v=101"></script>
-<script src="logo.js?v=101"></script>
-<script src="pdf.js?v=101"></script>
-<script src="app.js?v=101"></script>
+<script src="config.js?v=102"></script>
+<script src="jspdf.umd.min.js?v=102"></script>
+<script src="police.js?v=102"></script>
+<script src="logo.js?v=102"></script>
+<script src="pdf.js?v=102"></script>
+<script src="app.js?v=102"></script>
 </body>
 </html>

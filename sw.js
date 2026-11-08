@@ -1,23 +1,23 @@
 /* Service worker : met l'application en cache pour qu'elle démarre sans réseau.
    Après toute modification des fichiers, incrémenter VERSION pour forcer la mise à jour. */
 
-var VERSION = 'devis-v101';
+var VERSION = 'devis-v102';
 
 /* Les adresses mises en réserve doivent être celles que la page demande, ?v=
    compris : une réserve qui porte « app.js?v=58 » alors que la page réclame
-   « app.js?v=101 » ne sert à rien, et le premier démarrage sans réseau échoue.
+   « app.js?v=102 » ne sert à rien, et le premier démarrage sans réseau échoue.
    Ce numéro suit donc celui d'index.html, à chaque publication. */
 var FICHIERS = [
   './',
   'index.html',
-  'config.js?v=101',
-  'jspdf.umd.min.js?v=101',
-  'police.js?v=101',
-  'logo.js?v=101',
-  'pdf.js?v=101',
-  'visionneuse.js?v=101',
-  'visionneuse.worker.js?v=101',
-  'app.js?v=101',
+  'config.js?v=102',
+  'jspdf.umd.min.js?v=102',
+  'police.js?v=102',
+  'logo.js?v=102',
+  'pdf.js?v=102',
+  'visionneuse.js?v=102',
+  'visionneuse.worker.js?v=102',
+  'app.js?v=102',
   'manifest.webmanifest',
   'icon-192.png',
   'icon-512.png'
