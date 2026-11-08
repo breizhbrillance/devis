@@ -359,7 +359,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v95';
+var VERSION_APP = 'v96';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4642,12 +4642,16 @@ function taches(t){
   var aPoser = dv.filter(function(d){ return d.statut === 'SIGNE' && !d.recurrent && Number(d.aPoser||0) > 0; }).length;
   if(aPoser) l.push({ n:aPoser, mot:'devis signé' + (aPoser>1?'s':'') + ' dont le travail n\'est pas planifié',
                        go:'allerDevis()', ton:'warn' });
-  var limite = isoJour(new Date(Date.now() - 10*86400000));
+  /* Un devis à relancer : envoyé il y a 10 à 30 jours, sans réponse. Au-delà,
+     il n'est plus « à relancer », il est perdu ou oublié — et compter les
+     vieux devis noyait la liste (36 le 8 novembre). */
+  var de = isoJour(new Date(Date.now() - 30*86400000)), a = isoJour(new Date(Date.now() - 10*86400000));
   var relances = dv.filter(function(d){
-    var s = String(d.statut||'').toUpperCase();
-    return s !== 'SIGNE' && s !== 'REFUSE' && String(d.date||'').slice(0,10) && String(d.date||'').slice(0,10) <= limite;
+    var s = String(d.statut||'').toUpperCase(), j = String(d.date||'').slice(0,10);
+    return s !== 'SIGNE' && s !== 'REFUSE' && j && j >= de && j <= a &&
+           !/^BREIZH\s*BRILLANCE$/i.test(String(d.client||'').trim());
   }).length;
-  if(relances) l.push({ n:relances, mot:'devis envoyé' + (relances>1?'s':'') + ' sans réponse depuis plus de 10 jours',
+  if(relances) l.push({ n:relances, mot:'devis à relancer (envoyé' + (relances>1?'s':'') + ' il y a 10 à 30 jours, sans réponse)',
                          go:'allerDevis()', ton:'' });
   return l;
 }
