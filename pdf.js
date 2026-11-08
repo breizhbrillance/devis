@@ -40,6 +40,19 @@ var PDF = (function () {
     return v[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (v[1] ? ',' + v[1] : '');
   }
   function eur(n, dec) { return nombre(n, dec) + ' €'; }
+  /* v97 — un contrat se compte sur 52 semaines : 1 passage par semaine fait
+     4,33 passages par mois en moyenne. On l'écrit tel quel, sans arrondir. */
+  function nbPassages(n) { n = Number(n) || 0; return nombre(n, Math.round(n * 100) % 100 ? 2 : 0); }
+  function rythmeEcrit(n) {
+    n = Math.round((Number(n) || 0) * 100) / 100;
+    var semaine = { 4.33: 1, 8.67: 2, 13: 3, 17.33: 4, 21.67: 5 }[n];
+    if (semaine) return semaine + ' passage' + (semaine > 1 ? 's' : '') + ' par semaine, soit ' +
+      nbPassages(n) + ' passages par mois en moyenne (52 semaines \u00f7 12 mois)';
+    if (n === 2.17) return '1 passage toutes les 2 semaines, soit 2,17 passages par mois en moyenne (26 passages par an \u00f7 12 mois)';
+    if (n === 0.5) return '1 passage tous les 2 mois';
+    if (n === 0.33) return '1 passage tous les 3 mois';
+    return nbPassages(n) + ' passage' + (n > 1 ? 's' : '') + ' par mois';
+  }
   function dateFr(d) {
     d = new Date(d);
     return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear();
@@ -201,11 +214,11 @@ var PDF = (function () {
                   : natD === 'REMISE'    ? 'Remise en état'
                   : natD === 'CHANTIER'  ? 'Nettoyage de fin de chantier' : '';
     if (nomNature) {
-      var nbP = Math.round(Number(devis.passages) || 0);
+      var nbP = Math.round((Number(devis.passages) || 0) * 100) / 100;
       /* Une vitrerie se vend au contrat ou en une fois : c'est le nombre de
          passages qui le dit, et le devis doit le dire aussi. */
       if ((natD === 'ENTRETIEN' || natD === 'VITRERIE') && nbP > 0) {
-        nomNature += ' \u2014 ' + nbP + ' passage' + (nbP > 1 ? 's' : '') + ' par mois';
+        nomNature += ' \u2014 ' + rythmeEcrit(nbP);
       }
       police('normal', 9, [55, 65, 81]);
       doc.text('Objet : ' + nomNature, M + 4, y + 3.4);
@@ -334,7 +347,7 @@ var PDF = (function () {
 
     /* Un contrat d'entretien se chiffre au passage et se vend au mois : le
        client doit lire les deux, sinon le montant mensuel tombe du ciel. */
-    var passages = Math.round(Number(devis.passages) || 0);
+    var passages = Math.round((Number(devis.passages) || 0) * 100) / 100;
     /* « mensualisé » ne veut pas dire « entretien » : une vitrerie vendue au
        contrat se lit au mois elle aussi. */
     var nat0 = String(devis.nature || '').toUpperCase().trim();
@@ -377,8 +390,8 @@ var PDF = (function () {
       doc.text('Prix d\'un passage HT', xL, yt, { align: 'right' });
       doc.text(eur(parPassage), R - 4, yt, { align: 'right' });
       yt += 5.4;
-      doc.text('Passages par mois', xL, yt, { align: 'right' });
-      doc.text(String(passages), R - 4, yt, { align: 'right' });
+      doc.text('Passages par mois (sur 52 sem.)', xL, yt, { align: 'right' });
+      doc.text(nbPassages(passages), R - 4, yt, { align: 'right' });
       yt += 5.4;
     }
     if (avecRemise) {

@@ -845,9 +845,9 @@
         <span>Nettoyage, antimousse, nacelle. Une intervention, facturée une fois.</span>
       </button>
       <div id="blocFreq" class="hide">
-        <label id="lFreq">Passages par mois</label>
-        <input id="fPassages" type="number" inputmode="numeric" min="1" max="31" step="1"
-               placeholder="4" oninput="setPassages(this.value)">
+        <label id="lFreq">Rythme des passages</label>
+        <select id="fPassages" onchange="setPassages(this.value)"></select>
+        <div class="mini" id="mRythme"></div>
         <div class="mini" id="mFreq">Tu peux laisser vide : la question revient avant d'enregistrer le devis.</div>
       </div>
     </div>
@@ -940,10 +940,10 @@
          ici, au dernier moment où elle peut encore être saisie. -->
     <div class="card hide" id="cFreq">
       <h2>Fréquence</h2>
-      <label>Passages par mois</label>
-      <input id="fPassages4" type="number" inputmode="numeric" min="1" max="31" step="1"
-             placeholder="4" oninput="setPassages(this.value, true)">
-      <div class="mini">Le devis sera mensualisé : prix par passage × nombre de passages.</div>
+      <label>Rythme des passages</label>
+      <select id="fPassages4" onchange="setPassages(this.value, true)"></select>
+      <div class="mini" id="mRythme4"></div>
+      <div class="mini">Le devis est mensualisé sur 52 semaines : prix d'un passage × passages par mois en moyenne. Même montant chaque mois.</div>
     </div>
     <!-- Le catalogue ne sait pas dans quel état est le site ; le commercial, si.
          Une seule coche : site très sale. Non cochée, rien ne change ; cochée, le
@@ -1585,11 +1585,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=96"></script>
-<script src="jspdf.umd.min.js?v=96"></script>
-<script src="police.js?v=96"></script>
-<script src="logo.js?v=96"></script>
-<script src="pdf.js?v=96"></script>
-<script src="app.js?v=96"></script>
+<script src="config.js?v=97"></script>
+<script src="jspdf.umd.min.js?v=97"></script>
+<script src="police.js?v=97"></script>
+<script src="logo.js?v=97"></script>
+<script src="pdf.js?v=97"></script>
+<script src="app.js?v=97"></script>
 </body>
 </html>

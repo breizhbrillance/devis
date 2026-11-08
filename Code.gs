@@ -3483,11 +3483,15 @@ function genererChantiers_(numero) {
 
   var combien = 1;
   if (recurrent) {
-    combien = Number(devis.PASSAGES_MOIS) ||
+    combien = Number(String(devis.PASSAGES_MOIS || '').replace(',', '.')) ||
               Number(String(reg.passages_mois_defaut || '4').replace(',', '.')) || 4;
-    if (combien < 1) combien = 1;
     if (combien > 31) combien = 31;
   }
+  /* v97 — un devis récurrent compte ses passages sur 52 semaines : 4,33 par
+     mois pour un passage hebdomadaire. La durée d'un passage se calcule sur
+     cette moyenne exacte ; le nombre de fiches à poser, lui, est entier. */
+  var moyenneMois = combien;
+  combien = Math.max(1, Math.round(combien));
 
   /* Combien de temps ? Le montant divisé par le taux horaire de vente. Pour un
      contrat, le total du devis est celui du mois : un passage en vaut la part.
@@ -3495,7 +3499,7 @@ function genererChantiers_(numero) {
      qu'une fiche qui déborde ne tient sur aucun planning. */
   var taux = tauxHorairePlanning_(reg);
   var htTotal = Number(devis.TOTAL_HT) || 0;
-  var minutesPassage = minutesPour_(recurrent && combien > 0 ? htTotal / combien : htTotal, taux);
+  var minutesPassage = minutesPour_(recurrent && moyenneMois > 0 ? htTotal / moyenneMois : htTotal, taux);
   var gens = prestatairesPlanning_();
   var journee = 420;                         // 7 h, à défaut de salarié décrit
   gens.forEach(function (g) { if (g.capaciteJour > journee) journee = g.capaciteJour; });
@@ -8863,7 +8867,7 @@ function preparerFacture_(d, com) {
       dueDate: iso10_(ech),
       notes: (recurrent
         ? 'Contrat d\'entretien — ' + moisLisible_(periode) +
-          ' (' + passages + ' passage' + (passages > 1 ? 's' : '') + ')'
+          ' (' + nbFr_(passages) + ' passage' + (passages > 1 ? 's' : '') + ' en moyenne, sur 52 semaines)'
         : 'Prestation réalisée') +
         ' · devis ' + num +
         (devis.SIGNATAIRE ? ' signé par ' + String(devis.SIGNATAIRE) : '')

@@ -359,7 +359,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v96';
+var VERSION_APP = 'v97';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -904,7 +904,7 @@ function suivant(){
     if(estEntretien() && !PASSAGES){
       $('cFreq').classList.remove('hide');
       var ch = $('fPassages4'); if(ch){ ch.focus(); }
-      return erreur('Combien de passages par mois ? Le devis doit être mensualisé.');
+      return erreur('Quel rythme de passages ? Le devis doit être mensualisé (moyenne sur 52 semaines).');
     }
     /* La date d'intervention n'est plus exigée (25 octobre 2026). Tous les
        clients ne savent pas, au moment du devis, quand ils veulent qu'on
@@ -1301,15 +1301,57 @@ function choisirNature(n){
   if(n !== 'ENTRETIEN' && n !== 'VITRERIE') etape(2);
 }
 
+/* v97 — demande de Simon : « quand on fait un devis, bien mettre sur 52
+   semaines ». Le commercial ne compte plus des passages par mois (« 4 »,
+   qui oubliait les mois à cinq semaines) : il choisit un rythme, et le devis
+   en tire la moyenne mensuelle sur l'année. 1 fois par semaine = 52 passages
+   par an ÷ 12 mois = 4,33 passages par mois. PASSAGES garde cette moyenne,
+   à deux décimales ; le classeur et le PDF la lisent comme avant. */
+var RYTHMES = [
+  { v: 4.33,  mot: '1 fois par semaine',      calc: '1 passage par semaine × 52 semaines ÷ 12 mois' },
+  { v: 8.67,  mot: '2 fois par semaine',      calc: '2 passages par semaine × 52 semaines ÷ 12 mois' },
+  { v: 13,    mot: '3 fois par semaine',      calc: '3 passages par semaine × 52 semaines ÷ 12 mois' },
+  { v: 17.33, mot: '4 fois par semaine',      calc: '4 passages par semaine × 52 semaines ÷ 12 mois' },
+  { v: 21.67, mot: '5 fois par semaine',      calc: '5 passages par semaine × 52 semaines ÷ 12 mois' },
+  { v: 2.17,  mot: 'toutes les 2 semaines',   calc: '26 passages par an ÷ 12 mois' },
+  { v: 1,     mot: '1 fois par mois',         calc: '' },
+  { v: 0.5,   mot: 'tous les 2 mois',         calc: '6 passages par an ÷ 12 mois' },
+  { v: 0.33,  mot: 'tous les 3 mois',         calc: '4 passages par an ÷ 12 mois' }
+];
+function rythmeDe(n){
+  n = Math.round((Number(n) || 0) * 100) / 100;
+  for(var i = 0; i < RYTHMES.length; i++) if(RYTHMES[i].v === n) return RYTHMES[i];
+  return n > 0 ? { v: n, mot: nb(n) + ' passage' + (n > 1 ? 's' : '') + ' par mois', calc: '' } : null;
+}
+/* Les options du choix, avec la valeur d'un devis plus ancien (« 4 par mois »)
+   quand elle n'est pas dans la liste : on ne change pas un prix déjà signé. */
+function optionsRythme(sel){
+  var autre = (PASSAGES && !RYTHMES.some(function(r){ return r.v === PASSAGES; }))
+    ? '<option value="' + PASSAGES + '"' + (sel ? ' selected' : '') + '>' + ech(rythmeDe(PASSAGES).mot) + '</option>' : '';
+  return '<option value="">' + (estVitrerie() ? 'Une seule fois' : 'Choisir le rythme…') + '</option>' + autre +
+    RYTHMES.map(function(r){
+      return '<option value="' + r.v + '"' + (PASSAGES === r.v ? ' selected' : '') + '>' + ech(r.mot) +
+        (r.v !== 1 ? ' (' + nb(r.v) + ' par mois)' : '') + '</option>';
+    }).join('');
+}
+function peindreRythme(){
+  ['fPassages', 'fPassages4'].forEach(function(id){
+    var e = $(id); if(!e) return;
+    e.innerHTML = optionsRythme(true);
+    e.value = PASSAGES ? String(PASSAGES) : '';
+  });
+  var r = rythmeDe(PASSAGES), m = $('mRythme'), m4 = $('mRythme4');
+  var txt = r && r.calc ? r.calc + ' = ' + nb(r.v) + ' passages par mois en moyenne. Le prix mensuel est le même chaque mois.' : '';
+  if(m) m.textContent = txt; if(m4) m4.textContent = txt;
+}
+
 function setPassages(v, surValidation){
-  var n = Math.round(Number(String(v).replace(',', '.')) || 0);
+  var n = Math.round((Number(String(v).replace(',', '.')) || 0) * 100) / 100;
   if(!isFinite(n) || n < 0) n = 0;
   if(n > 31) n = 31;
   PASSAGES = n;
   // les deux champs disent la même chose, où qu'on l'ait saisi
-  var a = $('fPassages'), b = $('fPassages4');
-  if(a && surValidation) a.value = n || '';
-  if(b && !surValidation) b.value = n || '';
+  peindreRythme();
   if(ETAPE === 4) calculer();
   majBarre();
   sauverBrouillon();
@@ -1329,13 +1371,11 @@ function majNature(){
      en une fois, et c'est le champ laissé vide qui dit « une fois ». */
   $('blocFreq').classList.toggle('hide', NATURE !== 'ENTRETIEN' && NATURE !== 'VITRERIE');
   var lf = $('lFreq'), mf = $('mFreq');
-  if(lf) lf.textContent = estVitrerie() ? 'Passages par mois (vide : une seule fois)'
-                                        : 'Passages par mois';
+  if(lf) lf.textContent = 'Rythme des passages';
   if(mf) mf.textContent = estVitrerie()
-    ? 'Laisse vide pour un nettoyage en une seule fois.'
-    : 'Tu peux laisser vide : la question revient avant d\'enregistrer le devis.';
-  var a = $('fPassages'); if(a) a.value = PASSAGES || '';
-  var b = $('fPassages4'); if(b) b.value = PASSAGES || '';
+    ? '« Une seule fois » pour un nettoyage sans contrat.'
+    : 'Tu peux le choisir plus tard : la question revient avant d\'enregistrer le devis.';
+  peindreRythme();
   $('bar').classList.toggle('hide', !barreVisible());
 }
 
@@ -2478,7 +2518,9 @@ function calculer(){
   // Sur un entretien, le client doit voir d'où vient son prix mensuel.
   if(estRecurrent() && t.passages > 0){
     h+='<div class="tot"><span>Prix d\'un passage HT</span><b>'+eur(t.parPassage)+'</b></div>';
-    h+='<div class="tot"><span>Passages par mois</span><b>'+t.passages+'</b></div>';
+    var ry = rythmeDe(t.passages);
+    h+='<div class="tot"><span>Rythme</span><b>'+ech(ry ? ry.mot : '')+'</b></div>';
+    h+='<div class="tot"><span>Passages par mois (moyenne sur 52 semaines)</span><b>'+nb(t.passages)+'</b></div>';
   }
   // Les sous-totaux par poste sont bruts : la remise se lit ensuite, en une
   // seule ligne, comme un client s'attend à la voir sur un devis.
