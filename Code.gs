@@ -2547,10 +2547,21 @@ function suggestionsPlacement_(d) {
     var c = creneauPour_(minutes, depuis, gens, charge, '', 60, adresse);
     if (!c) break;
     out.push({ date: isoJour_(c.date), heure: c.heure, nom: c.nom, route: c.route || 0,
-               jour: Utilities.formatDate(c.date, 'Europe/Paris', 'EEEE d MMMM') });
+               jour: jourFr_(c.date) });
     depuis = new Date(c.date.getTime()); depuis.setDate(depuis.getDate() + 1);
   }
   return { ok: true, id: id, minutes: minutes, suggestions: out };
+}
+
+/* « lundi 9 novembre » : Utilities.formatDate écrit les jours dans la langue
+   du script (l'anglais), d'où ce petit traducteur. */
+function jourFr_(d) {
+  var x = new Date(d);
+  var j = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+  var m = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  var p = Utilities.formatDate(x, 'Europe/Paris', 'yyyy-MM-dd').split('-');
+  var jour = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
+  return j[jour.getDay()] + ' ' + Number(p[2]) + ' ' + m[Number(p[1]) - 1];
 }
 
 /* 450 minutes → « 7 h 30 ». Pour un courriel que l'on lit d'un coup d'œil. */
@@ -5714,7 +5725,7 @@ function notifierChantier_(nom, ligne, deplace) {
   if (!nom || !ligne) return;
   var d = ligne.DATE ? new Date(ligne.DATE) : null;
   var jour = (d && !isNaN(d.getTime()))
-    ? Utilities.formatDate(d, 'Europe/Paris', 'EEEE d MMMM')
+    ? jourFr_(d)
     : 'date à caler';
   var h = heureTexte_(ligne.HEURE);
   var ou = [String(ligne.CP || ''), String(ligne.VILLE || '')].filter(String).join(' ').trim();
