@@ -862,6 +862,37 @@ function normNom_(s) {
           .replace(/[òóôöõ]/g, 'o').replace(/[ùúûü]/g, 'u').replace(/[ç]/g, 'c');
 }
 
+/* v98 — plusieurs intervenants sur une intervention. Demande de Simon :
+   « Victor et Maxime forment un binôme pour 95 % des prestations ». La colonne
+   PRESTATAIRE garde les noms séparés par une virgule (« MAXIME, VICTOR ») :
+   le classeur reste lisible à l'œil, et une case à un seul nom ne change pas.
+   Toute comparaison « est-ce son chantier ? » passe par quiContient_. */
+function nomsQui_(s) {
+  var vus = {};
+  return String(s == null ? '' : s).split(/\s*[,;\/+]\s*/).map(function (x) {
+    return String(x).trim();
+  }).filter(function (x) {
+    var k = normNom_(x); if (!k || vus[k]) return false; vus[k] = true; return true;
+  });
+}
+function quiContient_(s, nom) {
+  var n = normNom_(nom);
+  if (!n) return false;
+  return nomsQui_(s).some(function (x) { return normNom_(x) === n; });
+}
+/* Les noms tels qu'écrits dans PRESTATAIRES, ou une erreur si l'un d'eux n'y
+   est pas — sinon l'intervention n'apparaîtrait sur aucun téléphone. */
+function quiConnus_(s) {
+  var noms = nomsQui_(s), gens = lirePrestataires_(), out = [];
+  for (var i = 0; i < noms.length; i++) {
+    var n = normNom_(noms[i]), trouve = '';
+    gens.forEach(function (p) { if (normNom_(p.nom) === n) trouve = p.nom; });
+    if (!trouve) return { ok: false, erreur: noms[i] + ' n\'est pas dans la liste des prestataires' };
+    out.push(trouve);
+  }
+  return { ok: true, valeur: out.join(', ') };
+}
+
 /* Actif ou non, dans une colonne tenue à la main.
 
    « NON » écrit en toutes lettres, mais aussi une case à cocher décochée : le
@@ -962,7 +993,7 @@ function doPost(e) {
                    'recurrentNeuf', 'recurrentModif', 'recurrentStop',
                    'rdvNeuf', 'monChantier',
                    'prospects', 'appel', 'historique',
-                   'facturation', 'facturer', 'facturesMois',
+                   'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
                    'mesDevis', 'devisArchive',
                    'poserDevis'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
@@ -1010,7 +1041,7 @@ function doPost(e) {
          /* Facturer engage l'entreprise : ces trois actions sont au gérant
             seul. Un commercial qui les appelle se voit refusé, et le refus
             part au journal. */
-         'facturation', 'facturer', 'facturesMois',
+         'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
          /* Poser le travail d'un devis que le commercial n'a pas encore
             déclaré signé : c'est un engagement pris sur la parole du client,
             il revient au gérant seul. */
@@ -1072,7 +1103,17 @@ function doPost(e) {
     if (d.action === 'monChantier') return reponse_(monChantier_(d, com));
     if (d.action === 'photo') return reponse_(enregistrerPhoto_(d));
     if (d.action === 'statut') return reponse_(enregistrerStatut_(d, com));
-    if (d.action === 'facturation') return reponse_(etatFacturation_(d.periode));
+    if (d.action === 'facturation') {
+      return reponse_(d.v >= 98 ? facturationAppli_(d.periode) : etatFacturation_(d.periode));
+    }
+    if (d.action === 'facturerAppli') {
+      lock.waitLock(30000);
+      return reponse_(facturerDepuisAppli_(d, com));
+    }
+    if (d.action === 'marquerFacturee') {
+      lock.waitLock(30000);
+      return reponse_(marquerFacturee_(d, com));
+    }
     if (d.action === 'facturer') {
       lock.waitLock(30000);
       return reponse_(preparerFacture_(d, com));
@@ -2088,9 +2129,9 @@ function planifierChantier_(d, com) {
 
   // Le nom doit exister, sinon le chantier n'apparaîtrait sur aucun téléphone.
   if (v.PRESTATAIRE) {
-    var connu = false, n = normNom_(v.PRESTATAIRE);
-    lirePrestataires_().forEach(function (p) { if (normNom_(p.nom) === n) { connu = true; v.PRESTATAIRE = p.nom; } });
-    if (!connu) return { ok: false, erreur: 'ce prestataire n\'est pas dans la liste' };
+    var qc = quiConnus_(v.PRESTATAIRE);
+    if (!qc.ok) return { ok: false, erreur: qc.erreur };
+    v.PRESTATAIRE = qc.valeur;
   }
 
   var avant = null;
@@ -2145,16 +2186,19 @@ function planifierChantier_(d, com) {
      mais jamais quand ni la date ni la personne n'ont bougé. */
   if (String(quiFinal || '').trim() && dateFinale &&
       (v.PRESTATAIRE !== undefined || v.DATE !== undefined || v.HEURE !== undefined)) {
-    var neuf = normNom_(avant.PRESTATAIRE || '') !== normNom_(quiFinal) ||
-               !avant.DATE;
-    notifierChantier_(quiFinal, {
-      CLIENT: v.CLIENT !== undefined ? v.CLIENT : avant.CLIENT,
-      CP: v.CP !== undefined ? v.CP : avant.CP,
-      VILLE: v.VILLE !== undefined ? v.VILLE : avant.VILLE,
-      DATE: dateFinale,
-      HEURE: v.HEURE !== undefined ? v.HEURE : avant.HEURE,
-      NUMERO: avant.NUMERO
-    }, !neuf);
+    /* Chacun du binôme reçoit son mot : « nouveau » pour celui qu'on vient
+       d'ajouter, « déplacé » pour celui qui y était déjà. */
+    nomsQui_(quiFinal).forEach(function (nomN) {
+      var neuf = !quiContient_(avant.PRESTATAIRE, nomN) || !avant.DATE;
+      notifierChantier_(nomN, {
+        CLIENT: v.CLIENT !== undefined ? v.CLIENT : avant.CLIENT,
+        CP: v.CP !== undefined ? v.CP : avant.CP,
+        VILLE: v.VILLE !== undefined ? v.VILLE : avant.VILLE,
+        DATE: dateFinale,
+        HEURE: v.HEURE !== undefined ? v.HEURE : avant.HEURE,
+        NUMERO: avant.NUMERO
+      }, !neuf);
+    });
   }
 
   tracerServeur_(com ? com.nom : '', 'CHANTIER PLANIFIE',
@@ -2198,9 +2242,9 @@ function creerChantier_(d, com) {
 
   var qui = String(d.prestataire || '').trim();
   if (qui) {
-    var connu = false, n = normNom_(qui);
-    lirePrestataires_().forEach(function (p) { if (normNom_(p.nom) === n) { connu = true; qui = p.nom; } });
-    if (!connu) return { ok: false, erreur: 'ce prestataire n\'est pas dans la liste' };
+    var qc = quiConnus_(qui);
+    if (!qc.ok) return { ok: false, erreur: qc.erreur };
+    qui = qc.valeur;
   }
 
   var date = String(d.date || '').trim() ? new Date(String(d.date) + 'T12:00:00') : '';
@@ -2291,7 +2335,7 @@ function monChantier_(d, com) {
   var avant = null;
   objetsDe_(SH.CHANTIERS).forEach(function (o) { if (String(o.ID).trim() === id) avant = o; });
   if (!avant) return { ok: false, erreur: 'chantier introuvable' };
-  if (normNom_(avant.PRESTATAIRE || '') !== normNom_(com.nom)) {
+  if (!quiContient_(avant.PRESTATAIRE, com.nom)) {
     tracerServeur_(com.nom, 'ACTION REFUSEE', 'monChantier sur ' + id, '', d.appareil || '');
     return { ok: false, erreur: 'ce chantier n\'est pas sur ton planning' };
   }
@@ -2618,18 +2662,21 @@ function chargeActuelle_() {
   if (iDate < 0 || iQui < 0) return charge;
   var poses = [];
   for (var i = 1; i < v.length; i++) {
-    var qui = normNom_(v[i][iQui]);
     var d = v[i][iDate];
-    if (!qui || !d || !(d instanceof Date)) continue;
+    var lesQui = nomsQui_(v[i][iQui]).map(normNom_);
+    if (!lesQui.length || !d || !(d instanceof Date)) continue;
     if (iStatut >= 0 && String(v[i][iStatut]).toUpperCase() === 'ANNULE') continue;
     var min = iDur >= 0 ? Number(v[i][iDur]) : 0;
     if (!isFinite(min) || min <= 0) min = 210;
     var h = iHeure >= 0 ? v[i][iHeure] : '';
     if (h instanceof Date) h = ('0' + h.getHours()).slice(-2) + ':' + ('0' + h.getMinutes()).slice(-2);
-    poses.push({ qui: qui, date: d, iso: isoJour_(d), heure: String(h || ''), min: min,
-                 adresse: adresseComplete_(iAdr >= 0 ? v[i][iAdr] : '', iCp >= 0 ? v[i][iCp] : '',
-                                           iVille >= 0 ? v[i][iVille] : ''),
-                 rang: i });
+    // un binôme occupe la journée de chacun des deux
+    lesQui.forEach(function (qui) {
+      poses.push({ qui: qui, date: d, iso: isoJour_(d), heure: String(h || ''), min: min,
+                   adresse: adresseComplete_(iAdr >= 0 ? v[i][iAdr] : '', iCp >= 0 ? v[i][iCp] : '',
+                                             iVille >= 0 ? v[i][iVille] : ''),
+                   rang: i });
+    });
   }
   /* Dans l'ordre de la journée, pour que la route se compte du chantier de
      8 h vers celui de 14 h et non dans l'ordre où les lignes ont été écrites. */
@@ -3304,7 +3351,9 @@ function conflitsPlanning_() {
     var nom = String(v[i][iQui] || '').trim();
     var pourquoi = ferie_(cal, d);
     if (!pourquoi && estAbsent_(cal, '', isoJour_(d), true)) pourquoi = 'fermeture';
-    if (!pourquoi && nom && estAbsent_(cal, normNom_(nom), isoJour_(d))) pourquoi = nom + ' absent';
+    if (!pourquoi && nom) nomsQui_(nom).forEach(function (n1) {
+      if (!pourquoi && estAbsent_(cal, normNom_(n1), isoJour_(d))) pourquoi = n1 + ' absent';
+    });
     if (!pourquoi) continue;
     out.push({ id: iId >= 0 ? String(v[i][iId]) : '', date: d, nom: nom,
                client: iClient >= 0 ? String(v[i][iClient]) : '', motif: pourquoi });
@@ -4062,9 +4111,9 @@ function lireFicheRecurrent_(d) {
 
   var qui = String(d.prestataire || '').trim();
   if (qui) {
-    var connu = false, n = normNom_(qui);
-    lirePrestataires_().forEach(function (p) { if (normNom_(p.nom) === n) { connu = true; qui = p.nom; } });
-    if (!connu) return { ok: false, erreur: 'ce prestataire n\'est pas dans la liste' };
+    var qc = quiConnus_(qui);
+    if (!qc.ok) return { ok: false, erreur: qc.erreur };
+    qui = qc.valeur;
   }
 
   return { ok: true, jours: jours, s: {
@@ -4246,13 +4295,13 @@ function recurrentNeuf_(d, com) {
   tracerServeur_(com ? com.nom : '', 'CONTRAT CREE',
                  f.s.CLIENT + ' · ' + ids.join(', ') + ' · ' + f.s.FREQUENCE +
                  (numDevis ? ' (devis ' + numDevis + ')' : ''), numDevis, d.appareil || '');
-  if (f.s.PRESTATAIRE) {
+  nomsQui_(f.s.PRESTATAIRE).forEach(function (nomN) {
     try {
-      notifier_(f.s.PRESTATAIRE, 'Nouveau contrat',
+      notifier_(nomN, 'Nouveau contrat',
                 f.s.CLIENT + (f.s.HEURE ? ' · ' + f.s.HEURE : '') +
                 ' · à partir du ' + Utilities.formatDate(f.s.DEBUT, 'Europe/Paris', 'dd/MM'), '');
     } catch (eN) {}
-  }
+  });
   return { ok: true, ids: ids, poses: b.poses || 0,
            retires: rattache.retires, relies: rattache.relies };
 }
@@ -4461,7 +4510,7 @@ function planningDe_(nom) {
     var o = {};
     en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
     if (!String(o.ID || '').trim()) continue;
-    if (normNom_(o.PRESTATAIRE || '') !== moi) continue;
+    if (!quiContient_(o.PRESTATAIRE, moi)) continue;
     if (String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') continue;
     if (!o.DATE) continue;                       // pas encore planifié
     var d = new Date(o.DATE);
@@ -4551,7 +4600,7 @@ function enregistrerChantier_(d, personne) {
   if (!ligne) return { ok: false, erreur: 'chantier introuvable' };
 
   // Un agent ne touche qu'à ses propres chantiers.
-  if (normNom_(actuel.PRESTATAIRE || '') !== normNom_(personne.nom)) {
+  if (!quiContient_(actuel.PRESTATAIRE, personne.nom)) {
     return { ok: false, erreur: 'ce chantier ne vous est pas affecté' };
   }
 
@@ -5533,6 +5582,13 @@ function notifPersonne_(rep) {
 }
 
 function notifier_(nom, titre, texte, lien) {
+  /* Un binôme (« MAXIME, VICTOR ») : un message à chacun. */
+  var plusieurs = nomsQui_(nom);
+  if (plusieurs.length > 1) {
+    var r0 = { ok: true };
+    plusieurs.forEach(function (n1) { var r1 = notifier_(n1, titre, texte, lien); if (!r1.ok) r0 = r1; });
+    return r0;
+  }
   var c = notifConfig_();
   if (!c.app || !c.cle) return { ok: false, erreur: 'notifications non connectées' };
   var qui = notifId_(nom);
@@ -6209,12 +6265,13 @@ function moisEcoule_() {
  * par prestation. Les lignes inactives ou sans montant sont sautées et
  * nommées.
  */
-function facturesContrats_(periode, com) {
+function facturesContrats_(periode, com, seul) {
   var mois = String(periode || '').match(/^\d{4}-\d{2}$/) ? periode : moisEcoule_();
   var parContrat = {}, ordre = [], sautes = [], faits = [], echecs = [];
   lireContrats_().forEach(function (o) {
     if (!estActif_(o.ACTIF)) return;
     var nom = String(o.CONTRAT).trim();
+    if (seul && sansAccent_(nom) !== sansAccent_(seul)) return;
     if (!(Number(o.MENSUEL_HT) > 0)) { sautes.push({ client: nom, motif: 'pas de montant' }); return; }
     if (!parContrat[nom]) { parContrat[nom] = []; ordre.push(nom); }
     parContrat[nom].push(o);
@@ -6286,6 +6343,231 @@ function facturesPonctuels_(com) {
     else echecs.push({ client: p.client, erreur: r.erreur });
   });
   return { ok: true, faits: faits, sautes: sautes, echecs: echecs };
+}
+
+/* ================================================================
+   v98 — L'ONGLET « FACTURES » DE L'APPLI, BRANCHÉ SUR LA RÉALITÉ
+   ================================================================
+   Simon, le 8 novembre : « fais en sorte que je puisse facturer mes clients,
+   là y'a aucune donnée ». L'onglet ne lisait que les devis signés DANS
+   l'appli, et ne tenait un chantier pour fini que s'il avait été pointé.
+   Or les contrats vivent dans l'onglet CONTRATS, la plupart des
+   interventions ponctuelles viennent de FamilyWall sans devis, et l'équipe
+   ne pointe pas. Il voyait donc un écran vide.
+
+   Ce que l'onglet lit désormais, pour le mois choisi :
+   - les CONTRATS, une facture par contrat (comme le menu 29) ;
+   - les interventions ponctuelles passées (date du mois, avant demain), avec
+     ou sans devis, hors passages de contrat. Le prix vient du devis, ou de la
+     note (« 690 € HT », « 390 € TTC »), et se corrige avant d'envoyer.
+   Tout part en BROUILLON dans Pennylane ; rien n'est envoyé au client. */
+
+/** « 690 € HT » → {ht:690}, « 390 € TTC » → {ht:325} (TVA 20 %). */
+function prixDeNote_(note) {
+  var s = String(note || '');
+  var m = s.match(/(\d{1,3}(?:[   ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*€\s*(HT|TTC)?/i);
+  if (!m) return null;
+  var n = Number(m[1].replace(/[   ]/g, '').replace(',', '.'));
+  if (!(n > 0)) return null;
+  var ttc = /TTC/i.test(m[2] || '');
+  return { ht: ttc ? Math.round(n / 1.2 * 100) / 100 : n, ttc: ttc, lu: m[0] };
+}
+
+/* Ce qui ressemble au nom d'un contrat : une intervention « SAUVEGARDE 56 —
+   MAISON N°12 » est peut-être déjà payée par le forfait de SAUVEGARDE 56. */
+function nomsDeContrats_() {
+  var noms = {};
+  lireContrats_().forEach(function (o) {
+    if (!estActif_(o.ACTIF)) return;
+    [o.CONTRAT, o.CLIENT_FACTURE].forEach(function (x) {
+      var k = sansAccent_(x).replace(/[^A-Z0-9]+/g, ' ').trim();
+      if (k.length >= 4) noms[k] = String(o.CONTRAT).trim();
+    });
+  });
+  return noms;
+}
+function contratProche_(client, noms) {
+  var c = ' ' + sansAccent_(client).replace(/[^A-Z0-9]+/g, ' ').replace(/\b(M|MR|MME|MONSIEUR|MADAME)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim() + ' ';
+  for (var k in noms) {
+    if (!noms.hasOwnProperty(k)) continue;
+    var k2 = k.replace(/\b(M|MR|MME|MONSIEUR|MADAME)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    if (k2.length >= 4 && c.indexOf(' ' + k2 + ' ') >= 0) return noms[k];
+  }
+  return '';
+}
+
+function libelleNature_(n) {
+  var x = String(n || '').toUpperCase().trim();
+  return x === 'ENTRETIEN' ? 'Entretien des locaux' : x === 'VITRERIE' ? 'Nettoyage des vitrages'
+       : x === 'FACADE' ? 'Nettoyage de façade' : x === 'REMISE' ? 'Remise en état'
+       : x === 'CHANTIER' ? 'Nettoyage de fin de chantier' : 'Prestation de nettoyage';
+}
+
+function facturationAppli_(periode) {
+  var mois = String(periode || '').match(/^\d{4}-\d{2}$/) ? periode : moisCourant_();
+  var faites = facturesFaites_();
+
+  /* ---- les contrats ---- */
+  var parC = {}, ordre = [];
+  lireContrats_().forEach(function (o) {
+    if (!estActif_(o.ACTIF)) return;
+    var nom = String(o.CONTRAT).trim();
+    if (!parC[nom]) { parC[nom] = []; ordre.push(nom); }
+    parC[nom].push(o);
+  });
+  var contrats = ordre.map(function (nom) {
+    var ls = parC[nom];
+    var t = function (k) { for (var i = 0; i < ls.length; i++) if (String(ls[i][k] || '').trim()) return String(ls[i][k]); return ''; };
+    var ht = 0; ls.forEach(function (l) { ht += Number(l.MENSUEL_HT) || 0; });
+    var manque = [];
+    if (!t('ID_PENNYLANE') && (!t('ADRESSE') || !t('CP') || !t('VILLE'))) manque.push('adresse de facturation');
+    if (!(ht > 0)) manque.push('montant');
+    var deja = (faites['CONTRAT ' + nom] || {})[mois];
+    return {
+      contrat: nom, client: t('CLIENT_FACTURE') || nom, ville: t('VILLE'), email: t('EMAIL'),
+      ht: Math.round(ht * 100) / 100,
+      lignes: ls.map(function (l) {
+        return { ligne: String(l.LIGNE || 'Entretien des locaux'), ht: Number(l.MENSUEL_HT) || 0,
+                 rythme: String(l.RYTHME || '') };
+      }),
+      manque: manque, facturee: !!deja,
+      etat: deja ? String(deja.ETAT || '') : '',
+      idPennylane: deja ? String(deja.ID_PENNYLANE || '') : ''
+    };
+  });
+  contrats.sort(function (a, b) {
+    if (a.facturee !== b.facturee) return a.facturee ? 1 : -1;
+    return a.contrat.localeCompare(b.contrat);
+  });
+
+  /* ---- les interventions ponctuelles du mois ---- */
+  var devisParNum = {};
+  lireDevis_().forEach(function (d) { var n = String(d.NUMERO || '').trim(); if (n) devisParNum[n] = d; });
+  var noms = nomsDeContrats_();
+  var demain = new Date(); demain.setHours(0, 0, 0, 0); demain.setDate(demain.getDate() + 1);
+  var parDevis = {}, interventions = [];
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    var id = String(o.ID || '').trim();
+    if (!id) return;
+    var st = String(o.STATUT || '').toUpperCase().trim();
+    if (st === 'ANNULE') return;
+    if (String(o.RECURRENT || '').trim()) return;          // un passage de contrat
+    var d = o.DATE ? new Date(o.DATE) : null;
+    if (!d || isNaN(d.getTime()) || moisDe_(d) !== mois || d >= demain) return;
+    var num = String(o.NUMERO || '').trim();
+    var dv = num ? devisParNum[num] : null;
+    if (dv) {
+      if (devisEssai_(dv)) return;
+      if (recurrentDevis_(dv.NATURE, dv.PASSAGES_MOIS)) return;   // facturé par le contrat
+      (parDevis[num] = parDevis[num] || []).push(o);
+      return;
+    }
+    var deja = (faites[id] || {})[''];
+    var prix = prixDeNote_(o.NOTE);
+    interventions.push({
+      cle: id, type: 'chantier', client: String(o.CLIENT || ''), date: isoDe_(d) || '',
+      adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
+      nature: String(o.NATURE || ''), libelle: libelleNature_(o.NATURE),
+      note: String(o.NOTE || '').replace(/\s*—?\s*repris de FamilyWall\s*/i, '').trim().slice(0, 200),
+      ht: prix ? prix.ht : 0, prixLu: prix ? prix.lu : '', tva: 20,
+      qui: String(o.PRESTATAIRE || ''), pointe: st === 'FAIT',
+      jamaisPlace: st === 'A PLANIFIER' || !String(o.PRESTATAIRE || '').trim(),
+      contrat: contratProche_(o.CLIENT, noms),
+      facturee: !!deja, etat: deja ? String(deja.ETAT || '') : '',
+      idPennylane: deja ? String(deja.ID_PENNYLANE || '') : ''
+    });
+  });
+  Object.keys(parDevis).forEach(function (num) {
+    var dv = devisParNum[num], chs = parDevis[num];
+    var deja = (faites[num] || {})[''];
+    var der = chs.reduce(function (m, c) { var t = new Date(c.DATE).getTime(); return t > m ? t : m; }, 0);
+    interventions.push({
+      cle: num, type: 'devis', client: String(dv.CLIENT || ''), date: isoDe_(new Date(der)) || '',
+      adresse: String(dv.ADRESSE || ''), cp: String(dv.CP || ''), ville: String(dv.VILLE || ''),
+      nature: String(dv.NATURE || ''), libelle: 'Selon le devis ' + num,
+      note: String(dv.OBJET || ''), ht: Number(dv.TOTAL_HT) || 0, prixLu: 'devis ' + num, tva: 0,
+      qui: String(chs[0].PRESTATAIRE || ''),
+      pointe: chs.every(function (c) { return String(c.STATUT || '').toUpperCase() === 'FAIT'; }),
+      jamaisPlace: false, contrat: '', signe: String(dv.STATUT || '').toUpperCase() === 'SIGNE',
+      facturee: !!deja, etat: deja ? String(deja.ETAT || '') : '',
+      idPennylane: deja ? String(deja.ID_PENNYLANE || '') : ''
+    });
+  });
+  interventions.sort(function (a, b) {
+    if (a.facturee !== b.facturee) return a.facturee ? 1 : -1;
+    if (!!a.contrat !== !!b.contrat) return a.contrat ? 1 : -1;
+    return a.date < b.date ? -1 : a.date > b.date ? 1 : a.client.localeCompare(b.client);
+  });
+  return { ok: true, v: 98, periode: mois, periodeNom: moisLisible_(mois),
+           moisFini: mois < moisCourant_(), pennylane: !!pennylaneJeton_(),
+           contrats: contrats, interventions: interventions,
+           /* l'ancien format, pour un téléphone pas encore à jour */
+           ponctuels: [], henrri: true };
+}
+
+/** Le brouillon d'une intervention sans devis : le prix vient de l'appli. */
+function facturerIntervention_(d, com) {
+  if (!pennylaneJeton_()) return { ok: false, erreur: 'Pennylane n\'est pas connecté (menu 25 du classeur).' };
+  var id = String(d.cle || '').trim();
+  var ch = null;
+  objetsDe_(SH.CHANTIERS).forEach(function (o) { if (String(o.ID || '').trim() === id) ch = o; });
+  if (!ch) return { ok: false, erreur: 'Intervention ' + id + ' introuvable.' };
+  if ((facturesFaites_()[id] || {})['']) return { ok: false, deja: true, erreur: 'Déjà facturée.' };
+  var ht = Math.round((Number(String(d.ht || '').replace(',', '.')) || 0) * 100) / 100;
+  if (!(ht > 0)) return { ok: false, erreur: 'Indique le montant HT.' };
+  var tva = d.tva === undefined || d.tva === '' ? 20 : Number(d.tva);
+  var client = String(d.client || ch.CLIENT || '').trim();
+  var libelle = String(d.libelle || libelleNature_(ch.NATURE)).trim();
+  var jour = ch.DATE ? Utilities.formatDate(new Date(ch.DATE), 'Europe/Paris', 'dd/MM/yyyy') : '';
+  var res = null, erreur = '';
+  try {
+    res = pennylaneBrouillon_({
+      ref: 'BB-' + id,
+      client: { nom: client, adresse: d.adresse !== undefined ? d.adresse : ch.ADRESSE,
+                cp: d.cp !== undefined ? d.cp : ch.CP, ville: d.ville !== undefined ? d.ville : ch.VILLE,
+                email: d.email || '',
+                particulier: d.particulier !== undefined ? !!d.particulier
+                  : /^(M\.|MME|MR|MONSIEUR|MADAME|M )/i.test(client) },
+      sujet: 'Facture — ' + libelle + (jour ? ' du ' + jour : ''),
+      description: 'Prestation réalisée' + (jour ? ' le ' + jour : '') +
+        (ch.ADRESSE ? ', ' + String(ch.ADRESSE) + ' ' + String(ch.CP || '') + ' ' + String(ch.VILLE || '') : '') + '.',
+      lignes: [{ libelle: libelle + (jour ? ' — ' + jour : ''), prix: ht, tva: tva, qte: 1,
+                 detail: String(d.detail || '').trim() }]
+    });
+  } catch (e) { erreur = String(e && e.message || e); }
+  return finirFacturePennylane_(res, erreur, { num: id, client: client, type: 'PONCTUEL', periode: '',
+                                               passages: 1, attendu: ht, com: com, appareil: d.appareil });
+}
+
+/* « Déjà facturée ailleurs » : une intervention d'octobre facturée dans
+   Henrri ne doit plus revenir dans la liste. Une ligne dans FACTURES, sans
+   rien envoyer à Pennylane. Se défait en effaçant la ligne. */
+function marquerFacturee_(d, com) {
+  var cle = String(d.cle || '').trim();
+  if (!cle) return { ok: false, erreur: 'rien à marquer' };
+  var periode = String(d.periode || '').match(/^\d{4}-\d{2}$/) ? d.periode : '';
+  var num = d.contrat ? 'CONTRAT ' + cle : cle;
+  if ((facturesFaites_()[num] || {})[periode]) return { ok: true, deja: true };
+  ecrireFacture_({ CREE_LE: new Date(), NUMERO_DEVIS: num, CLIENT: String(d.client || cle),
+                   TYPE: d.contrat ? 'CONTRAT' : 'PONCTUEL', PERIODE: periode, ETAT: 'DEJA FACTUREE',
+                   CREE_PAR: com ? com.nom : '', NOTE: 'marquée depuis l\'appli : facturée hors Pennylane' });
+  tracerServeur_(com ? com.nom : '', 'MARQUEE FACTUREE', String(d.client || cle) + (periode ? ' · ' + periode : ''), num, d.appareil || '');
+  return { ok: true };
+}
+
+/** Le bouton « préparer » de l'appli, pour un devis ponctuel, un contrat ou une intervention. */
+function facturerDepuisAppli_(d, com) {
+  if (!pennylaneJeton_()) return { ok: false, erreur: 'Pennylane n\'est pas connecté (menu 25 du classeur).' };
+  if (d.type === 'contrat') {
+    var r = facturesContrats_(d.periode, com, d.cle);
+    if (r.faits.length) return { ok: true, ht: r.faits[0].ht, ecart: r.faits[0].ecart || '' };
+    if (r.echecs.length) return { ok: false, erreur: r.echecs[0].erreur };
+    if (r.sautes.length) return { ok: false, deja: true, erreur: r.sautes[0].client + ' : ' + r.sautes[0].motif };
+    return { ok: false, erreur: 'Contrat ' + d.cle + ' introuvable ou inactif dans l\'onglet CONTRATS.' };
+  }
+  if (d.type === 'devis') return preparerFacturePennylane_({ numero: d.cle, force: true, appareil: d.appareil }, com);
+  return facturerIntervention_(d, com);
 }
 
 /**
@@ -8575,7 +8857,8 @@ function facturesFaites_() {
     if (!num) continue;
     /* Un échec ne barre pas la route : on doit pouvoir réessayer. Seule une
        facture réellement déposée chez Henrri compte comme faite. */
-    if (!String(o.ID_HENRRI || '').trim() && !String(o.ID_PENNYLANE || '').trim()) continue;
+    if (!String(o.ID_HENRRI || '').trim() && !String(o.ID_PENNYLANE || '').trim() &&
+        String(o.ETAT || '').toUpperCase().trim() !== 'DEJA FACTUREE') continue;
     var k = String(o.PERIODE || '').trim();
     (out[num] = out[num] || {})[k] = o;
   }

@@ -359,7 +359,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v97';
+var VERSION_APP = 'v98';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4607,7 +4607,7 @@ function semaineHtml(chantiers, surClic, glisser){
              (c.heure ? '<b>' + ech(c.heure) + '</b>' : '') +
              '<span>' + ech(c.client || 'Chantier') + '</span>' +
              (c.ville ? '<em>' + ech(c.ville) + '</em>' : '') +
-             (c.prestataire ? '<em>' + ech(c.prestataire) + '</em>' : '') +
+             (c.prestataire ? '<em>' + ech(quiLisible(c.prestataire)) + '</em>' : '') +
              '</button>';
       });
     }
@@ -4714,7 +4714,7 @@ function journeeParPersonne(liste, compact){
   if(!liste.length) return '<div class="mini acVide">Rien de prévu.</div>';
   var par = {}, ordre = [];
   liste.forEach(function(c){
-    var k = c.prestataire || 'Personne n\'est affecté';
+    var k = c.prestataire ? quiLisible(c.prestataire) : 'Personne n\'est affecté';
     if(!par[k]){ par[k] = []; ordre.push(k); }
     par[k].push(c);
   });
@@ -4815,7 +4815,7 @@ function chantiersDuCalendrier(t){
     if(!AD_QUI) return true;
     if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
     if(AD_QUI === '(annulés)') return false;
-    return c.prestataire === AD_QUI;
+    return aQui(c.prestataire, AD_QUI);
   });
 }
 
@@ -4953,7 +4953,31 @@ var AD_ONGLET = (function(){
 })();
 var AD_QUI = '';              // filtre : un nom, ou vide pour tout le monde
 var AD_FICHE = null;          // la fiche ouverte
-var AD_PRESTA = '';           // le prestataire choisi dans la planification
+var AD_PRESTA = '';           // le ou les prestataires choisis (« MAXIME, VICTOR »)
+
+/* v98 — plusieurs intervenants sur une intervention : Victor et Maxime
+   travaillent en binôme pour presque tout. Le champ garde les noms séparés
+   par une virgule, comme la colonne PRESTATAIRE du classeur. Chaque pastille
+   d'un salarié s'allume et s'éteint seule ; « Personne » les éteint toutes. */
+function nomsQui(s){
+  var vus = {};
+  return String(s == null ? '' : s).split(/\s*[,;\/+]\s*/).map(function(x){ return x.trim(); })
+    .filter(function(x){ var k = x.toLowerCase(); if(!x || vus[k]) return false; vus[k] = true; return true; });
+}
+function aQui(s, nom){
+  var n = String(nom || '').trim().toLowerCase();
+  return !!n && nomsQui(s).some(function(x){ return x.toLowerCase() === n; });
+}
+/* Ajoute le nom s'il manque, l'enlève s'il y est. '' = personne. */
+function basculerQui(s, nom){
+  if(!nom) return '';
+  var l = nomsQui(s);
+  var i = -1; l.forEach(function(x, k){ if(x.toLowerCase() === String(nom).toLowerCase()) i = k; });
+  if(i >= 0) l.splice(i, 1); else l.push(nom);
+  return l.join(', ');
+}
+/* « MAXIME, VICTOR » → « MAXIME + VICTOR », pour l'œil. */
+function quiLisible(s){ return nomsQui(s).join(' + '); }
 var AD_SEL = false;           // mode « choisir plusieurs chantiers »
 var AD_CHOIX = {};            // les ids cochés, en mode sélection
 var AD_PASSE = false;         // le gérant a-t-il demandé à voir les chantiers passés
@@ -5092,8 +5116,9 @@ function ongletAdmin(quoi){
     if(!FACT_MOIS) FACT_MOIS = moisAujourdhui();
   }
   peindreTableau();
-  /* La facturation ne vit pas dans le tableau : elle a sa propre lecture, et
-     elle interroge Henrri. On ne la charge donc qu'en arrivant sur l'onglet. */
+  /* La facturation ne vit pas dans le tableau : elle a sa propre lecture
+     (contrats, interventions du mois, Pennylane). On ne la charge donc qu'en
+     arrivant sur l'onglet. */
   if(quoi === 'factures' && !FACT) chargerFacturation($('bFactAct'));
 }
 function filtreAdmin(nom){ AD_QUI = nom; peindreTableau(); }
@@ -5209,7 +5234,7 @@ function peindreTableau(){
       if(!AD_QUI) return true;
       if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
       if(AD_QUI === '(annulés)') return false;
-      return c.prestataire === AD_QUI;
+      return aQui(c.prestataire, AD_QUI);
     });
     var sans = vivants.filter(function(c){ return !c.date || !c.prestataire; }).length;
     $('adListe').innerHTML =
@@ -5366,7 +5391,7 @@ function blocDeplacerVite(c){
     '<div class="lab">Confier à</div>' +
     '<div class="row">' +
       gens.map(function(g){
-        return '<span class="puce' + (c.prestataire === g ? ' on' : '') +
+        return '<span class="puce' + (aQui(c.prestataire, g) ? ' on' : '') +
                '" onclick="confierVite(\'' + ech(c.id) + '\',\'' +
                ech(g).replace(/'/g,'&#39;') + '\')">' + ech(g) + '</span>';
       }).join('') +
@@ -5574,7 +5599,9 @@ function reporterVite(id, iso){
 }
 
 function confierVite(id, nom){
-  gesteVite(id, {prestataire:nom}, nom ? 'Confié à ' + nom : 'Retiré à son prestataire');
+  var c = ((TABLEAU||{}).chantiers||[]).filter(function(x){ return x.id === id; })[0];
+  var qui = nom ? basculerQui(c ? c.prestataire : '', nom) : '';
+  gesteVite(id, {prestataire:qui}, qui ? 'Confié à ' + quiLisible(qui) : 'Retiré à son prestataire');
 }
 
 /* Le bandeau d'annulation vit dix secondes : le temps de voir qu'on s'est
@@ -5622,7 +5649,7 @@ function listeChantiersAdmin(t){
     if(estAnnule(c)) return false;
     if(!AD_QUI) return true;
     if(AD_QUI === '(non affectés)') return !c.prestataire || !c.date;
-    return c.prestataire === AD_QUI;
+    return aQui(c.prestataire, AD_QUI);
   });
   /* Par défaut on ne montre que ce qui vient : un planning est un outil de
      travail, pas une archive. Le passé reste à un appui. */
@@ -5726,7 +5753,7 @@ function carteChantierAdmin(c){
     '</div>' +
     '<div class="chSous">' +
       (c.heure ? '<b class="chH">' + ech(c.heure) + '</b>' : '') +
-      (c.prestataire ? ech(c.prestataire) : 'personne') +
+      (c.prestataire ? ech(quiLisible(c.prestataire)) : 'personne') +
       (c.ville ? ' · ' + ech(c.ville) : '') +
     '</div>' +
     (n ? '<span class="chNat">' + ech(n.nom) + '</span>' : '') +
@@ -5762,9 +5789,12 @@ function nbChoisis(){
 }
 
 function choisirPrestaLot(nom){
-  AD_LOT_PRESTA = nom;
+  AD_LOT_PRESTA = nom === '' ? '' : basculerQui(AD_LOT_PRESTA || '', nom);
+  var gens = ((TABLEAU||{}).prestataires||[]);
   Array.prototype.forEach.call($('adLot').querySelectorAll('.puce'), function(e){
-    e.classList.toggle('on', e.textContent.trim() === (nom === '' ? 'Personne' : nom));
+    var lib = e.textContent.trim();
+    if(lib === 'Personne') e.classList.toggle('on', AD_LOT_PRESTA === '');
+    else if(gens.indexOf(lib) >= 0) e.classList.toggle('on', aQui(AD_LOT_PRESTA, lib));
   });
 }
 
@@ -5789,7 +5819,7 @@ function peindreLot(){
     '<label>Prestataire</label>' +
     '<div class="row" style="flex-wrap:wrap;gap:6px">' +
       gens.map(function(x){
-        return '<span class="puce' + (AD_LOT_PRESTA===x?' on':'') + '" onclick="choisirPrestaLot(\'' +
+        return '<span class="puce' + (AD_LOT_PRESTA!==null && aQui(AD_LOT_PRESTA, x)?' on':'') + '" onclick="choisirPrestaLot(\'' +
                ech(x).replace(/'/g,'&#39;') + '\')">' + ech(x) + '</span>';
       }).join('') +
       '<span class="puce' + (AD_LOT_PRESTA===''?' on':'') + '" onclick="choisirPrestaLot(\'\')">Personne</span>' +
@@ -6181,10 +6211,10 @@ function peindreFicheChantier(c, neuf){
       '<input id="adDate" type="date" value="' + ech(c.date||'') + '">' +
       '<label>Heure</label>' +
       '<input id="adHeure" type="time" value="' + ech(c.heure||'') + '">' +
-      '<label>Prestataire</label>' +
+      '<label>Intervenants <span class="mini">(un ou plusieurs)</span></label>' +
       '<div class="row" style="flex-wrap:wrap;gap:6px">' +
         gens.map(function(n){
-          return '<span class="puce' + (AD_PRESTA===n?' on':'') + '" onclick="choisirPresta(\'' +
+          return '<span class="puce' + (aQui(AD_PRESTA, n)?' on':'') + '" onclick="choisirPresta(\'' +
                  ech(n).replace(/'/g,'&#39;') + '\')">' + ech(n) + '</span>';
         }).join('') +
         '<span class="puce' + (AD_PRESTA===''?' on':'') + '" onclick="choisirPresta(\'\')">Personne</span>' +
@@ -6219,9 +6249,12 @@ function peindreFicheChantier(c, neuf){
 /* On ne redessine pas la fiche : la date et l'heure déjà tapées seraient
    effacées par les valeurs d'origine. Seules les pastilles changent d'état. */
 function choisirPresta(nom){
-  AD_PRESTA = nom;
+  AD_PRESTA = basculerQui(AD_PRESTA, nom);
+  var gens = ((TABLEAU||{}).prestataires||[]);
   Array.prototype.forEach.call($('adFiche').querySelectorAll('.puce'), function(e){
-    e.classList.toggle('on', e.textContent.trim() === (nom || 'Personne'));
+    var lib = e.textContent.trim();
+    if(lib === 'Personne') e.classList.toggle('on', !AD_PRESTA);
+    else if(gens.indexOf(lib) >= 0) e.classList.toggle('on', aQui(AD_PRESTA, lib));
   });
 }
 
@@ -6446,6 +6479,7 @@ function lireContrat(){
 }
 
 function ctPoser(k, val){ lireContrat(); CT[k] = val; peindreContrat(); }
+function ctQui(nom){ lireContrat(); CT.prestataire = basculerQui(CT.prestataire, nom); peindreContrat(); }
 function ctRec(v){
   lireContrat();
   CT.rec = v;
@@ -6538,11 +6572,11 @@ function peindreContrat(){
       }).join('') +
     '</div>' +
 
-    '<label>Participant</label>' +
+    '<label>Participants <span class="mini">(un ou plusieurs)</span></label>' +
     '<div class="ctGens">' +
       gens.map(function(g){
-        return '<button type="button" class="ctAva' + (c.prestataire === g ? ' on' : '') + '" ' +
-          'onclick="ctPoser(\'prestataire\',\'' + ech(g).replace(/'/g,'&#39;') + '\')">' +
+        return '<button type="button" class="ctAva' + (aQui(c.prestataire, g) ? ' on' : '') + '" ' +
+          'onclick="ctQui(\'' + ech(g).replace(/'/g,'&#39;') + '\')">' +
           '<span>' + ech(String(g).slice(0,2)) + '</span>' + ech(g) + '</button>';
       }).join('') +
       '<button type="button" class="ctAva' + (!c.prestataire ? ' on' : '') + '" ' +
@@ -6748,7 +6782,7 @@ function listeContrats(){
       (vivant(s) ? 'onclick="modifierContrat(\'' + ech(s.id) + '\',\'\')"' : '') + '>' +
       '<div class="chTete"><b style="flex:1">' + ech(s.client) + '</b><span class="mini">' + ech(s.id) + '</span></div>' +
       '<div class="chSous">' + ech(libelleRythme(s)) + '</div>' +
-      '<div class="mini">' + ech(s.prestataire || 'personne') + (s.ville ? ' · ' + ech(s.ville) : '') +
+      '<div class="mini">' + ech(quiLisible(s.prestataire) || 'personne') + (s.ville ? ' · ' + ech(s.ville) : '') +
         (s.fin ? ' · jusqu\'au ' + ech(jjmmaa(s.fin)) : '') + '</div>' +
     '</div>';
   };
@@ -8226,20 +8260,20 @@ function prPousser(){
     }, function(){ PR_ENVOI = false; });
 }
 
-/* ====================== LA FACTURATION ======================
+/* ====================== LA FACTURATION (v98) ======================
 
-   Le devis est signé, le chantier est fait : il reste à facturer. Cet onglet
-   ne facture pas — il prépare. Chaque bouton dépose chez Henrri une facture en
-   BROUILLON, que Simon relit puis finalise là-bas. La numérotation légale, le
-   format électronique et l'envoi restent chez Henrri ; nous, nous savons ce qui
-   est signé et ce qui est fait, et c'est tout ce que nous apportons.
+   Simon, le 8 novembre : « fais en sorte que je puisse facturer mes clients,
+   là y'a aucune donnée ». L'onglet ne lisait que les devis signés dans
+   l'appli, et attendait un pointage que l'équipe ne fait pas.
 
-   Deux listes, parce que ce sont deux métiers. Une prestation ponctuelle se
-   facture une fois, quand elle est terminée. Un contrat d'entretien se facture
-   chaque mois, qu'on le veuille ou non : c'est le mois qui déclenche, pas le
-   chantier. D'où le choix du mois en haut de l'onglet, qui ne sert qu'aux
-   contrats.
-   ============================================================= */
+   Il lit maintenant, pour le mois choisi :
+   - les CONTRATS d'entretien (onglet CONTRATS du classeur), une facture par
+     contrat, au forfait lissé sur 52 semaines ;
+   - les interventions ponctuelles passées du mois, avec ou sans devis. Le
+     prix vient du devis ou de la note (« 690 € HT »), et se corrige ici.
+   Chaque bouton crée un BROUILLON dans Pennylane : rien ne part au client
+   tant que Simon ne l'a pas relu et envoyé depuis Pennylane.
+   ================================================================== */
 
 var FACT = null;                      // le dernier état reçu du bureau
 var FACT_MOIS = '';                   // le mois regardé, « 2026-11 »
@@ -8277,20 +8311,15 @@ function chargerFacturation(btn){
   if(!FACT_MOIS) FACT_MOIS = moisAujourdhui();
   if(!navigator.onLine){
     if(btn) libere(btn);
-    erreur('Hors connexion : la facturation a besoin du bureau et de Henrri.');
+    erreur('Hors connexion : la facturation a besoin du bureau et de Pennylane.');
     return Promise.resolve();
   }
   if(btn) occuper(btn, 'Lecture…');
-  return poster({action:'facturation', periode:FACT_MOIS,
+  return poster({action:'facturation', v:98, periode:FACT_MOIS,
                  nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
     if(btn) libere(btn);
     if(!d || !d.ok){
       if(d && d.refus) return reidentifier('Ton accès a changé côté bureau.');
-      /* Le message du devis — « rien n'est perdu, ça repartira » — n'a pas cours
-         ici : la facturation ne fait pas la queue. Quand le bureau dit pourquoi
-         il refuse, on affiche sa raison. C'est le cas, notamment, d'un classeur
-         dont le script n'a pas encore été mis à jour : il répond « action
-         inconnue », et il vaut mieux le lire que croire à un envoi en cours. */
       return erreur((d && d.erreur) ? d.erreur : attenteLisible());
     }
     FACT = d;
@@ -8303,181 +8332,242 @@ function chargerFacturation(btn){
   });
 }
 
-/* Une prestation ponctuelle. « force » n'apparaît que si le chantier n'est pas
-   terminé : c'est un passe-droit, il se demande deux fois et il se trace. */
-function facturerUn(numero, btn, force){
+var FACT_NOTE = '';                   // ce que la dernière action a donné
+
+function factCle(x){ return String(x.cle || x.contrat || ''); }
+function factId(x){ return 'f_' + factCle(x).replace(/[^A-Za-z0-9]/g, '_'); }
+
+/* Ce que la carte d'une intervention envoie : le prix et le libellé
+   corrigés à la main, s'ils l'ont été. */
+function champsInter(x){
+  var k = factId(x);
+  var g = function(suffixe){ var e = $(k + suffixe); return e ? e.value : undefined; };
+  return { ht: g('_ht'), tva: g('_tva'), libelle: g('_lib') };
+}
+
+function facturerAppli(type, cle, btn){
   var moi = session();
-  if(!moi) return;
-  occuper(btn, 'Chez Henrri…');
-  poster({action:'facturer', numero:numero, periode:FACT_MOIS, force:!!force,
-          nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
-    libere(btn);
-    if(!d) return erreur(attenteLisible());
+  if(!moi) return Promise.resolve(false);
+  var x = null;
+  ((FACT && (type === 'contrat' ? FACT.contrats : FACT.interventions)) || []).forEach(function(y){
+    if(factCle(y) === cle) x = y;
+  });
+  var env = {action:'facturerAppli', type:type, cle:cle, periode:FACT_MOIS,
+             nom:moi.nom, code:moi.code, appareil:APPAREIL};
+  if(type === 'chantier' && x){
+    var c = champsInter(x);
+    env.ht = c.ht; env.tva = c.tva; env.libelle = c.libelle;
+    if(!(Number(String(c.ht || '').replace(',', '.')) > 0)){
+      erreur('Indique le montant HT de ' + (x.client || 'cette intervention') + ' avant de préparer la facture.');
+      return Promise.resolve(false);
+    }
+  }
+  if(btn) occuper(btn, 'Pennylane…');
+  return poster(env).then(function(d){
+    if(btn) libere(btn);
+    if(!d) { erreur(attenteLisible()); return false; }
     if(d.ok){
       erreur('');
-      var msg = 'Facture préparée chez Henrri' +
-                (d.ecart ? ' — mais ' + d.ecart + ', à vérifier avant de finaliser.' :
-                           ' : relis-la puis finalise-la là-bas.');
-      FACT_NOTE = msg;
-      return chargerFacturation();
+      FACT_NOTE = 'Brouillon créé dans Pennylane pour ' + (x ? (x.client || x.contrat) : cle) +
+        (d.ht ? ' (' + eur(d.ht) + ' HT)' : '') + (d.ecart ? ' — ' + d.ecart + ', à vérifier.' : '.') +
+        ' Relis-le et envoie-le depuis Pennylane.';
+      if(x){ x.facturee = true; x.etat = 'BROUILLON PENNYLANE'; }
+      peindreTableau();
+      return true;
     }
-    if(d.pasPret){
-      return demander('Le chantier n\'est pas terminé',
-        d.erreur + '\n\nPréparer la facture quand même ? Le journal gardera que ' +
-        'cette facture a été préparée avant la fin du chantier.',
-        'Préparer quand même').then(function(oui){
-          if(oui) facturerUn(numero, btn, true);
-        });
-    }
-    erreur(d.erreur || 'La facture n\'a pas pu être préparée.');
-    if(d.deja) chargerFacturation();
+    erreur((x ? (x.client || x.contrat) + ' : ' : '') + (d.erreur || 'la facture n\'a pas pu être préparée.'));
+    if(d.deja && x){ x.facturee = true; peindreTableau(); }
+    return false;
   }, function(){
-    libere(btn);
+    if(btn) libere(btn);
     erreur(attenteLisible());
+    return false;
   });
 }
 
-/* Toutes les mensualités du mois, d'un geste. */
-function facturerLeMois(btn){
-  var moi = session();
-  if(!moi) return;
-  var reste = ((FACT && FACT.contrats) || []).filter(function(c){ return !c.facturee; });
-  if(!reste.length){ erreur('Toutes les mensualités de ' + moisNom(FACT_MOIS) + ' sont déjà préparées.'); return; }
-  demander('Préparer ' + reste.length + ' facture(s) ?',
-    'Les contrats d\'entretien en cours recevront chacun leur facture de ' +
-    moisNom(FACT_MOIS) + ', en brouillon chez Henrri.' +
-    (moisAVenir(FACT_MOIS) ? '\n\nAttention : ce mois n\'a pas encore commencé.' : ''),
+/* Tous les contrats du mois, l'un après l'autre (une facture chacun). */
+function facturerContratsDuMois(btn){
+  var reste = ((FACT && FACT.contrats) || []).filter(function(c){ return !c.facturee && !c.manque.length; });
+  if(!reste.length){ erreur('Rien à préparer : tous les contrats prêts le sont déjà.'); return; }
+  demander('Préparer ' + reste.length + ' facture(s) de contrat ?',
+    'Un brouillon par contrat, pour ' + moisNom(FACT_MOIS) + ', dans Pennylane. Rien n\'est envoyé aux clients.' +
+    (FACT && !FACT.moisFini ? '\n\nAttention : ' + moisNom(FACT_MOIS) + ' n\'est pas fini. Les contrats se facturent ' +
+                               'd\'habitude au début du mois suivant.' : ''),
     'Préparer').then(function(oui){
       if(!oui) return;
-      occuper(btn, 'Chez Henrri…');
-      poster({action:'facturesMois', periode:FACT_MOIS,
-              nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
-        libere(btn);
-        if(!d || !d.ok) return erreur((d && d.erreur) || attenteLisible());
-        var n = (d.faits || []).length, e = (d.echecs || []).length;
-        FACT_NOTE = n + ' facture(s) préparée(s) pour ' + moisNom(d.periode) +
-                    (e ? ' · ' + e + ' en échec, voir ci-dessous' : '') +
-                    '. Relis-les chez Henrri avant de les finaliser.';
-        if(e) erreur((d.echecs[0].client || d.echecs[0].numero) + ' : ' + d.echecs[0].erreur);
-        else erreur('');
-        chargerFacturation();
-      }, function(){
-        libere(btn);
-        erreur(attenteLisible());
-      });
+      occuper(btn, '0 / ' + reste.length);
+      var faits = 0, rates = 0, i = 0;
+      (function suivant(){
+        if(i >= reste.length){
+          libere(btn);
+          FACT_NOTE = faits + ' brouillon(s) créé(s) dans Pennylane pour ' + moisNom(FACT_MOIS) +
+                      (rates ? ' · ' + rates + ' en échec (voir le message rouge)' : '') + '.';
+          peindreTableau();
+          return;
+        }
+        var c = reste[i++];
+        facturerAppli('contrat', c.contrat, null).then(function(ok){
+          if(ok) faits++; else rates++;
+          btn.textContent = i + ' / ' + reste.length;
+          suivant();
+        });
+      })();
     });
 }
 
-var FACT_NOTE = '';                   // ce que la dernière action a donné
+function marquerFacturee(type, cle, btn){
+  var moi = session();
+  if(!moi) return;
+  var x = null;
+  ((FACT && (type === 'contrat' ? FACT.contrats : FACT.interventions)) || []).forEach(function(y){
+    if(factCle(y) === cle) x = y;
+  });
+  demander('Déjà facturée ?',
+    (x ? (x.client || x.contrat) : cle) + ' sortira de la liste' + (type === 'contrat' ? ' pour ' + moisNom(FACT_MOIS) : '') +
+    ', sans rien créer dans Pennylane. À utiliser pour ce qui a été facturé ailleurs (Henrri, à la main…).',
+    'Oui, déjà facturée').then(function(oui){
+      if(!oui) return;
+      occuper(btn, '…');
+      poster({action:'marquerFacturee', cle:cle, contrat: type === 'contrat',
+              periode: type === 'contrat' ? FACT_MOIS : '', client: x ? (x.client || x.contrat) : '',
+              nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
+        libere(btn);
+        if(!d || !d.ok) return erreur((d && d.erreur) || attenteLisible());
+        if(x){ x.facturee = true; x.etat = 'DEJA FACTUREE'; }
+        peindreTableau();
+      }, function(){ libere(btn); erreur(attenteLisible()); });
+    });
+}
 
 function listeFacturesAdmin(){
   var h = '';
   if(FACT_NOTE){
-    h += '<div class="card" style="border-color:var(--ok,#15803d)"><b>' + ech(FACT_NOTE) +
-         '</b></div>';
+    h += '<div class="card" style="border-color:var(--ok,#15803d)"><b>' + ech(FACT_NOTE) + '</b></div>';
   }
   if(!FACT){
     return h + '<div class="card"><div class="empty">Appuie sur « Actualiser la facturation » ' +
            'pour aller voir ce qu\'il y a à facturer.</div></div>';
   }
-  if(!FACT.henrri){
-    h += '<div class="card" style="border-color:var(--att,#b45309)">' +
-         '<b>Henrri n\'est pas connecté.</b><div class="mini">Dans le classeur : menu ' +
-         '« Devis » → « 19. Connecter Henrri ». Sans cela, la liste se lit mais rien ' +
-         'ne peut être préparé.</div></div>';
+  if(!FACT.contrats || !FACT.interventions){
+    return h + '<div class="card"><b>Le classeur n\'est pas encore à jour.</b><div class="mini">' +
+           'Il faut publier la nouvelle version du script (Déployer → Gérer les déploiements).</div></div>';
+  }
+  if(!FACT.pennylane){
+    h += '<div class="card" style="border-color:var(--att,#b45309)"><b>Pennylane n\'est pas connecté.</b>' +
+         '<div class="mini">Dans le classeur : menu « Devis » → « 25. Connecter Pennylane ». ' +
+         'La liste se lit, mais rien ne peut être préparé.</div></div>';
   }
 
-  var p = FACT.ponctuels || [], c = FACT.contrats || [];
-  var prets = p.filter(function(x){ return !x.facturee && x.pret; });
-  var attente = p.filter(function(x){ return !x.facturee && !x.pret; });
-  var faites = p.filter(function(x){ return x.facturee; });
+  var c = FACT.contrats, it = FACT.interventions;
+  var cAFaire = c.filter(function(x){ return !x.facturee; });
+  var cPrets = cAFaire.filter(function(x){ return !x.manque.length; });
+  var totC = cAFaire.reduce(function(s, x){ return s + (x.ht || 0); }, 0);
+  var iAFaire = it.filter(function(x){ return !x.facturee && !x.contrat; });
+  var iContrat = it.filter(function(x){ return !x.facturee && x.contrat; });
+  var iFaites = it.filter(function(x){ return x.facturee; });
+  var totI = iAFaire.reduce(function(s, x){ return s + (Number(x.ht) || 0); }, 0);
 
-  h += '<div class="card"><b>Prestations terminées</b><div class="mini">' +
-       (prets.length ? prets.length + ' à facturer' : 'rien à facturer pour le moment') +
-       '</div></div>';
-  prets.forEach(function(x){ h += carteFact(x, 'pret'); });
+  h += '<div class="card"><b>' + ech(moisNom(FACT_MOIS)) + '</b><div class="mini">' +
+       cAFaire.length + ' contrat(s) à facturer · ' + eur(totC) + ' HT<br>' +
+       iAFaire.length + ' intervention(s) ponctuelle(s) · ' + eur(totI) + ' HT' +
+       (iAFaire.some(function(x){ return !(x.ht > 0); }) ? ' (prix à compléter)' : '') +
+       '</div><div class="mini">Chaque bouton crée un <b>brouillon</b> dans Pennylane. ' +
+       'Rien n\'est envoyé au client avant que tu le fasses depuis Pennylane.</div></div>';
 
-  if(attente.length){
-    h += '<div class="card"><b>Pas encore terminées</b><div class="mini">' +
-         attente.length + ' devis signé(s) dont le chantier n\'est pas fini. ' +
-         'On ne les facture pas par défaut.</div></div>';
-    attente.forEach(function(x){ h += carteFact(x, 'attente'); });
+  /* ---- les interventions ponctuelles ---- */
+  h += '<h3 class="factTitre">Interventions ponctuelles</h3>';
+  if(!iAFaire.length) h += '<div class="card"><div class="mini">Aucune intervention ponctuelle à facturer en ' +
+                           ech(moisNom(FACT_MOIS)) + '.</div></div>';
+  iAFaire.forEach(function(x){ h += carteInter(x); });
+
+  /* ---- les contrats ---- */
+  h += '<h3 class="factTitre">Contrats d\'entretien</h3>' +
+       '<div class="card"><div class="mini">' +
+       (c.length ? cAFaire.length + ' sur ' + c.length + ' à facturer pour ' + ech(moisNom(FACT_MOIS)) +
+                   ' · forfait mensuel lissé sur 52 semaines.' : 'Aucun contrat actif dans l\'onglet CONTRATS.') +
+       (!FACT.moisFini && c.length ? '<br>Le mois n\'est pas fini : d\'habitude, on facture les contrats au début du mois suivant.' : '') +
+       '</div>' +
+       (cPrets.length ? '<button class="btn sm" style="margin-top:10px;width:100%" ' +
+                         'onclick="facturerContratsDuMois(this)">Préparer ' +
+                         (cPrets.length > 1 ? 'les ' + cPrets.length + ' factures' : 'la facture') + ' de ' +
+                         ech(moisNom(FACT_MOIS)) + '</button>' : '') +
+       (cAFaire.length > cPrets.length ? '<div class="mini">' + (cAFaire.length - cPrets.length) +
+                         ' contrat(s) à compléter d\'abord dans l\'onglet CONTRATS.</div>' : '') + '</div>';
+  c.forEach(function(x){ if(!x.facturee) h += carteContratCt(x); });
+
+  if(iContrat.length){
+    h += '<h3 class="factTitre">Peut-être déjà dans un contrat</h3>' +
+         '<div class="card"><div class="mini">Ces interventions portent le nom d\'un client sous contrat. ' +
+         'Si elles sont comprises dans son forfait, marque-les « déjà facturée ». Sinon, facture-les ici.</div></div>';
+    iContrat.forEach(function(x){ h += carteInter(x); });
   }
 
-  h += '<div class="card" style="margin-top:14px"><b>Contrats d\'entretien — ' +
-       ech(moisNom(FACT_MOIS)) + '</b><div class="mini">' +
-       (c.length ? c.filter(function(x){ return !x.facturee; }).length +
-                   ' mensualité(s) à préparer sur ' + c.length + ' contrat(s)'
-                 : 'aucun contrat d\'entretien signé') + '</div>' +
-       (c.length ? '<button class="btn sec sm" style="margin-top:10px;width:100%" ' +
-                   'onclick="facturerLeMois(this)">Préparer les factures de ' +
-                   ech(moisNom(FACT_MOIS)) + '</button>' : '') + '</div>';
-  c.forEach(function(x){ h += carteContrat(x); });
-
-  if(faites.length){
-    h += '<div class="card" style="margin-top:14px"><b>Déjà préparées</b>' +
-         '<div class="mini">' + faites.length + ' prestation(s) ponctuelle(s)</div></div>';
-    faites.forEach(function(x){ h += carteFact(x, 'faite'); });
+  var faitesC = c.filter(function(x){ return x.facturee; });
+  if(faitesC.length || iFaites.length){
+    h += '<h3 class="factTitre">Déjà faites</h3><div class="card">' +
+      faitesC.concat(iFaites).map(function(x){
+        return '<div class="row" style="justify-content:space-between;padding:4px 0">' +
+          '<span>' + ech(x.contrat || x.client) + '</span><span class="mini">' +
+          (x.etat === 'DEJA FACTUREE' ? 'facturée ailleurs' : 'brouillon Pennylane') + '</span></div>';
+      }).join('') + '</div>';
   }
   return h;
 }
 
-function lienHenrri(x){
-  return x.lienHenrri
-    ? '<a class="btn sec sm" style="margin-top:8px;display:block;text-align:center" ' +
-      'href="' + ech(x.lienHenrri) + '" target="_blank" rel="noopener">Voir le PDF chez Henrri</a>'
-    : '';
-}
-
-function carteFact(x, quoi){
+function carteInter(x){
+  var k = factId(x), cle = ech(factCle(x)).replace(/'/g,'&#39;');
+  var tvaOpt = [20, 10, 5.5, 0].map(function(t){
+    return '<option value="' + t + '"' + (Number(x.tva || 20) === t ? ' selected' : '') + '>' +
+           String(t).replace('.', ',') + ' %</option>';
+  }).join('');
   var h = '<div class="card"><div class="row" style="justify-content:space-between">' +
-          '<b>' + ech(x.client) + '</b><span class="mini">' + ech(x.numero) + '</span></div>' +
-          '<div class="mini">' + ech(x.ville || '') +
-          (x.commercial ? ' · ' + ech(x.commercial) : '') + '</div>' +
-          ligneCh('À facturer', eur(x.ht) + ' HT', true);
-  /* Un signalement se dit dans tous les cas, prêt ou pas : c'est une raison de
-     ne pas facturer tout de suite, et c'est au gérant d'en juger. */
-  if(quoi !== 'faite' && x.soucis){
-    h += '<div class="mini" style="color:var(--att,#b45309)">' + x.soucis +
-         ' signalement(s) sur ce chantier : à regarder avant de facturer.</div>';
-  }
-  if(quoi === 'pret'){
-    h += '<div class="mini">Chantier terminé' + (x.faitLe ? ' le ' + dateCourte(x.faitLe) : '') + '.</div>';
-    h += '<button class="btn sm" style="margin-top:8px;width:100%" onclick="facturerUn(\'' +
-         ech(x.numero).replace(/'/g,'&#39;') + '\', this)">Préparer la facture</button>';
-  } else if(quoi === 'attente'){
-    h += '<div class="mini">' + (x.chantiers === 0
-      ? 'Aucun passage posé au planning.'
-      : (x.chantiers - x.faits) + ' passage(s) restant(s) sur ' + x.chantiers + '.') + '</div>';
-    h += '<button class="btn sec sm" style="margin-top:8px;width:100%" onclick="facturerUn(\'' +
-         ech(x.numero).replace(/'/g,'&#39;') + '\', this)">Facturer quand même…</button>';
+          '<b>' + ech(x.client) + '</b><span class="mini">' + ech(dateCourte(x.date)) + '</span></div>' +
+          '<div class="mini">' + ech([x.ville, quiLisible(x.qui)].filter(Boolean).join(' · ')) +
+          (x.note ? '<br>' + ech(x.note) : '') + '</div>';
+  if(x.jamaisPlace) h += '<div class="mini" style="color:var(--att,#b45309)">Jamais placée au planning : vérifie qu\'elle a bien eu lieu.</div>';
+  if(x.contrat) h += '<div class="mini" style="color:var(--att,#b45309)">Client sous contrat (' + ech(x.contrat) + ').</div>';
+  if(x.type === 'devis'){
+    h += ligneCh('Devis ' + x.cle, eur(x.ht) + ' HT', true);
+    if(!x.signe) h += '<div class="mini" style="color:var(--att,#b45309)">Le devis n\'est pas marqué signé.</div>';
   } else {
-    h += '<div class="mini">Facture ' + ech(x.idHenrri) + ' chez Henrri.</div>' + lienHenrri(x);
+    h += '<label for="' + k + '_lib">Libellé sur la facture</label>' +
+         '<input id="' + k + '_lib" value="' + ech(x.libelle) + '">' +
+         '<div class="row" style="gap:8px"><div style="flex:2"><label for="' + k + '_ht">Montant HT (€)</label>' +
+         '<input id="' + k + '_ht" type="number" inputmode="decimal" step="0.01" min="0" value="' + (x.ht > 0 ? x.ht : '') + '" placeholder="à compléter"></div>' +
+         '<div style="flex:1"><label for="' + k + '_tva">TVA</label><select id="' + k + '_tva">' + tvaOpt + '</select></div></div>' +
+         (x.prixLu ? '<div class="mini">Prix lu dans la note : « ' + ech(x.prixLu) + ' »' +
+                     (/TTC/i.test(x.prixLu) ? ', ramené en HT.' : '.') + '</div>'
+                   : '<div class="mini">Pas de prix dans la note : indique-le.</div>');
   }
+  if(!x.adresse || !x.cp || !x.ville){
+    h += '<div class="mini" style="color:var(--att,#b45309)">Adresse incomplète : si le client n\'existe pas encore ' +
+         'dans Pennylane, la facture sera refusée. Complète l\'adresse sur la fiche de l\'intervention.</div>';
+  }
+  h += '<div class="row" style="gap:8px;margin-top:8px">' +
+       '<button class="btn sm" style="flex:2" onclick="facturerAppli(\'' + x.type + '\',\'' + cle + '\', this)">' +
+       'Préparer la facture</button>' +
+       '<button class="btn sec sm" style="flex:1" onclick="marquerFacturee(\'' + x.type + '\',\'' + cle + '\', this)">' +
+       'Déjà facturée</button></div>';
   return h + '</div>';
 }
 
-function carteContrat(x){
+function carteContratCt(x){
+  var cle = ech(x.contrat).replace(/'/g,'&#39;');
   var h = '<div class="card"><div class="row" style="justify-content:space-between">' +
-          '<b>' + ech(x.client) + '</b><span class="mini">' + ech(x.numero) + '</span></div>' +
-          '<div class="mini">' + ech(x.ville || '') + '</div>' +
-          ligneCh(moisNom(x.periode), eur(x.htMois) + ' HT', true);
-  /* Le contrat se facture au forfait, mais si les passages du mois ne sont pas
-     tous faits, le gérant doit le savoir avant d'envoyer : c'est lui qui
-     décide, ce n'est pas à l'application de retenir la facture. */
-  if(x.passagesPrevus && x.passagesFaits < x.passagesPrevus){
-    h += '<div class="mini" style="color:var(--att,#b45309)">' + x.passagesFaits + ' passage(s) fait(s) ' +
-         'sur ' + x.passagesPrevus + ' prévus ce mois-ci.</div>';
-  } else if(x.passagesPrevus){
-    h += '<div class="mini">' + x.passagesPrevus + ' passage(s), tous faits.</div>';
+          '<b>' + ech(x.contrat) + '</b><b>' + eur(x.ht) + ' HT</b></div>' +
+          '<div class="mini">' + (x.client !== x.contrat ? 'Facturé à ' + ech(x.client) + ' · ' : '') + ech(x.ville || '') + '</div>' +
+          '<div class="mini">' + x.lignes.map(function(l){
+            return ech(l.ligne) + ' · ' + eur(l.ht) + (l.rythme ? ' · ' + ech(l.rythme) : '');
+          }).join('<br>') + '</div>';
+  if(x.manque.length){
+    h += '<div class="mini" style="color:var(--att,#b45309)">Manque : ' + ech(x.manque.join(', ')) +
+         ' — à compléter dans l\'onglet CONTRATS du classeur.</div>';
   }
-  if(x.facturee){
-    h += '<div class="mini">Facture ' + ech(x.idHenrri) + ' chez Henrri.</div>' + lienHenrri(x);
-  } else {
-    h += '<button class="btn sm" style="margin-top:8px;width:100%" onclick="facturerUn(\'' +
-         ech(x.numero).replace(/'/g,'&#39;') + '\', this)">Préparer ' +
-         ech(moisNom(x.periode)) + '</button>';
-  }
+  h += '<div class="row" style="gap:8px;margin-top:8px">' +
+       '<button class="btn sm" style="flex:2"' + (x.manque.length ? ' disabled' : '') +
+       ' onclick="facturerAppli(\'contrat\',\'' + cle + '\', this)">Préparer ' + ech(moisNom(FACT_MOIS)) + '</button>' +
+       '<button class="btn sec sm" style="flex:1" onclick="marquerFacturee(\'contrat\',\'' + cle + '\', this)">' +
+       'Déjà facturée</button></div>';
   return h + '</div>';
 }
 
