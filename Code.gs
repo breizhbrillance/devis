@@ -7073,6 +7073,10 @@ function preparationAutomatique() {
   } catch (e2) {
     tracerServeur_('SYSTEME', 'PREPARATION AUTO EN ECHEC', String(e2 && e2.message || e2).slice(0, 200), '', '');
   }
+  /* v108 — le dossier administratif se crée tout seul la première fois. */
+  try { if (!adminIds_().dossier) creerDossierAdministratif(); } catch (e6) {
+    tracerServeur_('SYSTEME', 'DOSSIER ADMINISTRATIF EN ECHEC', String(e6 && e6.message || e6).slice(0, 200), '', '');
+  }
   try { paieAutomatique_(new Date()); } catch (e5) {
     tracerServeur_('SYSTEME', 'ELEMENTS DE PAIE EN ECHEC', String(e5 && e5.message || e5).slice(0, 200), '', '');
   }
