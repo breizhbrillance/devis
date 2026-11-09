@@ -1054,12 +1054,16 @@
          proposé dans son style (relevé dans ses mails envoyés), il le change
          comme il veut. Le PDF est joint et, s'il n'a pas signé à l'écran, un
          bouton « Signer le devis en ligne » suit le message. -->
-    <div class="card">
+    <!-- v106 — plus de case en double avec « Envoyer pour signature à
+         distance » : ce cadre n'apparaît qu'après un choix. Signature à
+         l'écran → le devis signé part par e-mail (coché d'office) ;
+         signature à distance → le mail porte le bouton « Signer en ligne ». -->
+    <div class="card hide" id="cMail">
       <label style="display:flex;gap:10px;align-items:center;margin:0">
         <input type="checkbox" id="fEnvoi" style="width:20px;height:20px;flex:none" onchange="majMailClient()">
-        <span style="color:var(--txt);font-size:15px">Envoyer le devis au client par e-mail, pour signature à distance</span>
+        <span style="color:var(--txt);font-size:15px" id="lEnvoi">Envoyer le devis au client par e-mail</span>
       </label>
-      <div class="mini">Pour qu'il le lise et le signe à distance. Part au retour du réseau si tu es hors connexion.</div>
+      <div class="mini" id="mEnvoi">Part au retour du réseau si tu es hors connexion.</div>
       <div id="blocMail" class="hide">
         <label for="fMailA">À</label>
         <input id="fMailA" type="email" inputmode="email" placeholder="adresse du client">
@@ -1640,11 +1644,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=106d"></script>
-<script src="jspdf.umd.min.js?v=106d"></script>
-<script src="police.js?v=106d"></script>
-<script src="logo.js?v=106d"></script>
-<script src="pdf.js?v=106d"></script>
-<script src="app.js?v=106d"></script>
+<script src="config.js?v=106e"></script>
+<script src="jspdf.umd.min.js?v=106e"></script>
+<script src="police.js?v=106e"></script>
+<script src="logo.js?v=106e"></script>
+<script src="pdf.js?v=106e"></script>
+<script src="app.js?v=106e"></script>
 </body>
 </html>

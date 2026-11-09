@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v106d';
+var VERSION_APP = 'v106e';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -2979,6 +2979,25 @@ function majApercuSignature(){
   $('sigFaite').classList.toggle('hide', !f);
   $('sigVide').classList.toggle('hide', f);
   if(f) $('sigApercu').src = SIG.image;
+  /* v106 — signé à l'écran : le devis signé part au client par e-mail, coché
+     d'office (on peut décocher). Signature effacée : on revient au choix. */
+  var c = $('fEnvoi');
+  if(c){
+    if(f && MAIL_MODE !== 'ecran'){ MAIL_MODE = 'ecran'; c.checked = true; majMailClient(); }
+    else if(!f && MAIL_MODE === 'ecran'){ MAIL_MODE = ''; c.checked = false; majMailClient(); }
+  }
+  majCadreMail();
+}
+var MAIL_MODE = '';      // '' (pas encore choisi) | 'ecran' (signé sur place) | 'distance'
+function majCadreMail(){
+  var z = $('cMail');
+  if(!z) return;
+  z.classList.toggle('hide', !MAIL_MODE);
+  if($('lEnvoi')) $('lEnvoi').textContent = MAIL_MODE === 'ecran'
+    ? 'Envoyer le devis signé au client par e-mail' : 'Envoyer le devis au client pour signature à distance';
+  if($('mEnvoi')) $('mEnvoi').textContent = (MAIL_MODE === 'ecran'
+    ? 'Il reçoit sa copie signée en PDF. ' : 'Il le lit et le signe en ligne, depuis son téléphone ou son ordinateur. ') +
+    'Part au retour du réseau si tu es hors connexion.';
 }
 function redessiner(dataUrl){
   var img = new Image();
@@ -8004,6 +8023,7 @@ function nouveauDevis(){
   ['cSociete','cSiret','cTva','cCiv','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate']
     .forEach(function(id){ if($(id)) $(id).value=''; });
   $('fEnvoi').checked = false;
+  MAIL_MODE = ''; try{ majCadreMail(); }catch(e){}
   ['fMailA','fMailObjet','fMailTexte'].forEach(function(id){ if($(id)) $(id).value = ''; });
   MAIL_TOUCHE = false; MAIL_TON = 'vous';
   if($('blocMail')) $('blocMail').classList.add('hide');
@@ -9413,7 +9433,10 @@ function ouvrirFiche(r){
 function choisirSignatureDistance(){
   var c = $('fEnvoi');
   if(!c) return;
-  if(!c.checked){ c.checked = true; majMailClient(); }
+  MAIL_MODE = 'distance';
+  if(!c.checked) c.checked = true;
+  majCadreMail();
+  majMailClient();
   var b = $('blocMail') || c;
   setTimeout(function(){ b.scrollIntoView({behavior:'smooth', block:'start'}); var a = $('fMailA'); if(a && !a.value) a.focus(); }, 60);
 }
