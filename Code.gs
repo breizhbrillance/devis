@@ -7073,8 +7073,9 @@ function preparationAutomatique() {
   } catch (e2) {
     tracerServeur_('SYSTEME', 'PREPARATION AUTO EN ECHEC', String(e2 && e2.message || e2).slice(0, 200), '', '');
   }
-  /* v108 — le dossier administratif se crée tout seul la première fois. */
-  try { if (!adminIds_().dossier) creerDossierAdministratif(); } catch (e6) {
+  /* v108 — le dossier administratif se crée tout seul la première fois ; les
+     prochaines dates du suivi des salariés se recalculent à chaque passage. */
+  try { if (!adminIds_().dossier) creerDossierAdministratif(); majSuiviSalaries_(); } catch (e6) {
     tracerServeur_('SYSTEME', 'DOSSIER ADMINISTRATIF EN ECHEC', String(e6 && e6.message || e6).slice(0, 200), '', '');
   }
   try { paieAutomatique_(new Date()); } catch (e5) {
@@ -11093,19 +11094,12 @@ function creerDossierAdministratif() {
     entete(s, ['SALARIÉ', 'DATE D\'ENTRÉE', 'VISITE MÉDICALE FAITE LE', 'PROCHAINE VISITE MÉDICALE',
                'ENTRETIEN DE PARCOURS FAIT LE', 'PROCHAIN ENTRETIEN DE PARCOURS', 'NOTES']);
     var gens = lirePrestataires_().map(function (p) { return p.nom; });
-    var f = [];
-    for (var r = 2; r <= 31; r++) {
-      f.push([gens[r - 2] || '', '', '',
-              '=IF(B' + r + '="","",IF(C' + r + '="",B' + r + '+90,EDATE(C' + r + ',60)))', '',
-              '=IF(B' + r + '="","",IF(E' + r + '="",EDATE(B' + r + ',12),EDATE(E' + r + ',48)))', '']);
-    }
-    s.getRange(2, 1, f.length, 7).setValues(f.map(function (x) { return [x[0], x[1], x[2], '', x[4], '', x[6]]; }));
-    s.getRange(2, 4, f.length, 1).setFormulas(f.map(function (x) { return [x[3]]; }));
-    s.getRange(2, 6, f.length, 1).setFormulas(f.map(function (x) { return [x[5]]; }));
+    if (gens.length) s.getRange(2, 1, gens.length, 1).setValues(gens.map(function (n) { return [n]; }));
+    var f = { length: 30 };
     s.getRange(2, 2, 40, 5).setNumberFormat('dd/mm/yyyy');
     [160, 110, 130, 140, 150, 160, 260].forEach(function (w, k) { s.setColumnWidth(k + 1, w); });
     s.getRange(f.length + 3, 1).setValue('Visite d\'information et de prévention : dans les 3 mois suivant l\'arrivée, puis au plus tard tous les 5 ans (ou ce que le médecin du travail a fixé). ' +
-      'Entretien de parcours professionnel : dans l\'année suivant l\'arrivée, puis tous les 4 ans ; bilan récapitulatif tous les 8 ans. Remplis la date d\'entrée : les prochaines dates se calculent seules et remontent dans « À faire » de l\'appli.').setWrap(false).setFontStyle('italic');
+      'Entretien de parcours professionnel : dans l\'année suivant l\'arrivée, puis tous les 4 ans ; bilan récapitulatif tous les 8 ans. Remplis la date d\'entrée (et les dates « faite le ») : les prochaines dates sont calculées par l\'appli (toutes les heures) et remontent dans « À faire ».').setWrap(false).setFontStyle('italic');
     crees.push('Calendrier des obligations');
   }
 
@@ -11203,6 +11197,38 @@ function avancerEcheance_(d, rep) {
   x.setDate(Math.min(j, new Date(x.getFullYear(), x.getMonth() + 1, 0).getDate()));
   return x;
 }
+/* Les prochaines dates de SUIVI SALARIÉS, calculées ici (pas de formule :
+   les formules écrites par le script tombaient en erreur avec un classeur en
+   français). Visite : 3 mois après l'arrivée, puis 5 ans après la dernière ;
+   entretien de parcours : 1 an après l'arrivée, puis 4 ans après le dernier. */
+function suiviSalaries_(ss, ecrire) {
+  var s = ss.getSheetByName('SUIVI SALARIÉS');
+  if (!s || s.getLastRow() < 2) return [];
+  var n = s.getLastRow() - 1, w = s.getRange(2, 1, n, 7).getValues(), out = [];
+  var plusMois = function (d, m) { var x = new Date(d.getFullYear(), d.getMonth() + m, 1, 12);
+    x.setDate(Math.min(d.getDate(), new Date(x.getFullYear(), x.getMonth() + 1, 0).getDate())); return x; };
+  var cal = w.map(function (l, k) {
+    var qui = String(l[0] || '').trim(), entree = l[1] instanceof Date && !isNaN(l[1].getTime()) ? l[1] : null;
+    var vip = '', ent = '';
+    if (qui && entree) {
+      var v = l[2] instanceof Date && !isNaN(l[2].getTime()) ? plusMois(l[2], 60) : new Date(entree.getTime() + 90 * 86400000);
+      var e = l[4] instanceof Date && !isNaN(l[4].getTime()) ? plusMois(l[4], 48) : plusMois(entree, 12);
+      v.setHours(12, 0, 0, 0); vip = v; ent = e;
+      out.push({ ligne: k + 2, qui: qui, vip: v, entretien: e });
+    }
+    return [vip, ent];
+  });
+  if (ecrire) {
+    s.getRange(2, 4, n, 1).setValues(cal.map(function (x) { return [x[0]]; }));
+    s.getRange(2, 6, n, 1).setValues(cal.map(function (x) { return [x[1]]; }));
+  }
+  return out;
+}
+function majSuiviSalaries_() {
+  var id = adminIds_().calendrier;
+  if (!id) return null;
+  return suiviSalaries_(SpreadsheetApp.openById(id), true).length;
+}
 function obligationsAFaire_(sansCache) {
   var cache = CacheService.getScriptCache();
   if (!sansCache) { var c = cache.get('OBLIGATIONS'); if (c) { try { return JSON.parse(c); } catch (e) {} } }
@@ -11232,22 +11258,14 @@ function obligationsAFaire_(sansCache) {
                  repetition: String(v[i][c('RÉPÉTITION')] || '') });
     }
   }
-  var s = ss.getSheetByName('SUIVI SALARIÉS');
-  if (s && s.getLastRow() > 1) {
-    var w = s.getRange(1, 1, s.getLastRow(), 7).getValues();
-    for (var r = 1; r < w.length; r++) {
-      var qui = String(w[r][0] || '').trim();
-      if (!qui || !(w[r][1] instanceof Date)) continue;
-      [[3, 'vip', 'Visite médicale (information et prévention)'], [5, 'entretien', 'Entretien de parcours professionnel']].forEach(function (x) {
-        var d = w[r][x[0]];
-        if (!(d instanceof Date) || isNaN(d.getTime())) return;
-        var j = jours(d);
-        if (j > 30) return;
-        out.push({ cle: 'S' + (r + 1) + x[1] + '|' + isoJour_(d), onglet: 'SUIVI SALARIÉS', ligne: r + 1, type: x[1],
-                   titre: x[2] + ' : ' + qui, detail: '', echeance: isoJour_(d), jours: j });
-      });
-    }
-  }
+  suiviSalaries_(ss, false).forEach(function (x) {
+    [['vip', 'Visite médicale (information et prévention)', x.vip], ['entretien', 'Entretien de parcours professionnel', x.entretien]].forEach(function (y) {
+      var j = jours(y[2]);
+      if (j > 30) return;
+      out.push({ cle: 'S' + x.ligne + y[0] + '|' + isoJour_(y[2]), onglet: 'SUIVI SALARIÉS', ligne: x.ligne, type: y[0],
+                 titre: y[1] + ' : ' + x.qui, detail: '', echeance: isoJour_(y[2]), jours: j });
+    });
+  });
   out.sort(function (a, b) { return a.echeance < b.echeance ? -1 : (a.echeance > b.echeance ? 1 : 0); });
   try { cache.put('OBLIGATIONS', JSON.stringify(out), 600); } catch (eC) {}
   return out;
@@ -11263,8 +11281,8 @@ function obligationFaite_(d, com) {
     var s = ss.getSheetByName('SUIVI SALARIÉS');
     if (!s) return { ok: false, erreur: 'onglet SUIVI SALARIÉS introuvable' };
     s.getRange(ligne, d.type === 'entretien' ? 5 : 3).setValue(auj);
-    SpreadsheetApp.flush();
-    res.prochaine = jourDe_(s.getRange(ligne, d.type === 'entretien' ? 6 : 4).getValue());
+    var apres = suiviSalaries_(ss, true).filter(function (x) { return x.ligne === ligne; })[0];
+    res.prochaine = apres ? isoJour_(d.type === 'entretien' ? apres.entretien : apres.vip) : '';
   } else {
     var o = ss.getSheetByName('OBLIGATIONS');
     if (!o) return { ok: false, erreur: 'onglet OBLIGATIONS introuvable' };
