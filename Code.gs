@@ -10349,7 +10349,16 @@ function remiseAFaire_(com, d) {
     k = String(k || '').slice(0, 90);
     if (k && cles.indexOf(k) < 0) cles.push(k);
   });
-  var s = { quand: new Date().getTime(), devis: [], chantiers: [], cles: cles };
+  /* Une appli restée sur une version d'avant la v106 (onglet ou téléphone pas
+     encore rechargé) n'envoie pas de clés : on met alors de côté tous les
+     devis et toutes les interventions existants, que ces versions savent
+     filtrer. Sans cela, sa remise à zéro ne retirait rien. */
+  var tousD = [], tousC = [];
+  if (!d || !Array.isArray(d.cles)) {
+    tousD = lireDevis_().map(function (x) { return String(x.NUMERO || '').trim(); }).filter(String);
+    objetsDe_(SH.CHANTIERS).forEach(function (o) { var id = String(o.ID || '').trim(); if (id) tousC.push(id); });
+  }
+  var s = { quand: new Date().getTime(), devis: tousD, chantiers: tousC, cles: cles };
   ecrireGrandeProp_('AFAIRE_IGNORES', JSON.stringify(s));
   tracerServeur_(com ? com.nom : 'SYSTEME', 'A FAIRE REMIS A ZERO', cles.length + ' élément(s) mis de côté', '', '');
   return { ok: true, cles: cles, quand: s.quand };

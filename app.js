@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v106';
+var VERSION_APP = 'v106c';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4904,7 +4904,10 @@ function taches(t){
   /* v106 — un contrat signé = UNE ligne « à mettre au calendrier » : un appui
      ouvre le devis, « Mettre au calendrier comme contrat » propose le rythme
      du devis, Simon confirme. */
-  dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat; }).forEach(function(d){
+  /* Un devis au nom de la maison (« BREIZH BRILLANCE ») est un essai : il ne
+     se met jamais au calendrier, il n'a rien à faire ici. */
+  dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat &&
+                                !/^BREIZH\s*BRILLANCE$/i.test(String(d.client||'').trim()); }).forEach(function(d){
     ajout('contrat', [d], function(x){ return x.numero; }, 'contrat signé à mettre au calendrier : ' + (d.client || d.numero),
       'ficheDevis(\'' + String(d.numero).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\')', 'warn');
   });
