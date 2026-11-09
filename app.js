@@ -360,7 +360,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v104';
+var VERSION_APP = 'v105';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4834,6 +4834,13 @@ function taches(t){
   }).length;
   if(echeances) l.push({ n:echeances, mot:'contrat' + (echeances>1?'s':'') + ' arrive' + (echeances>1?'nt':'') +
                           ' à échéance dans moins de 45 jours (renouveler ?)', go:'listeContrats()', ton:'warn' });
+  /* v105 — les fériés restent au planning : Simon appelle lui-même les
+     clients pour décaler. « À faire » les compte jusqu'à ce qu'ils bougent. */
+  var dansFerie = ch.filter(function(c){
+    return c.date && c.date.slice(0,10) >= auj && st(c) !== 'FAIT' && nomFerie(c.date.slice(0,10));
+  }).length;
+  if(dansFerie) l.push({ n:dansFerie, mot:'intervention' + (dansFerie>1?'s':'') + ' un jour férié (appeler le client pour décaler)',
+                         go:'listeFeries()', ton:'warn' });
   /* v104 — une intervention posée pendant un congé de celui qui la fait. */
   var pendantConge = ch.filter(function(c){
     return c.date && c.date.slice(0,10) >= auj && st(c) !== 'FAIT' && absentsDe(c.date.slice(0,10), c.prestataire, t).length;
@@ -5318,6 +5325,7 @@ function chargerTableau(btn){
     // Si l'appareil manque de place, tant pis pour le cache : l'écran, lui,
     // s'affiche quand même.
     try{ lsj('tableau', d); }catch(e){}
+    appliquerEnVol(TABLEAU);
     erreur('');
     peindreTableau();
     if(AD_FICHE) rouvrirFiche();
@@ -6301,6 +6309,7 @@ function verdictAdmin(type){
 function ficheChantier(id){
   var c = ((TABLEAU||{}).chantiers||[]).filter(function(x){ return x.id === id; })[0];
   if(!c) return;
+  if(c.enVol) return erreur('« ' + (c.client || 'Intervention') + ' » part au bureau, une seconde…');
   AD_FICHE = {type:'chantier', cle:id};
   AD_PRESTA = c.prestataire || '';
   AD_NATURE = String(c.nature || '').toUpperCase();
@@ -6377,18 +6386,7 @@ function creerLeChantier(btn){
   if(!navigator.onLine) return erreur('Hors connexion : créer un chantier a besoin du réseau.');
   var c = champsFicheChantier();
   if(!String(c.client || '').trim()) return erreur('Il faut au moins un nom de client.');
-  var moi = session();
-  erreur('');
-  if(btn) occuper(btn, 'Création…');
-  var env = {action:'chantierNeuf', nom:moi.nom, code:moi.code, appareil:APPAREIL};
-  for(var k in c) if(c.hasOwnProperty(k)) env[k] = c[k];
-  poster(env).then(function(r){
-    if(btn) libere(btn);
-    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
-    tracer('CHANTIER CREE', c.client + ' ' + (c.date||'sans date'), r.id || '');
-    retourTableau();
-    chargerTableau();
-  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+  posterChantierNeuf(c, btn);
 }
 
 /* Annuler, ou rétablir. Une annulation se confirme : c'est un rendez-vous
@@ -6563,27 +6561,64 @@ function enregistrerPlanif(btn){
   if(!String(c.client || '').trim()) { if(btn) libere(btn); return erreur('Il faut au moins un nom de client.'); }
   var env = {action:'planifier', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:f.cle};
   for(var k in c) if(c.hasOwnProperty(k)) env[k] = c[k];
+  /* v105 — « trop de latence quand j'ajoute ou modifie une intervention ».
+     L'écran n'attend plus le bureau : la fiche se ferme tout de suite sur le
+     planning déjà corrigé, l'envoi part derrière. Si le bureau refuse, on
+     remet ce qui était affiché et on le dit. */
+  var id = f.cle, x = chantierDuTableau(id);
+  if(btn) libere(btn);
+  if(!x) return;
+  var champs = { date:c.date, heure:c.heure, prestataire:c.prestataire, client:c.client, adresse:c.adresse,
+                 cp:c.cp, ville:c.ville, acces:c.acces, note:c.note, nature:c.nature };
+  var stA = String(x.statut||'').toUpperCase();
+  if(stA === 'A PLANIFIER' || stA === 'PLANIFIE' || !stA) champs.statut = (c.date && c.prestataire) ? 'PLANIFIE' : 'A PLANIFIER';
+  var avant = {};
+  for(var k1 in champs) avant[k1] = x[k1];
+  for(var k2 in champs) x[k2] = champs[k2];
+  EN_VOL.maj[id] = champs;
+  try{ lsj('tableau', TABLEAU); }catch(e){}
+  AD_MOT_T = 0; AD_MOT = 'Enregistré : ' + (c.client || 'intervention');
+  retourTableau();
   poster(env).then(function(r){
-    if(btn) libere(btn);
-    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
-    tracer('CHANTIER PLANIFIE', AD_PRESTA + ' ' + val('adDate'), f.cle);
-    ((TABLEAU||{}).chantiers||[]).forEach(function(x){
-      if(x.id !== f.cle) return;
-      x.date = c.date; x.heure = c.heure; x.prestataire = AD_PRESTA;
-      x.client = c.client; x.adresse = c.adresse; x.cp = c.cp; x.ville = c.ville;
-      x.acces = c.acces; x.note = c.note; x.nature = c.nature;
-      x.statut = r.statut || x.statut;
-    });
-    try{ lsj('tableau', TABLEAU); }catch(e){}
-    retourTableau();
+    if(EN_VOL.maj[id] === champs) delete EN_VOL.maj[id];
+    if(!r || !r.ok) return defaireEnVol(id, avant, (r && r.erreur) ? String(r.erreur) : attenteLisible());
+    tracer('CHANTIER PLANIFIE', c.prestataire + ' ' + c.date, id);
+    var x2 = chantierDuTableau(id);
+    if(x2 && r.statut) x2.statut = r.statut;
     chargerTableau();
-  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+  }, function(){
+    if(EN_VOL.maj[id] === champs) delete EN_VOL.maj[id];
+    defaireEnVol(id, avant, attenteLisible());
+  });
+}
+
+/* Ce qui est parti au bureau sans réponse encore : réappliqué à chaque
+   rafraîchissement du tableau, pour qu'une lecture partie avant l'écriture
+   ne fasse pas « revenir » l'ancienne version à l'écran. */
+var EN_VOL = { neufs: [], maj: {} };
+function appliquerEnVol(t){
+  if(!t || !t.chantiers) return;
+  t.chantiers.forEach(function(x){
+    var m = EN_VOL.maj[x.id];
+    if(m) for(var k in m) if(m.hasOwnProperty(k)) x[k] = m[k];
+  });
+  EN_VOL.neufs.forEach(function(n){
+    if(!t.chantiers.some(function(x){ return x.id === n.id; })) t.chantiers.push(n);
+  });
+}
+function defaireEnVol(id, avant, motif){
+  var x = chantierDuTableau(id);
+  if(x) for(var k in avant) if(avant.hasOwnProperty(k)) x[k] = avant[k];
+  try{ lsj('tableau', TABLEAU); }catch(e){}
+  if(!AD_FICHE) peindreTableau();
+  erreur('Pas enregistré pour « ' + ((x && x.client) || 'l\'intervention') + ' » : ' + motif + ' — recommence.');
 }
 
 function rouvrirFiche(){
   var f = AD_FICHE;
   if(!f) return;
   if(f.type === 'conges'){ peindreConges(); return; }
+  if(f.type === 'feries'){ peindreFeries(); return; }
   if(f.type === 'contrats') return;
   if(f.type === 'devis'){
     var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === f.cle; })[0];
@@ -7108,19 +7143,68 @@ function enregistrerContrat(btn){
 function posterChantierNeuf(c, btn, fichier){
   var moi = session();
   erreur('');
-  if(btn) occuper(btn, 'Création…');
   var env = {action:'chantierNeuf', nom:moi.nom, code:moi.code, appareil:APPAREIL};
   for(var k in c) if(c.hasOwnProperty(k)) env[k] = c[k];
+  /* v105 — même chose à la création : l'intervention apparaît tout de suite
+     au planning (marquée « envoi… » le temps que le bureau lui donne son
+     numéro), et l'écran revient sans attendre. */
+  var tmp = 'TMP-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+  var loc = { id: tmp, numero: c.devis || '', client: c.client, adresse: c.adresse || '', cp: c.cp || '',
+    ville: c.ville || '', acces: c.acces || '', date: c.date || '', heure: c.heure || '',
+    prestataire: c.prestataire || '', statut: (c.date && c.prestataire) ? 'PLANIFIE' : 'A PLANIFIER',
+    arrivee: 0, depart: 0, minutes: 0, signalement: '', note: c.note || '', nature: c.nature || '',
+    recurrent: '', duree: c.duree || '', enVol: true };
+  if(TABLEAU){ TABLEAU.chantiers = TABLEAU.chantiers || []; TABLEAU.chantiers.push(loc); }
+  EN_VOL.neufs.push(loc);
+  if(btn) libere(btn);
+  AD_MOT_T = 0; AD_MOT = 'Intervention ajoutée : ' + c.client;
+  CT = null;
+  retourTableau();
+  var oter = function(){ EN_VOL.neufs = EN_VOL.neufs.filter(function(n){ return n !== loc; }); };
   poster(env).then(function(r){
-    if(btn) libere(btn);
-    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    oter();
+    if(!r || !r.ok){
+      if(TABLEAU) TABLEAU.chantiers = (TABLEAU.chantiers||[]).filter(function(x){ return x !== loc; });
+      if(!AD_FICHE) peindreTableau();
+      return erreur('« ' + c.client + ' » n\'a pas été créée : ' + ((r && r.erreur) ? String(r.erreur) : attenteLisible()) + ' — recommence.');
+    }
     tracer('CHANTIER CREE', c.client + ' ' + (c.date||'sans date'), r.id || '');
+    loc.id = r.id; loc.statut = r.statut || loc.statut; delete loc.enVol;
     if(fichier && r.id) envoyerFicheApres([r.id], fichier);
-    AD_MOT_T = 0; AD_MOT = 'Chantier créé';
-    CT = null;
-    retourTableau();
     chargerTableau();
-  }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+  }, function(){
+    oter();
+    if(TABLEAU) TABLEAU.chantiers = (TABLEAU.chantiers||[]).filter(function(x){ return x !== loc; });
+    if(!AD_FICHE) peindreTableau();
+    erreur('« ' + c.client + ' » n\'a pas été créée : ' + attenteLisible() + ' — recommence.');
+  });
+}
+
+/* v105 — les interventions posées un jour férié, pour appeler les clients. */
+function listeFeries(){
+  AD_FICHE = {type:'feries', cle:''};
+  montrer('eAd2');
+  $('hTitre').textContent = 'Jours fériés';
+  erreur(''); window.scrollTo(0,0);
+  peindreFeries();
+}
+function peindreFeries(){
+  var auj = isoJour();
+  var l = ((TABLEAU||{}).chantiers||[]).filter(function(c){
+    return !estAnnule(c) && c.date && c.date.slice(0,10) >= auj && String(c.statut||'').toUpperCase() !== 'FAIT' && nomFerie(c.date.slice(0,10));
+  }).sort(function(a, b){ return (a.date + (a.heure||'')) < (b.date + (b.heure||'')) ? -1 : 1; });
+  var h = '<div class="mini" style="margin:0 0 10px">Les passages restent à leur date. Appelle le client, puis ouvre l\'intervention pour la déplacer (les dates proposées évitent fériés et congés).</div>';
+  var jour = '';
+  l.forEach(function(c){
+    var j = c.date.slice(0,10);
+    if(j !== jour){ jour = j; h += '<h2 style="margin:14px 0 8px">' + ech(jourLisible(j)) + ' · ' + ech(nomFerie(j)) + '</h2>'; }
+    h += '<div class="card chC" style="cursor:pointer;margin-bottom:8px" onclick="ficheChantier(\'' + ech(String(c.id)) + '\')">' +
+      '<div class="chTete"><b style="flex:1">' + ech(c.client || 'Intervention') + '</b><span class="mini">' + ech(c.heure || '') + '</span></div>' +
+      '<div class="mini">' + ech(quiLisible(c.prestataire)) + (c.ville ? ' · ' + ech(c.ville) : '') + '</div></div>';
+  });
+  if(!l.length) h += '<div class="card"><div class="empty">Aucune intervention un jour férié.</div></div>';
+  h += '<button class="btn sec" style="margin-top:12px" onclick="retourTableau()">Retour au tableau</button>';
+  $('adFiche').innerHTML = h;
 }
 
 function arreterContrat(id, depuis, btn){

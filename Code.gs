@@ -597,7 +597,7 @@ var REGLAGES_DEFAUT_ = [
   ['noms_documents', 'TITEMA=Simon',
    'Le nom imprimé sur les devis et les factures pour un compte : COMPTE=Nom ; COMPTE2=Nom2'],
   ['commissions', 'CONTRAT_PART=5;CONTRAT_PRO=6;RENOUV_PART=2;RENOUV_PRO=3;RENOUV_MAX=3;VITRERIE_PART=6;VITRERIE_PRO=7;CHANTIER=8;REMISE=8;FACADE=8;BASE_CONTRAT_MOIS=12',
-   'Taux de commission des commerciaux, en % (provisoires). Contrat : sur la 1re année'],
+   'Taux de commission des commerciaux, en %. Contrat : sur la 1re année'],
   ['equipe_par_jour', '',
    'Qui fait les passages selon le jour : LUNDI=VICTOR;SAMEDI=MAXIME;AUTRES=MAXIME, VICTOR. Vide : la série décide'],
   ['travail_jours_feries', 'NON',
@@ -1132,9 +1132,13 @@ function doPost(e) {
       return reponse_({ ok: true, config: configPour_(com.role, com) });
     }
     if (d.action === 'tableau') return reponse_(tableauAdmin_());
-    if (d.action === 'planifier') return reponse_(planifierChantier_(d, com));
+    /* v105 — l'appli n'attend plus la réponse pour fermer la fiche : deux
+       créations peuvent donc partir coup sur coup. Le verrou évite qu'elles
+       prennent le même numéro CH-, et qu'une ligne réécrite d'un bloc
+       (majChantier_) en écrase une autre. */
+    if (d.action === 'planifier') { lock.waitLock(30000); return reponse_(planifierChantier_(d, com)); }
     if (d.action === 'poserDevis') return reponse_(poserAvantSignature_(d, com));
-    if (d.action === 'chantierNeuf') return reponse_(creerChantier_(d, com));
+    if (d.action === 'chantierNeuf') { lock.waitLock(30000); return reponse_(creerChantier_(d, com)); }
     if (d.action === 'lotChantiers') return reponse_(lotChantiers_(d, com));
     if (d.action === 'recurrentNeuf' || d.action === 'recurrentModif' || d.action === 'recurrentStop') {
       /* Le verrou : deux créations en même temps prendraient le même numéro
@@ -2262,16 +2266,28 @@ function planifierChantier_(d, com) {
       (v.PRESTATAIRE !== undefined || v.DATE !== undefined || v.HEURE !== undefined)) {
     /* Chacun du binôme reçoit son mot : « nouveau » pour celui qu'on vient
        d'ajouter, « déplacé » pour celui qui y était déjà. */
-    nomsQui_(quiFinal).forEach(function (nomN) {
+    var lgN = {
+      CLIENT: v.CLIENT !== undefined ? v.CLIENT : avant.CLIENT,
+      CP: v.CP !== undefined ? v.CP : avant.CP,
+      VILLE: v.VILLE !== undefined ? v.VILLE : avant.VILLE,
+      DATE: dateFinale,
+      HEURE: v.HEURE !== undefined ? v.HEURE : avant.HEURE,
+      NUMERO: avant.NUMERO
+    };
+    /* v105 — mais seulement si quelque chose a vraiment changé pour lui : la
+       fiche renvoie tous ses champs à chaque enregistrement, et une note
+       corrigée ne vaut pas une sonnerie. */
+    var memeJour = avant.DATE && isoJour_(new Date(avant.DATE)) === isoJour_(new Date(dateFinale));
+    var memeHeure = heureTexte_(avant.HEURE) === heureTexte_(lgN.HEURE);
+    var aPrevenir = nomsQui_(quiFinal).filter(function (nomN) {
+      return !quiContient_(avant.PRESTATAIRE, nomN) || !memeJour || !memeHeure;
+    });
+    var envois = aPrevenir.map(function (nomN) {
       var neuf = !quiContient_(avant.PRESTATAIRE, nomN) || !avant.DATE;
-      notifierChantier_(nomN, {
-        CLIENT: v.CLIENT !== undefined ? v.CLIENT : avant.CLIENT,
-        CP: v.CP !== undefined ? v.CP : avant.CP,
-        VILLE: v.VILLE !== undefined ? v.VILLE : avant.VILLE,
-        DATE: dateFinale,
-        HEURE: v.HEURE !== undefined ? v.HEURE : avant.HEURE,
-        NUMERO: avant.NUMERO
-      }, !neuf);
+      return messageChantier_(nomN, lgN, !neuf);
+    });
+    if (envois.length) notifierLot_(envois).forEach(function (r, i) {
+      if (!r.ok && !r.aucun) tracerServeur_(envois[i].nom, 'NOTIFICATION RATEE', String(r.erreur || ''), String(avant.NUMERO || ''), '');
     });
   }
 
@@ -3946,6 +3962,7 @@ function genererRecurrents_() {
     .map(function (x) { return String(x).trim(); });
   var cId = en.indexOf('ID'), cRec = en.indexOf('RECURRENT');
   var cDate = en.indexOf('DATE'), cStatut = en.indexOf('STATUT'), cArr = en.indexOf('ARRIVEE');
+  var cQui = en.indexOf('PRESTATAIRE');
   if (cId < 0 || cRec < 0 || cDate < 0 || cStatut < 0) {
     bilan.motif = 'colonnes absentes — lancer « Mettre à jour la structure »';
     return bilan;
@@ -3995,11 +4012,17 @@ function genererRecurrents_() {
       var isoD = isoJour_(d);
       var equipe = (regleQ && equipeRemplacable_(regleQ, r.PRESTATAIRE) && equipeDuJour_(regleQ, d))
         ? equipeDuJour_(regleQ, d) : String(r.PRESTATAIRE || '');
-      var ferme = !fer && estAbsent_(cal, '', isoD, true);
+      var ferme = estAbsent_(cal, '', isoD, true);
       var presents = nomsQui_(equipe).filter(function (n) { return !estAbsent_(cal, normNom_(n), isoD); });
       var tousAbsents = nomsQui_(equipe).length > 0 && !presents.length;
-      if (!fer && (ferme || tousAbsents)) bilan.absences = (bilan.absences || 0) + 1;
-      var aPlacer = !!fer || ferme || tousAbsents;
+      if (ferme || tousAbsents) bilan.absences = (bilan.absences || 0) + 1;
+      /* v105 — Simon, 9 novembre : « pour les jours fériés, laisse les
+         prestations d'origine sur le planning, je m'occupe de les bouger moi-
+         même en appelant les clients ». Un férié ne retire plus rien : le
+         passage est posé à sa date, le planning affiche « Férié », et « À
+         faire » rappelle d'appeler le client. Seuls un congé ou une fermeture
+         envoient encore dans « À placer ». */
+      var aPlacer = ferme || tousAbsents;
       var v2 = {
         ID: 'CH-' + ('000' + (suivant + rang)).slice(-4),
         NUMERO: '',
@@ -4059,6 +4082,23 @@ function genererRecurrents_() {
          ne doit pas traîner dans « À placer ». */
       var dk = dateIso_(k.split('|')[1]);
       var mort = !etat || !etat.actif || (etat.fin && dk && minuit_(dk) > etat.fin);
+      /* v105 — les fériés mis de côté par les v101 à v104 reviennent à leur
+         date d'origine (Simon appelle lui-même les clients). Un passage que
+         l'équipe ne peut pas faire (congé, fermeture) reste dans « À placer ». */
+      if (!mort && dk && minuit_(dk) >= aujourd && nomFerieIso_(k.split('|')[1]) &&
+          String(l[cStatut] || '').toUpperCase().trim() === 'A PLANIFIER' &&
+          !(cArr >= 0 && String(l[cArr] || '').trim())) {
+        var quiF = cQui >= 0 ? String(l[cQui] || '') : '';
+        var isoK = k.split('|')[1];
+        var bloque = estAbsent_(cal, '', isoK, true) ||
+          (nomsQui_(quiF).length && nomsQui_(quiF).every(function (n) { return estAbsent_(cal, normNom_(n), isoK); }));
+        if (!bloque) {
+          sh.getRange(deja[k].rang, cDate + 1).setValue(dk);
+          if (quiF.trim()) sh.getRange(deja[k].rang, cStatut + 1).setValue('PLANIFIE');
+          bilan.feriesRemis = (bilan.feriesRemis || 0) + 1;
+          continue;
+        }
+      }
       if (mort && dk && minuit_(dk) >= aujourd &&
           String(l[cStatut] || '').toUpperCase().trim() !== 'ANNULE' &&
           !(cArr >= 0 && String(l[cArr] || '').trim())) {
@@ -4071,25 +4111,15 @@ function genererRecurrents_() {
     if (String(l[cStatut] || '').toUpperCase().trim() === 'ANNULE') continue;
     if (cArr >= 0 && String(l[cArr] || '').trim()) continue;     // déjà pointé
     var morte = !etat || !etat.actif || (etat.fin && dl > etat.fin);
-    if (!morte) {
-      /* Posé d'avance un férié, à sa date d'origine (donc pas déplacé à la
-         main) : il repart dans « À placer ». Un passage que le gérant a mis
-         lui-même un férié reste où il l'a mis. */
-      if (isoJour_(dl) === k.split('|')[1] && ferie_(cal, dl)) {
-        sh.getRange(deja[k].rang, cDate + 1).setValue('');
-        sh.getRange(deja[k].rang, cStatut + 1).setValue('A PLANIFIER');
-        bilan.ferieRetires++;
-      }
-      continue;
-    }
+    if (!morte) continue;      // v105 : un férié posé reste à sa date
     sh.getRange(deja[k].rang, cStatut + 1).setValue('ANNULE');
     bilan.annules++;
   }
 
-  if (bilan.poses || bilan.annules || bilan.ferieRetires) {
+  if (bilan.poses || bilan.annules || bilan.feriesRemis) {
     tracerServeur_('SYSTEME', 'PLANNING RECURRENT',
-      bilan.poses + ' posé(s) dont ' + bilan.feries + ' férié(s) à placer, ' +
-      bilan.annules + ' annulé(s), ' + bilan.ferieRetires + ' férié(s) retiré(s) du calendrier, ' +
+      bilan.poses + ' posé(s) dont ' + bilan.feries + ' un jour férié, ' +
+      bilan.annules + ' annulé(s), ' + (bilan.feriesRemis || 0) + ' férié(s) remis à leur date, ' +
       bilan.series + ' série(s)', '', '');
   }
   return bilan;
@@ -4825,11 +4855,36 @@ function majChantier_(id, valeurs) {
   var ids = sh.getRange(2, cId + 1, sh.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < ids.length; i++) {
     if (String(ids[i][0]).trim() !== String(id).trim()) continue;
+    /* v105 — une seule écriture pour toute la ligne touchée (de la première à
+       la dernière colonne modifiée), au lieu d'un appel par case : la fiche
+       envoie une dizaine de champs, et chaque setValue coûtait son aller-retour
+       au classeur. Les cases du milieu non modifiées sont réécrites telles
+       qu'elles viennent d'être lues, sous le verrou. */
+    var cols = [];
     for (var k in valeurs) {
       if (!valeurs.hasOwnProperty(k)) continue;
       var c = en.indexOf(k);
-      if (c >= 0) sh.getRange(i + 2, c + 1).setValue(valeurs[k]);
+      if (c >= 0) cols.push(c);
     }
+    if (!cols.length) return i + 2;
+    var c0 = Math.min.apply(null, cols), c1 = Math.max.apply(null, cols);
+    var plage = sh.getRange(i + 2, c0 + 1, 1, c1 - c0 + 1);
+    var ligne = plage.getValues()[0];
+    var formules = plage.getFormulas()[0];
+    var aFormule = formules.some(function (f) { return !!f; });
+    for (var k2 in valeurs) {
+      if (!valeurs.hasOwnProperty(k2)) continue;
+      var c2 = en.indexOf(k2);
+      if (c2 >= 0) ligne[c2 - c0] = valeurs[k2];
+    }
+    if (aFormule) {
+      /* Une formule au milieu : on n'écrase rien, case par case comme avant. */
+      for (var k3 in valeurs) {
+        if (!valeurs.hasOwnProperty(k3)) continue;
+        var c3 = en.indexOf(k3);
+        if (c3 >= 0) sh.getRange(i + 2, c3 + 1).setValue(valeurs[k3]);
+      }
+    } else plage.setValues([ligne]);
     return i + 2;
   }
   return null;
@@ -5848,12 +5903,53 @@ function notifPersonne_(rep) {
   return false;
 }
 
+/* v105 — plusieurs notifications en même temps (UrlFetchApp.fetchAll) : un
+   binôme recevait ses deux mots l'un après l'autre, et le gérant attendait
+   les deux allers-retours vers OneSignal avant que sa fiche se ferme.
+   liste : [{ nom, titre, texte, lien }] → un résultat par élément. */
+function notifierLot_(liste) {
+  var c = notifConfig_();
+  if (!c.app || !c.cle) return liste.map(function () { return { ok: false, erreur: 'notifications non connectées' }; });
+  var req = [], ou = [];
+  var res = liste.map(function (m, i) {
+    var qui = notifId_(m.nom);
+    if (!qui) return { ok: false, erreur: 'personne sans nom' };
+    var corps = { app_id: c.app, include_aliases: { external_id: [qui] }, target_channel: 'push',
+                  headings: { en: String(m.titre || '') }, contents: { en: String(m.texte || '') } };
+    if (m.lien) corps.url = String(m.lien);
+    req.push({ url: NOTIF_URL_, method: 'post', contentType: 'application/json',
+               headers: { Authorization: 'Key ' + c.cle }, payload: JSON.stringify(corps), muteHttpExceptions: true });
+    ou.push(i);
+    return null;
+  });
+  if (!req.length) return res;
+  var reps;
+  try { reps = UrlFetchApp.fetchAll(req); }
+  catch (e) { ou.forEach(function (i) { res[i] = { ok: false, erreur: String(e && e.message || e) }; }); return res; }
+  reps.forEach(function (r, k) { res[ou[k]] = lireReponseNotif_(r); });
+  return res;
+}
+function lireReponseNotif_(r) {
+  var code = r.getResponseCode(), rep = {};
+  try { rep = JSON.parse(r.getContentText() || '{}'); } catch (e) {}
+  if (code >= 200 && code < 300) {
+    if (notifPersonne_(rep)) return { ok: false, erreur: 'personne inscrit sous ce nom', aucun: true };
+    var n = Number(rep.recipients || 0);
+    if (rep.id || n) return { ok: true, recus: n, id: String(rep.id || '') };
+    return { ok: false, erreur: 'personne inscrit sous ce nom', aucun: true };
+  }
+  var msg = (rep.errors && rep.errors[0]) ||
+            (rep.errors && rep.errors.invalid_aliases ? 'nom inconnu du service' : '') || ('refus ' + code);
+  return { ok: false, erreur: String(msg) };
+}
+
 function notifier_(nom, titre, texte, lien) {
-  /* Un binôme (« MAXIME, VICTOR ») : un message à chacun. */
+  /* Un binôme (« MAXIME, VICTOR ») : un message à chacun, envoyés ensemble. */
   var plusieurs = nomsQui_(nom);
   if (plusieurs.length > 1) {
     var r0 = { ok: true };
-    plusieurs.forEach(function (n1) { var r1 = notifier_(n1, titre, texte, lien); if (!r1.ok) r0 = r1; });
+    notifierLot_(plusieurs.map(function (n1) { return { nom: n1, titre: titre, texte: texte, lien: lien }; }))
+      .forEach(function (r1) { if (!r1.ok) r0 = r1; });
     return r0;
   }
   var c = notifConfig_();
@@ -5908,6 +6004,14 @@ function notifier_(nom, titre, texte, lien) {
 
 /* Le mot envoyé quand un chantier est posé ou déplacé. Il dit ce qu'il faut
    pour s'organiser, et rien de plus : ni montant, ni code de portail. */
+function messageChantier_(nom, ligne, deplace) {
+  var d = ligne.DATE ? new Date(ligne.DATE) : null;
+  var jour = (d && !isNaN(d.getTime())) ? jourFr_(d) : 'date à caler';
+  var h = heureTexte_(ligne.HEURE);
+  var ou = [String(ligne.CP || ''), String(ligne.VILLE || '')].filter(String).join(' ').trim();
+  return { nom: nom, titre: deplace ? 'Chantier déplacé' : 'Nouveau chantier',
+           texte: String(ligne.CLIENT || 'Chantier') + ' — ' + jour + (h ? ' à ' + h : '') + (ou ? ' · ' + ou : '') };
+}
 function notifierChantier_(nom, ligne, deplace) {
   if (!nom || !ligne) return;
   var d = ligne.DATE ? new Date(ligne.DATE) : null;
@@ -10515,4 +10619,14 @@ function ajusterPourAbsence_(a) {
     else b.conflits++;
   }
   return b;
+}
+
+/* v105 — lancée une fois depuis l'éditeur : remet à leur date les passages
+   fériés que les v101 à v104 avaient mis de côté dans « À placer ». (La nuit
+   le ferait aussi ; ceci évite d'attendre.) */
+function miseEnPlaceV105() {
+  var g = genererRecurrents_();
+  Logger.log('Planning : ' + (g.feriesRemis || 0) + ' férié(s) remis à leur date, ' + g.poses + ' posé(s), ' +
+             (g.absences || 0) + ' à placer pour congé.');
+  return g;
 }
