@@ -1029,7 +1029,8 @@ function doPost(e) {
                    'mesDevis', 'devisArchive',
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
-                   'absenceAjouter', 'absenceRetirer', 'commissions'];
+                   'absenceAjouter', 'absenceRetirer', 'commissions',
+                   'obligationFaite', 'elementsPaie', 'paieFichier'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1086,7 +1087,9 @@ function doPost(e) {
          'aFaireRemise', 'recurrentRenouveler',
          /* v104 — les congés des salariés, saisis par le gérant. */
          'absenceAjouter', 'absenceRetirer',
-         'mesDevis', 'devisArchive', 'commissions']
+         'mesDevis', 'devisArchive', 'commissions',
+         /* v108 — l'administratif : échéances, éléments de paie. */
+         'obligationFaite', 'elementsPaie', 'paieFichier']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1188,6 +1191,9 @@ function doPost(e) {
     }
     if (d.action === 'mesDevis') return reponse_(mesDevis_(d, com));
     if (d.action === 'commissions') return reponse_(commissions_(d, com));
+    if (d.action === 'obligationFaite') return reponse_(obligationFaite_(d, com));
+    if (d.action === 'elementsPaie') return reponse_(elementsPaie_(d));
+    if (d.action === 'paieFichier') return reponse_(ecrirePaie_(d.mois));
     if (d.action === 'suggestions') return reponse_(suggestionsPlacement_(d));
     if (d.action === 'lienSignature') return reponse_(lienSignatureAppli_(d, com));
     if (d.action === 'devisArchive') return reponse_(devisArchive_(d, com));
@@ -2206,6 +2212,10 @@ function tableauAdmin_() {
        montre une répétition sans fin. */
     /* v102 — ce que « À faire » a mis de côté lors de la dernière remise à zéro. */
     aFaireIgnores: ignT,
+    /* v108 — les échéances du calendrier des obligations qui approchent, et
+       les liens du dossier administratif. */
+    obligations: (function () { try { return obligationsAFaire_(); } catch (eO) { return []; } })(),
+    adminLiens: (function () { try { return adminLiens_(); } catch (eL) { return {}; } })(),
     /* v104 — les congés en cours et à venir : le planning les montre, et les
        dates que l'appli propose les évitent. */
     absences: absT,
@@ -7063,6 +7073,9 @@ function preparationAutomatique() {
   } catch (e2) {
     tracerServeur_('SYSTEME', 'PREPARATION AUTO EN ECHEC', String(e2 && e2.message || e2).slice(0, 200), '', '');
   }
+  try { paieAutomatique_(new Date()); } catch (e5) {
+    tracerServeur_('SYSTEME', 'ELEMENTS DE PAIE EN ECHEC', String(e5 && e5.message || e5).slice(0, 200), '', '');
+  }
   try { relancerPointages_(new Date()); } catch (e3) {
     tracerServeur_('SYSTEME', 'RELANCE POINTAGE EN ECHEC', String(e3 && e3.message || e3).slice(0, 200), '', '');
   } finally { lock.releaseLock(); }
@@ -9016,7 +9029,7 @@ function poserHorairesOsm() {
   return poses;
 }
 
-function poserOsm(){var T='390872539=0297373231;777734039=0297467373;477733000=0297467126;878427566=0297234001;883637597=0297658602;843879818=0297261006;777903816=0297442398;855801072=0297350003;378786396=0299085250;850951633=0297689437;440985224=0297641827;800179491=0297419026;390375756=0297241232;349974931=0257900002;378830848=0297017480;439512054=0297621111;898530563=0297651303;394280697=0297882626;531068864=0297217505;382385276=0297570206;350849451=0297655030;531515716=0297335367;841335227=0297335367;881202998=0297662112;981305212=0297309161;383348521=0297473429;788033371=0297234001;490411477=0297865740;523499846=0297261006;818337073=0297931286;449674548=0297356660;393755848=0297845475;378829295=0297442398;775617095=0297371256;378831440=0297505348;350042644=0297702235;984674705=0297624722;810335620=0230190130;799141924=0297608843;425014735=0297365989;383334869=0643753033;444297576=0297651303;524101557=0297211919;381144252=0297600569;944887371=0214992407;914442702=0297564833;487645566=0297570438;950985192=0297347170;809747033=0297501734;432926525=0297502252;951697655=0297417425;990406035=0297233335;423041888=0297027000;777832635=0297651880;383844693=0297442800;813473378=0297862480;800383366=0297548000;903590305=0607664657;409144391=0297116368;511803462=0297080808;825096779=0297475152;403998479=0297235858;517598108=0297110242;440109692=0297211681;841386279=0650549541;821881091=0297811601;834193450=0297507870;377664743=0297557675;928797398=0297832121;490429651=0297250201;350404166=0297502437;722013851=0297673330;803414291=0297257680;832064539=0299082665;491413761=0695613256;820027688=0297553535;478863665=0297593325;995244472=0297255123;442286548=0299937411;419904289=0297236992;514944883=0297236890;490202157=0297236653;842243644=0297653290;524147238=0297650405;889723078=0297362401;505019679=0297361295;534033881=0297361338;753617042=0299081775;500396080=0299080464;518302195=0297230922;304195167=0297334118;881614333=0297117136;524708112=0297212749;445131717=0297751862;948053640=0297656351;533652582=0297618387;391676244=0297348425;889085346=0626575573;841399546=0297482466;879730380=0297502314;943195982=0670652711;350344198=0297222255;452985914=0299081017;532804226=0297402600;441137692=0297766461;108515065=0297766461;384750493=0299080636;810504563=0986180130;911621662=0953323331;994490126=0297528829;499442465=0297563730;501774343=0297560416;502073745=0297520504;939368361=0297276299;934489717=0299085810;803368265=0297410389;952481265=0297624691;802828707=0610777053;934118613=0297555368;497830448=0297740701;421804279=0297740701;452417876=0297234111;399000926=0297234294;939768164=0297667666;982346108=0297220437;927894287=0297076257;452633753=0297328663;948814769=0297850309;412320038=0297222035;838557221=0299082344;881966097=0299085411;834911422=0299932182;850383241=0299700690;490842507=0299907460;495347742=0297761931;944250612=0297322267;910201714=0973591609;531381051=0297291308;510447550=0297315942;344522693=0297318126;904403466=0297692323;844661033=0951129106;103268678=0297212881;377553060=0297641724;829473487=0297306127;979355567=0297641409;378684831=0297395123;943036830=0297112463;533461307=0297751060;411849342=0297415656;999532286=0987781744;851924191=0297132950;881036578=0297607996;824139943=0297331715;939758637=0297298159;878810795=0297858180;938026333=0297441739;487860645=0297346513;453096687=0297290535;947514527=0649217066;835308412=0222214432;981639354=0222217728;848696969=0297433694;411371909=0297434755;898498571=0297264652;839198967=0297308021;403378243=0297250511;500459029=0297575679;909832255=0297440577;503611808=0297660613;420551962=0297430200;478485568=0297436919;323825729=0297631690;987831963=0297476982;810585406=0956332045;390266294=0297612325;339607772=0297408205;913150264=0297615090;514111319=0297462700;433891132=0297540834;507935591=0297684980;823745104=0297473491;883341141=0297476991;420471187=0297549654;532619392=0981422949;940624190=0297425674;523423184=0297477605;528666480=0297473491;995148673=0297613525;490865177=0297464262;821190790=0297537138;384893079=0297440198;881384192=0297240537;788607604=0297570523;753997956=0297705109;453458804=0297557878;983859927=0297267760;847713708=0297502056;502749856=0298925352;941625162=0230859066;947921631=0297089105;821150901=0297235155;441264041=0297433752;437832769=0297452288;450115746=0297419050;885061192=0299723108;809526833=0297070292;388138000=0297340203;431896851=0299088458;443101829=0297393938;539064410=0297328855;385211743=0297569082;950937201=0241093908;344743505=0297400450;510206105=0256546043;390115913=0297418953;511564221=0297662750;329626261=0297683250;487421349=0297683250;775678584=0972720202;552120222=0297682469;998823504=0222760460;813755345=0984412751;328161245=0297681828;388828279=0297440054;403252679=0297474377;444927149=0297511346;318906443=0297814300;383246253=0297451314;450152921=0297655873;478826746=0617471798;215600032=0297447049;215600057=0297537559;215602095=0297276169;215602111=0297435013;215602343=0297309525;215602632=0297576027';var par={};T.split(';').forEach(function(p){var a=p.split('=');if(a.length===2)par[a[0]]=a[1];});var reg=lireReglages_();var src=SpreadsheetApp.openById(String(reg.prospection_fichier_id||'').trim());var vise=String(reg.prospection_onglet||'BASE').trim();var sh=src.getSheetByName(vise);if(!sh)throw new Error('Onglet '+vise+' introuvable.');var li=Number(reg.prospection_entete_ligne)||3;var en=colonnesBase_(sh,li);var cT=-1;sh.getRange(li,1,1,sh.getLastColumn()).getValues()[0].forEach(function(h,k){if(normNom_(h).toUpperCase().trim()==='TEL')cT=k;});if(cT<0||en.SIREN==null)throw new Error('Colonne TEL ou SIREN introuvable.');var n=sh.getLastRow()-li;var rg=sh.getRange(li+1,cT+1,n,1),col=rg.getValues(),sir=sh.getRange(li+1,en.SIREN+1,n,1).getValues(),nT=0;for(var i=0;i<n;i++){var s=String(sir[i][0]||'').replace(/[^0-9]/g,'');var d=par[s];if(!d)continue;if(String(col[i][0]||'').trim())continue;col[i][0]=d.slice(0,2)+' '+d.slice(2,4)+' '+d.slice(4,6)+' '+d.slice(6,8)+' '+d.slice(8,10);nT++;}rg.setValues(col);tracerServeur_('SERVEUR','OSM POSE',nT+' numero(s) pose(s) depuis OpenStreetMap','','');return nT;} function majBaseProspects() {
+function majBaseProspects() {
   var ui = null;
   try { ui = SpreadsheetApp.getUi(); } catch (eUi) { ui = null; }
   var r;
@@ -10949,4 +10962,413 @@ function rappelsVeille_(maintenant) {
   Object.keys(deja).forEach(function (k) { if (deja[k] < lim) delete deja[k]; });
   props.setProperty('RAPPELS_VEILLE', JSON.stringify(deja));
   return b;
+}
+
+/* ====================== L'ADMINISTRATIF (v108) ======================
+   Simon, 9 novembre 2026 : « les éléments de paie prêts chaque fin de mois —
+   commission pour commercial + jours de congés, pas le détail de chaque
+   heure ; calendrier des obligations dans un Google Sheet ; un registre
+   unique du personnel dans le même dossier ; une check-list d'embauche ».
+   — creerDossierAdministratif (à lancer une fois depuis l'éditeur) crée le
+     dossier « BREIZH BRILLANCE - Administratif » et quatre classeurs :
+     Calendrier des obligations, Registre unique du personnel, Check-list
+     d'embauche, Éléments de paie. Leurs identifiants vont dans REGLAGES.
+     Relancée, elle ne recrée rien de ce qui existe.
+   — « À faire » montre les échéances du calendrier (et les visites médicales
+     et entretiens de parcours de l'onglet SUIVI SALARIÉS) dès qu'elles
+     approchent ; « Fait » note la date et passe à l'échéance suivante.
+   — Les éléments de paie d'un mois : jours d'absence de chaque salarié (en
+     jours ouvrables, du lundi au samedi hors fériés, comme se décomptent les
+     congés payés) et commission brute de chaque commercial. Écrits dans le
+     classeur « Éléments de paie » le dernier jour du mois au soir, et à la
+     demande depuis l'appli. Aucun nom ni chiffre n'est écrit dans ce code. */
+var ADMIN_DOSSIER_NOM_ = 'BREIZH BRILLANCE - Administratif';
+var OBLIG_ENTETES_ = ['OBLIGATION', 'DÉTAIL / COMMENT FAIRE', 'CATÉGORIE', 'ÉCHÉANCE', 'RÉPÉTITION',
+                      'PRÉVENIR (JOURS AVANT)', 'FAIT LE', 'SOURCE'];
+var REPETITIONS_ = ['MENSUEL', 'FIN DE MOIS', 'TRIMESTRIEL', 'SEMESTRIEL', 'ANNUEL', 'TOUS LES 2 ANS', 'UNIQUE'];
+
+function adminIds_() {
+  var r = lireReglages_();
+  return { dossier: String(r.admin_dossier_id || '').trim(), calendrier: String(r.calendrier_obligations_id || '').trim(),
+           registre: String(r.registre_personnel_id || '').trim(), checklist: String(r.checklist_embauche_id || '').trim(),
+           paie: String(r.paie_fichier_id || '').trim() };
+}
+function adminLiens_() {
+  var i = adminIds_(), u = function (id) { return id ? 'https://docs.google.com/spreadsheets/d/' + id + '/edit' : ''; };
+  return { dossier: i.dossier ? 'https://drive.google.com/drive/folders/' + i.dossier : '',
+           calendrier: u(i.calendrier), registre: u(i.registre), checklist: u(i.checklist), paie: u(i.paie) };
+}
+
+/* Les premières échéances, calculées à partir d'aujourd'hui. */
+function prochainJour_(mois, jour, depuis) {
+  var a = depuis.getFullYear();
+  for (var k = 0; k < 3; k++) {
+    var d = new Date(a + k, mois - 1, jour, 12);
+    if (d >= minuit_(depuis)) return d;
+  }
+  return null;
+}
+function prochainDuMois_(jour, depuis) {
+  var d = new Date(depuis.getFullYear(), depuis.getMonth(), jour, 12);
+  if (d < minuit_(depuis)) d = new Date(depuis.getFullYear(), depuis.getMonth() + 1, jour, 12);
+  return d;
+}
+function deuxiemeJourOuvreMai_(an) {
+  var f = joursFeries_(an), d = new Date(an, 4, 1, 12), n = 0;
+  while (n < 2) { d.setDate(d.getDate() + 1); var j = d.getDay(); if (j > 0 && j < 6 && !f[isoJour_(d)]) n++; }
+  return d;
+}
+function lignesObligations_(auj) {
+  var finMois = new Date(auj.getFullYear(), auj.getMonth() + 1, 0, 12);
+  var trim = [[3, 15], [6, 15], [9, 15], [12, 15]].map(function (x) { return prochainJour_(x[0], x[1], auj); })
+    .sort(function (a, b) { return a - b; })[0];
+  var anL = auj.getMonth() >= 4 ? auj.getFullYear() + 1 : auj.getFullYear();
+  var liasse = deuxiemeJourOuvreMai_(anL);
+  if (liasse < auj) liasse = deuxiemeJourOuvreMai_(anL + 1);
+  var vig = new Date(auj); vig.setDate(vig.getDate() + 21); vig.setHours(12, 0, 0, 0);
+  var feE = new Date(2027, 8, 1, 12);
+  var L = [
+    ['Éléments de paie au comptable', 'Absences des salariés et commissions brutes des commerciaux : prêts dans l\'appli (Tableau › Administratif) et dans le classeur « Éléments de paie » de ce dossier.', 'Paie', finMois, 'FIN DE MOIS', 3, '', ''],
+    ['DSN mensuelle et paiement des cotisations', 'Moins de 50 salariés : au plus tard le 15 du mois suivant la période (reporté au jour ouvrable suivant si c\'est un week-end ou un férié). Souvent faite par le comptable ou le logiciel de paie.', 'Social', prochainDuMois_(15, auj), 'MENSUEL', 5, '', 'https://www.legisocial.fr/paie/declarations-sociales/calendrier-dsn-2026-dates-limites.html'],
+    ['TVA', 'À CONFIRMER avec le comptable. Réel normal : déclaration et paiement chaque mois entre le 15 et le 24 (date exacte dans l\'espace professionnel impots.gouv). Réel simplifié : acomptes en juillet et décembre, déclaration annuelle début mai — adapter cette ligne.', 'Fiscal', prochainDuMois_(15, auj), 'MENSUEL', 5, '', 'https://www.impots.gouv.fr/professionnel'],
+    ['Acompte d\'impôt sur les sociétés', '15 mars, 15 juin, 15 septembre, 15 décembre. Pas d\'acompte si l\'impôt de référence ne dépasse pas 3 000 €.', 'Fiscal', trim, 'TRIMESTRIEL', 10, '', ''],
+    ['CFE (cotisation foncière des entreprises)', 'Avis en ligne début novembre dans l\'espace professionnel impots.gouv ; paiement au plus tard le 15 décembre (acompte le 15 juin si la CFE de l\'an passé dépassait 3 000 €).', 'Fiscal', prochainJour_(12, 15, auj), 'ANNUEL', 30, '', ''],
+    ['Liasse fiscale (déclaration de résultats)', 'Exercice clos le 31 décembre : au plus tard le 2e jour ouvré après le 1er mai (15 jours de plus en télétransmission). À confirmer si ton exercice se clôt à une autre date. Faite par le comptable.', 'Fiscal', liasse, 'ANNUEL', 45, '', ''],
+    ['Solde de l\'impôt sur les sociétés', 'Exercice clos le 31 décembre : le 15 mai.', 'Fiscal', prochainJour_(5, 15, auj), 'ANNUEL', 30, '', ''],
+    ['Approbation des comptes (assemblée des associés)', 'Dans les 6 mois suivant la clôture de l\'exercice.', 'Juridique', prochainJour_(6, 30, auj), 'ANNUEL', 45, '', ''],
+    ['Dépôt des comptes au greffe', 'Dans le mois suivant l\'approbation (2 mois en dépôt électronique).', 'Juridique', prochainJour_(7, 31, auj), 'ANNUEL', 30, '', ''],
+    ['Attestation de vigilance URSSAF', 'Valable 6 mois. À télécharger dans ton espace en ligne urssaf.fr (Documents › Attestations › Attestation de vigilance) et à remettre aux clients pros dont le contrat atteint 5 000 € HT.', 'Social', vig, 'SEMESTRIEL', 7, '', 'https://www.urssaf.fr'],
+    ['Communiquer la période de prise des congés payés', 'Au moins 2 mois avant l\'ouverture de la période (souvent le 1er mai).', 'Personnel', prochainJour_(3, 1, auj), 'ANNUEL', 30, '', ''],
+    ['Document unique d\'évaluation des risques (DUERP)', 'Moins de 11 salariés : pas de mise à jour annuelle obligatoire, mais obligatoire à chaque changement important (nouveau produit, nouvelle machine, nouveau type de chantier) ou information nouvelle sur un risque. Revue annuelle conseillée.', 'Personnel', prochainJour_(1, 31, auj), 'ANNUEL', 30, '', 'https://bpifrance-creation.fr/encyclopedie/gerer-lentreprise/sante-securite-au-travail/document-unique-devaluation-risques'],
+    ['Facturation électronique : émission obligatoire', 'Réception obligatoire depuis le 1er septembre 2026 ; émission et e-reporting obligatoires pour les PME et TPE le 1er septembre 2027. Vérifier que Pennylane couvre les deux.', 'Fiscal', feE >= auj ? feE : '', 'UNIQUE', 120, '', 'https://www.impots.gouv.fr/foire-aux-questions-je-decouvre-la-facturation-electronique'],
+    ['Assurance RC professionnelle : échéance', 'À COMPLÉTER : date d\'échéance du contrat.', 'Assurances', '', 'ANNUEL', 30, '', ''],
+    ['Véhicules : assurance et contrôle technique', 'À COMPLÉTER : une ligne par véhicule si besoin.', 'Véhicules', '', 'ANNUEL', 30, '', ''],
+    ['Cotisation au service de santé au travail', 'À COMPLÉTER : date de l\'appel de cotisation annuel.', 'Personnel', '', 'ANNUEL', 15, '', ''],
+    ['Seuil de 11 salariés', 'Pour information : 11 salariés pendant 12 mois consécutifs = élections du CSE et mise à jour annuelle du DUERP.', 'Personnel', '', 'UNIQUE', 0, '', '']
+  ];
+  return L;
+}
+
+/** À lancer une fois depuis l'éditeur. */
+function creerDossierAdministratif() {
+  var ids = adminIds_(), auj = new Date();
+  var dossier = null;
+  if (ids.dossier) { try { dossier = DriveApp.getFolderById(ids.dossier); } catch (e) { dossier = null; } }
+  if (!dossier) {
+    var it = DriveApp.getFoldersByName(ADMIN_DOSSIER_NOM_);
+    dossier = it.hasNext() ? it.next() : DriveApp.createFolder(ADMIN_DOSSIER_NOM_);
+    ecrireReglage_('admin_dossier_id', dossier.getId());
+  }
+  var ouvrir = function (id) { if (!id) return null; try { return SpreadsheetApp.openById(id); } catch (e) { return null; } };
+  var neuf = function (nom, cle) {
+    var ss = SpreadsheetApp.create(nom);
+    DriveApp.getFileById(ss.getId()).moveTo(dossier);
+    ecrireReglage_(cle, ss.getId());
+    return ss;
+  };
+  var entete = function (sh, l, couleur) {
+    sh.getRange(1, 1, 1, l.length).setValues([l]).setFontWeight('bold').setBackground(couleur || '#1f3b5c').setFontColor('#ffffff').setWrap(true);
+    sh.setFrozenRows(1);
+  };
+  var crees = [];
+
+  /* 1. Calendrier des obligations */
+  if (!ouvrir(ids.calendrier)) {
+    var c = neuf('Calendrier des obligations', 'calendrier_obligations_id');
+    var o = c.getSheets()[0]; o.setName('OBLIGATIONS');
+    entete(o, OBLIG_ENTETES_);
+    var L = lignesObligations_(auj);
+    o.getRange(2, 1, L.length, OBLIG_ENTETES_.length).setValues(L);
+    o.getRange(2, 4, 200, 1).setNumberFormat('dd/mm/yyyy');
+    o.getRange(2, 7, 200, 1).setNumberFormat('dd/mm/yyyy');
+    o.getRange(2, 5, 200, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(REPETITIONS_, true).build());
+    [260, 420, 100, 95, 110, 90, 90, 200].forEach(function (w, k) { o.setColumnWidth(k + 1, w); });
+    o.getRange(2, 1, 200, 8).setWrap(true).setVerticalAlignment('top');
+    L.forEach(function (l, k) { if (!l[3] && l[5]) o.getRange(k + 2, 4).setBackground('#fff4c2'); });
+    var s = c.insertSheet('SUIVI SALARIÉS');
+    entete(s, ['SALARIÉ', 'DATE D\'ENTRÉE', 'VISITE MÉDICALE FAITE LE', 'PROCHAINE VISITE MÉDICALE',
+               'ENTRETIEN DE PARCOURS FAIT LE', 'PROCHAIN ENTRETIEN DE PARCOURS', 'NOTES']);
+    var gens = lirePrestataires_().map(function (p) { return p.nom; });
+    var f = [];
+    for (var r = 2; r <= 31; r++) {
+      f.push([gens[r - 2] || '', '', '',
+              '=IF(B' + r + '="","",IF(C' + r + '="",B' + r + '+90,EDATE(C' + r + ',60)))', '',
+              '=IF(B' + r + '="","",IF(E' + r + '="",EDATE(B' + r + ',12),EDATE(E' + r + ',48)))', '']);
+    }
+    s.getRange(2, 1, f.length, 7).setValues(f.map(function (x) { return [x[0], x[1], x[2], '', x[4], '', x[6]]; }));
+    s.getRange(2, 4, f.length, 1).setFormulas(f.map(function (x) { return [x[3]]; }));
+    s.getRange(2, 6, f.length, 1).setFormulas(f.map(function (x) { return [x[5]]; }));
+    s.getRange(2, 2, 40, 5).setNumberFormat('dd/mm/yyyy');
+    [160, 110, 130, 140, 150, 160, 260].forEach(function (w, k) { s.setColumnWidth(k + 1, w); });
+    s.getRange(f.length + 3, 1).setValue('Visite d\'information et de prévention : dans les 3 mois suivant l\'arrivée, puis au plus tard tous les 5 ans (ou ce que le médecin du travail a fixé). ' +
+      'Entretien de parcours professionnel : dans l\'année suivant l\'arrivée, puis tous les 4 ans ; bilan récapitulatif tous les 8 ans. Remplis la date d\'entrée : les prochaines dates se calculent seules et remontent dans « À faire » de l\'appli.').setWrap(false).setFontStyle('italic');
+    crees.push('Calendrier des obligations');
+  }
+
+  /* 2. Registre unique du personnel */
+  if (!ouvrir(ids.registre)) {
+    var g = neuf('Registre unique du personnel', 'registre_personnel_id');
+    var sa = g.getSheets()[0]; sa.setName('SALARIÉS');
+    entete(sa, ['N°', 'NOM', 'PRÉNOMS', 'NATIONALITÉ', 'DATE DE NAISSANCE', 'SEXE', 'EMPLOI', 'QUALIFICATION',
+                'DATE D\'ENTRÉE', 'DATE DE SORTIE', 'TYPE DE CONTRAT (CDI, CDD, temps partiel, apprentissage, professionnalisation…)',
+                'SALARIÉ ÉTRANGER : TYPE ET N° DU TITRE D\'AUTORISATION DE TRAVAIL',
+                'MIS À DISPOSITION : NOM ET ADRESSE DE L\'ENTREPRISE (intérim, groupement d\'employeurs)', 'MENTIONS RECTIFICATIVES'], '#2e4d2e');
+    sa.getRange(2, 5, 300, 1).setNumberFormat('dd/mm/yyyy');
+    sa.getRange(2, 9, 300, 2).setNumberFormat('dd/mm/yyyy');
+    [40, 130, 130, 110, 110, 60, 150, 150, 100, 100, 200, 200, 220, 260].forEach(function (w, k) { sa.setColumnWidth(k + 1, w); });
+    sa.getRange(1, 1, 1, 14).setVerticalAlignment('top');
+    var nb = g.insertSheet('À LIRE', 0);
+    nb.getRange(1, 1, 7, 1).setValues([['Registre unique du personnel — BREIZH BRILLANCE'],
+      ['Obligatoire dès le premier salarié. Une ligne par salarié, dans l\'ordre d\'embauche (onglet SALARIÉS) ; les stagiaires et les volontaires en service civique ont leur onglet.'],
+      ['Ne rien effacer ni réécrire : une correction s\'ajoute dans la colonne MENTIONS RECTIFICATIVES, la mention d\'origine reste.'],
+      ['À la sortie d\'un salarié, remplir DATE DE SORTIE sur sa ligne (ne pas supprimer la ligne).'],
+      ['Conserver les mentions 5 ans après le départ du salarié. À présenter à l\'inspection du travail sur demande.'],
+      ['Les onglets sont protégés en « avertissement » : Google prévient avant toute modification, pour éviter un effacement par erreur.'],
+      ['Source : https://entreprendre.service-public.gouv.fr/vosdroits/F1784']]);
+    nb.getRange(1, 1).setFontWeight('bold').setFontSize(13); nb.setColumnWidth(1, 900); nb.getRange(2, 1, 6, 1).setWrap(true);
+    var st = g.insertSheet('STAGIAIRES');
+    entete(st, ['NOM', 'PRÉNOMS', 'DATE DE DÉBUT', 'DATE DE FIN', 'TUTEUR', 'LIEU DE PRÉSENCE'], '#2e4d2e');
+    var sc = g.insertSheet('SERVICE CIVIQUE');
+    entete(sc, ['NOM', 'PRÉNOMS', 'DATE DE DÉBUT', 'DATE DE FIN', 'TUTEUR', 'LIEU D\'EXERCICE'], '#2e4d2e');
+    [sa, st, sc].forEach(function (x) { try { x.protect().setDescription('Registre : modifier avec prudence, ne rien effacer').setWarningOnly(true); } catch (eP) {} });
+    crees.push('Registre unique du personnel');
+  }
+
+  /* 3. Check-list d'embauche */
+  if (!ouvrir(ids.checklist)) {
+    var k = neuf('Check-list d\'embauche', 'checklist_embauche_id');
+    var m = k.getSheets()[0]; m.setName('MODÈLE');
+    m.getRange(1, 1, 2, 2).setValues([['Salarié :', ''], ['Date d\'arrivée :', '']]);
+    m.getRange(1, 1, 2, 1).setFontWeight('bold');
+    m.getRange(2, 2).setNumberFormat('dd/mm/yyyy');
+    m.getRange(4, 1, 1, 5).setValues([['ÉTAPE', 'QUAND', 'FAIT', 'LE', 'NOTES']]).setFontWeight('bold').setBackground('#5c3b1f').setFontColor('#ffffff');
+    var E = [
+      ['Pièce d\'identité ; salarié étranger : vérifier son autorisation de travail auprès de la préfecture', 'Avant l\'embauche (au moins 2 jours ouvrables avant)'],
+      ['DPAE (déclaration préalable à l\'embauche) sur urssaf.fr ou net-entreprises', 'Au plus tôt 8 jours avant, et toujours avant la prise de poste'],
+      ['Demander la visite d\'information et de prévention au service de santé au travail', 'En même temps que la DPAE'],
+      ['Contrat de travail écrit et signé (obligatoire pour un CDD ou un temps partiel) — emploi et qualification de la convention collective de la propreté (IDCC 3043)', 'Avant le premier jour'],
+      ['Récupérer : numéro de sécurité sociale, RIB, adresse, justificatif d\'abonnement transport, éventuelle dispense de mutuelle', 'Avant le premier jour'],
+      ['Transmettre ces éléments au comptable / logiciel de paie', 'Avant la première paie'],
+      ['Inscrire le salarié au Registre unique du personnel (dossier Administratif)', 'Le premier jour'],
+      ['Ajouter sa ligne dans SUIVI SALARIÉS du Calendrier des obligations (date d\'entrée)', 'Le premier jour'],
+      ['Créer son compte dans l\'appli : onglet PRESTATAIRES du classeur DEVIS BB (nom, code, ACTIF = OUI) ; installer l\'appli et autoriser les notifications', 'Le premier jour'],
+      ['Information sécurité : produits, fiches de données de sécurité, gestes et postures, travail en hauteur ; remise des équipements de protection et de la tenue', 'Le premier jour'],
+      ['Remettre les clés, badges et codes des clients nécessaires (noter qui a quoi)', 'Le premier jour'],
+      ['Mutuelle et prévoyance : affiliation (ou dispense écrite) et remise des notices', 'Dès l\'arrivée'],
+      ['Remettre par écrit les informations essentielles (identité des parties, lieu, poste, rémunération, durée du travail, période d\'essai…) — souvent dans le contrat signé', 'Dans les 7 jours'],
+      ['Remettre les autres informations obligatoires (formation, congés payés, procédure de rupture, organismes sociaux…)', 'Dans le mois'],
+      ['Informer le salarié qu\'il bénéficiera d\'un entretien de parcours professionnel', 'À l\'embauche'],
+      ['Visite d\'information et de prévention réalisée', 'Dans les 3 mois'],
+      ['Point de fin de période d\'essai', 'Avant la fin de l\'essai'],
+      ['Premier entretien de parcours professionnel', 'Dans l\'année']
+    ];
+    m.getRange(5, 1, E.length, 2).setValues(E);
+    m.getRange(5, 3, E.length, 1).insertCheckboxes();
+    m.getRange(5, 4, E.length, 1).setNumberFormat('dd/mm/yyyy');
+    m.getRange(5, 1, E.length, 5).setWrap(true).setVerticalAlignment('top');
+    [520, 230, 50, 90, 260].forEach(function (w, i2) { m.setColumnWidth(i2 + 1, w); });
+    m.getRange(E.length + 6, 1).setValue('Pour chaque embauche : clic droit sur l\'onglet MODÈLE › Dupliquer, puis renomme la copie avec le prénom du salarié.').setFontStyle('italic');
+    crees.push('Check-list d\'embauche');
+  }
+
+  /* 4. Éléments de paie */
+  if (!ouvrir(ids.paie)) {
+    var p = neuf('Éléments de paie', 'paie_fichier_id');
+    var pl = p.getSheets()[0]; pl.setName('À LIRE');
+    pl.getRange(1, 1, 3, 1).setValues([['Éléments de paie — BREIZH BRILLANCE'],
+      ['Un onglet par mois, rempli par l\'appli le dernier jour du mois au soir (et à la demande : Tableau › Administratif › Éléments de paie).'],
+      ['Salariés : jours d\'absence saisis dans l\'appli, en jours ouvrables (lundi au samedi, fériés exclus). Commerciaux : commission brute du mois aux taux de REGLAGES.']]);
+    pl.getRange(1, 1).setFontWeight('bold').setFontSize(13); pl.setColumnWidth(1, 900);
+    crees.push('Éléments de paie');
+  }
+  CacheService.getScriptCache().remove('OBLIGATIONS');
+  var out = { ok: true, crees: crees, liens: adminLiens_() };
+  Logger.log(JSON.stringify(out));
+  return out;
+}
+
+/* ---- les échéances qui approchent ---- */
+function avancerEcheance_(d, rep) {
+  var n = new Date(d); n.setHours(12, 0, 0, 0);
+  var r = String(rep || '').toUpperCase().trim();
+  if (r === 'FIN DE MOIS') return new Date(n.getFullYear(), n.getMonth() + 2, 0, 12);
+  var mois = { 'MENSUEL': 1, 'TRIMESTRIEL': 3, 'SEMESTRIEL': 6, 'ANNUEL': 12, 'TOUS LES 2 ANS': 24 }[r];
+  if (!mois) return null;
+  var j = n.getDate();
+  var x = new Date(n.getFullYear(), n.getMonth() + mois, 1, 12);
+  x.setDate(Math.min(j, new Date(x.getFullYear(), x.getMonth() + 1, 0).getDate()));
+  return x;
+}
+function obligationsAFaire_(sansCache) {
+  var cache = CacheService.getScriptCache();
+  if (!sansCache) { var c = cache.get('OBLIGATIONS'); if (c) { try { return JSON.parse(c); } catch (e) {} } }
+  var id = adminIds_().calendrier, out = [];
+  if (!id) return out;
+  var ss;
+  try { ss = SpreadsheetApp.openById(id); } catch (e) { return out; }
+  var auj = minuit_(new Date());
+  var jours = function (d) { return Math.round((minuit_(d) - auj) / 86400000); };
+  var o = ss.getSheetByName('OBLIGATIONS');
+  if (o && o.getLastRow() > 1) {
+    var v = o.getRange(1, 1, o.getLastRow(), o.getLastColumn()).getValues();
+    var en = v[0].map(function (x) { return String(x).trim().toUpperCase(); });
+    var c = function (h) { return en.indexOf(h); };
+    for (var i = 1; i < v.length; i++) {
+      var titre = String(v[i][c('OBLIGATION')] || '').trim(), ech = v[i][c('ÉCHÉANCE')];
+      if (!titre || !(ech instanceof Date) || isNaN(ech.getTime())) continue;
+      var prev = Number(v[i][c('PRÉVENIR (JOURS AVANT)')]);
+      if (isNaN(prev) || prev <= 0) prev = 15;
+      var j = jours(ech);
+      if (j > prev) continue;
+      /* Déjà faite pour cette échéance (une ligne UNIQUE ne bouge pas). */
+      var fait = v[i][c('FAIT LE')];
+      if (fait instanceof Date && minuit_(fait) >= new Date(minuit_(ech).getTime() - (prev + 1) * 86400000)) continue;
+      out.push({ cle: 'O' + (i + 1) + '|' + isoJour_(ech), onglet: 'OBLIGATIONS', ligne: i + 1, titre: titre,
+                 detail: String(v[i][c('DÉTAIL / COMMENT FAIRE')] || ''), echeance: isoJour_(ech), jours: j,
+                 repetition: String(v[i][c('RÉPÉTITION')] || '') });
+    }
+  }
+  var s = ss.getSheetByName('SUIVI SALARIÉS');
+  if (s && s.getLastRow() > 1) {
+    var w = s.getRange(1, 1, s.getLastRow(), 7).getValues();
+    for (var r = 1; r < w.length; r++) {
+      var qui = String(w[r][0] || '').trim();
+      if (!qui || !(w[r][1] instanceof Date)) continue;
+      [[3, 'vip', 'Visite médicale (information et prévention)'], [5, 'entretien', 'Entretien de parcours professionnel']].forEach(function (x) {
+        var d = w[r][x[0]];
+        if (!(d instanceof Date) || isNaN(d.getTime())) return;
+        var j = jours(d);
+        if (j > 30) return;
+        out.push({ cle: 'S' + (r + 1) + x[1] + '|' + isoJour_(d), onglet: 'SUIVI SALARIÉS', ligne: r + 1, type: x[1],
+                   titre: x[2] + ' : ' + qui, detail: '', echeance: isoJour_(d), jours: j });
+      });
+    }
+  }
+  out.sort(function (a, b) { return a.echeance < b.echeance ? -1 : (a.echeance > b.echeance ? 1 : 0); });
+  try { cache.put('OBLIGATIONS', JSON.stringify(out), 600); } catch (eC) {}
+  return out;
+}
+function obligationFaite_(d, com) {
+  var id = adminIds_().calendrier;
+  if (!id) return { ok: false, erreur: 'calendrier des obligations introuvable' };
+  var ss = SpreadsheetApp.openById(id), auj = new Date(); auj.setHours(12, 0, 0, 0);
+  var ligne = Math.round(Number(d.ligne) || 0);
+  if (ligne < 2) return { ok: false, erreur: 'ligne illisible' };
+  var res = { ok: true };
+  if (d.onglet === 'SUIVI SALARIÉS') {
+    var s = ss.getSheetByName('SUIVI SALARIÉS');
+    if (!s) return { ok: false, erreur: 'onglet SUIVI SALARIÉS introuvable' };
+    s.getRange(ligne, d.type === 'entretien' ? 5 : 3).setValue(auj);
+    SpreadsheetApp.flush();
+    res.prochaine = jourDe_(s.getRange(ligne, d.type === 'entretien' ? 6 : 4).getValue());
+  } else {
+    var o = ss.getSheetByName('OBLIGATIONS');
+    if (!o) return { ok: false, erreur: 'onglet OBLIGATIONS introuvable' };
+    var en = o.getRange(1, 1, 1, o.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim().toUpperCase(); });
+    var cE = en.indexOf('ÉCHÉANCE'), cR = en.indexOf('RÉPÉTITION'), cF = en.indexOf('FAIT LE'), cT = en.indexOf('OBLIGATION');
+    var lu = o.getRange(ligne, 1, 1, o.getLastColumn()).getValues()[0];
+    var ech = lu[cE];
+    if (d.echeance && ech instanceof Date && isoJour_(ech) !== d.echeance) return { ok: true, deja: true };
+    if (cF >= 0) o.getRange(ligne, cF + 1).setValue(auj);
+    var n = ech instanceof Date ? avancerEcheance_(ech, lu[cR]) : null;
+    /* Une échéance rattrapée en retard saute jusqu'à la prochaine à venir. */
+    var garde = 0;
+    while (n && n < minuit_(auj) && garde++ < 60) n = avancerEcheance_(n, lu[cR]);
+    if (n) o.getRange(ligne, cE + 1).setValue(n);
+    res.prochaine = n ? isoJour_(n) : '';
+    tracerServeur_(com ? com.nom : '', 'OBLIGATION FAITE', String(lu[cT] || '') + (n ? ' · prochaine le ' + isoJour_(n) : ''), '', d.appareil || '');
+  }
+  CacheService.getScriptCache().remove('OBLIGATIONS');
+  res.obligations = obligationsAFaire_(true);
+  return res;
+}
+
+/* ---- les éléments de paie ---- */
+function joursOuvrablesEntre_(du, au) {
+  var n = 0, d = new Date(du + 'T12:00:00'), fin = new Date(au + 'T12:00:00'), fer = {};
+  while (d <= fin) {
+    var an = d.getFullYear();
+    if (!fer[an]) fer[an] = joursFeries_(an);
+    if (d.getDay() !== 0 && !fer[an][isoJour_(d)]) n++;
+    d.setDate(d.getDate() + 1);
+  }
+  return n;
+}
+function elementsPaie_(d) {
+  var auj = new Date();
+  var mois = /^\d{4}-\d{2}$/.test(String(d && d.mois || '')) ? String(d.mois) : Utilities.formatDate(auj, 'Europe/Paris', 'yyyy-MM');
+  var a = Number(mois.slice(0, 4)), m = Number(mois.slice(5, 7));
+  var debut = mois + '-01', fin = isoJour_(new Date(a, m, 0, 12));
+  var abs = lireAbsences_(), fermetures = [];
+  abs.forEach(function (x) {
+    if (x.cle || x.au < debut || x.du > fin) return;
+    var du = x.du < debut ? debut : x.du, au = x.au > fin ? fin : x.au;
+    fermetures.push({ du: du, au: au, jours: joursOuvrablesEntre_(du, au) });
+  });
+  var salaries = lirePrestataires_().map(function (p) {
+    var cle = normNom_(p.nom), per = [];
+    abs.forEach(function (x) {
+      if (x.cle !== cle || x.au < debut || x.du > fin) return;
+      var du = x.du < debut ? debut : x.du, au = x.au > fin ? fin : x.au;
+      per.push({ du: du, au: au, jours: joursOuvrablesEntre_(du, au) });
+    });
+    per.sort(function (u, v) { return u.du < v.du ? -1 : 1; });
+    var tot = per.reduce(function (s, x) { return s + x.jours; }, 0) + fermetures.reduce(function (s, x) { return s + x.jours; }, 0);
+    return { nom: p.nom, jours: tot, periodes: per };
+  });
+  var cm = commissions_({ mois: 24 }, { nom: '', role: 'ADMIN' });
+  var commerciaux = (cm.commerciaux || []).map(function (c) {
+    var r = (c.mois || {})[mois] || { ca: 0, com: 0, n: 0 };
+    return { nom: c.nom, signe: r.ca, commission: r.com, n: r.n, lignes: (c.lignes || []).filter(function (l) { return l.mois === mois; }) };
+  }).filter(function (c) { return c.commission || c.signe; });
+  return { ok: true, mois: mois, du: debut, au: fin, salaries: salaries, fermetures: fermetures, commerciaux: commerciaux,
+           liens: adminLiens_(), maj: Date.now() };
+}
+function ecrirePaie_(mois) {
+  var id = adminIds_().paie;
+  if (!id) return { ok: false, erreur: 'classeur « Éléments de paie » introuvable : lancer creerDossierAdministratif' };
+  var e = elementsPaie_({ mois: mois });
+  var ss = SpreadsheetApp.openById(id);
+  var noms = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  var titre = e.mois + ' ' + noms[Number(e.mois.slice(5, 7)) - 1];
+  var sh = ss.getSheetByName(titre);
+  if (sh) sh.clear(); else sh = ss.insertSheet(titre, 1);
+  var fr = function (iso) { return iso.slice(8, 10) + '/' + iso.slice(5, 7); };
+  var L = [['Éléments de paie — ' + titre, '', '', ''], ['Mis à jour le ' + Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm'), '', '', ''], ['', '', '', ''],
+           ['SALARIÉS', 'JOURS D\'ABSENCE (ouvrables)', 'PÉRIODES', 'REMARQUE']];
+  e.salaries.forEach(function (s) {
+    L.push([s.nom, s.jours, s.periodes.map(function (p) { return p.du === p.au ? 'le ' + fr(p.du) : 'du ' + fr(p.du) + ' au ' + fr(p.au); }).join(' ; ') ||
+            (e.fermetures.length ? '' : 'aucune'), e.fermetures.length ? 'dont fermeture(s) de l\'entreprise' : '']);
+  });
+  if (e.fermetures.length) L.push(['Fermetures', e.fermetures.reduce(function (s, x) { return s + x.jours; }, 0),
+    e.fermetures.map(function (p) { return p.du === p.au ? 'le ' + fr(p.du) : 'du ' + fr(p.du) + ' au ' + fr(p.au); }).join(' ; '), '']);
+  L.push(['', '', '', ''], ['COMMERCIAUX', 'SIGNÉ HT DU MOIS', 'COMMISSION BRUTE', 'DÉTAIL']);
+  if (!e.commerciaux.length) L.push(['Aucune commission ce mois-ci', '', '', '']);
+  e.commerciaux.forEach(function (c) {
+    L.push([c.nom, c.signe, c.commission, c.lignes.map(function (l) {
+      return (l.type === 'reconduction' ? 'reconduction ' : '') + l.client + ' ' + l.com.toFixed(2).replace('.', ',') + ' €';
+    }).join(' ; ')]);
+  });
+  L.push(['', '', '', ''], ['Absences : jours saisis dans l\'appli (sans motif), du lundi au samedi, fériés exclus. Commissions brutes aux taux fixés par la direction.', '', '', '']);
+  sh.getRange(1, 1, L.length, 4).setValues(L);
+  sh.getRange(1, 1).setFontWeight('bold').setFontSize(13);
+  [4, 6 + e.salaries.length + (e.fermetures.length ? 1 : 0)].forEach(function (r) { sh.getRange(r, 1, 1, 4).setFontWeight('bold').setBackground('#eeeeee'); });
+  [200, 170, 380, 380].forEach(function (w, k) { sh.setColumnWidth(k + 1, w); });
+  return { ok: true, onglet: titre, url: 'https://docs.google.com/spreadsheets/d/' + id + '/edit#gid=' + sh.getSheetId() };
+}
+/* Le dernier jour du mois à partir de 18 h (rattrapage les 1er et 2 du mois
+   suivant), une seule fois par mois. Appelé par la préparation automatique. */
+function paieAutomatique_(maintenant) {
+  var now = maintenant || new Date();
+  if (!adminIds_().paie) return null;
+  var dernier = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() === now.getDate();
+  var mois = null;
+  if (dernier && now.getHours() >= 18) mois = Utilities.formatDate(now, 'Europe/Paris', 'yyyy-MM');
+  else if (now.getDate() <= 2) mois = Utilities.formatDate(new Date(now.getFullYear(), now.getMonth() - 1, 15), 'Europe/Paris', 'yyyy-MM');
+  if (!mois) return null;
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('PAIE_ECRITE_' + mois)) return null;
+  var r = ecrirePaie_(mois);
+  if (r.ok) { props.setProperty('PAIE_ECRITE_' + mois, String(Date.now())); tracerServeur_('SYSTEME', 'ELEMENTS DE PAIE PRETS', r.onglet, '', ''); }
+  return r;
 }

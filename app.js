@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v107';
+var VERSION_APP = 'v108';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4941,8 +4941,20 @@ function taches(t){
            !/^BREIZH\s*BRILLANCE$/i.test(String(d.client||'').trim());
   }), function(d){ return d.numero; },
     function(n){ return 'devis à relancer (envoyé' + (n>1?'s':'') + ' il y a 10 à 30 jours, sans réponse)'; }, 'allerDevis()', '');
+  /* v108 — les échéances du calendrier des obligations, une ligne chacune. */
+  (t.obligations || []).forEach(function(o){
+    var quand = o.jours < 0 ? 'en retard depuis le ' + jjmm(o.echeance) : (o.jours === 0 ? 'aujourd\'hui' : 'le ' + jjmm(o.echeance));
+    ajout('oblig', [o], function(x){ return x.cle; }, o.titre + ' — ' + quand, 'ficheAdministratif()', o.jours < 0 ? 'danger' : (o.jours <= 3 ? 'warn' : ''));
+  });
+  /* v108 — les éléments de paie, du 26 au 3 du mois suivant. */
+  var jm = new Date().getDate();
+  if(estAdmin() && (jm >= 26 || jm <= 3)){
+    var mp = jm >= 26 ? isoJour().slice(0, 7) : isoJour(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 15)).slice(0, 7);
+    ajout('paie', [mp], function(x){ return x; }, 'éléments de paie de ' + nomMois(mp) + ' à envoyer au comptable', 'ficheAdministratif(\'' + mp + '\')', '');
+  }
   return l;
 }
+function jjmm(iso){ var p = String(iso||'').split('-'); return p.length === 3 ? p[2] + '/' + p[1] : iso; }
 
 function ligneJournee(c){
   var s = String(c.statut||'').toUpperCase(), n = natureVue(c.nature);
@@ -4999,7 +5011,8 @@ function accueilHtml(t){
     '<button class="lienTexte" onclick="remiseAFaire(this)">Tout effacer et repartir de zéro</button></div>';
   /* v106 — les onglets du haut sont devenus la barre du bas ; le répertoire
      des clients reste à un appui d'ici. */
-  if(estAdmin()) h += '<button class="btn sec" style="margin-top:8px" onclick="barreAdmin(\'clients\')">Répertoire des clients</button>';
+  if(estAdmin()) h += '<button class="btn sec" style="margin-top:8px" onclick="barreAdmin(\'clients\')">Répertoire des clients</button>' +
+    '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Administratif : échéances, paie, registre</button>';
   return h;
 }
 
@@ -6703,6 +6716,7 @@ function rouvrirFiche(){
   var f = AD_FICHE;
   if(!f) return;
   if(f.type === 'conges'){ peindreConges(); return; }
+  if(f.type === 'admin'){ peindreAdministratif(); return; }
   if(f.type === 'feries'){ peindreFeries(); return; }
   if(f.type === 'contrats') return;
   if(f.type === 'devis'){
@@ -9955,6 +9969,127 @@ function etiquetteConge(iso, classe, long){
   if(!a.ferme && !a.noms.length) return '';
   var txt = a.ferme ? 'Fermé' : (long ? 'Congé · ' + a.noms.join(', ') : 'Congé ' + a.noms.map(function(n){ return n.charAt(0).toUpperCase() + '.'; }).join(' '));
   return '<span class="' + classe + '" title="' + ech(a.ferme ? 'Fermeture' : a.noms.join(', ') + ' en congé') + '">' + ech(txt) + '</span>';
+}
+
+/* ====================== L'ADMINISTRATIF (v108) ======================
+   Les échéances qui approchent (« Fait » passe à la suivante), les éléments
+   de paie d'un mois (absences des salariés, commissions des commerciaux) et
+   les classeurs du dossier « BREIZH BRILLANCE - Administratif ». */
+var PAIE = null, PAIE_MOIS = '';
+function ficheAdministratif(mois){
+  AD_FICHE = {type:'admin', cle:''};
+  montrer('eAd2');
+  $('hTitre').textContent = 'Administratif';
+  erreur(''); window.scrollTo(0,0);
+  var m = mois || PAIE_MOIS || (new Date().getDate() <= 3
+    ? isoJour(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 15)).slice(0, 7) : isoJour().slice(0, 7));
+  if(m !== PAIE_MOIS || !PAIE){ PAIE_MOIS = m; PAIE = null; chargerPaie(); }
+  peindreAdministratif();
+}
+function chargerPaie(){
+  var moi = session();
+  if(!moi || !navigator.onLine) return;
+  var m = PAIE_MOIS;
+  poster({action:'elementsPaie', nom:moi.nom, code:moi.code, appareil:APPAREIL, mois:m}, 40000).then(function(r){
+    if(m !== PAIE_MOIS) return;
+    PAIE = r && r.ok ? r : { erreur: (r && r.erreur) || 'Le bureau n\'a pas répondu.' };
+    if(AD_FICHE && AD_FICHE.type === 'admin') peindreAdministratif();
+  }, function(){ PAIE = { erreur: 'Le bureau n\'a pas répondu.' }; if(AD_FICHE && AD_FICHE.type === 'admin') peindreAdministratif(); });
+}
+function choisirMoisPaie(m){ PAIE_MOIS = m; PAIE = null; chargerPaie(); peindreAdministratif(); }
+function periodeLisible(p){ return p.du === p.au ? 'le ' + jjmm(p.du) : 'du ' + jjmm(p.du) + ' au ' + jjmm(p.au); }
+function textePaie(){
+  var p = PAIE;
+  if(!p || !p.salaries) return '';
+  var t = 'Éléments de paie — ' + nomMois(p.mois) + '\n\nSalariés (jours d\'absence, en jours ouvrables) :\n';
+  p.salaries.forEach(function(s){
+    t += '- ' + s.nom + ' : ' + s.jours + ' jour' + (s.jours > 1 ? 's' : '') +
+      (s.periodes.length ? ' (' + s.periodes.map(periodeLisible).join(', ') + ')' : '') + '\n';
+  });
+  if(p.fermetures.length) t += '- Fermeture de l\'entreprise : ' + p.fermetures.map(periodeLisible).join(', ') + ' (comptée pour chacun)\n';
+  t += '\nCommerciaux (commission brute du mois) :\n';
+  t += p.commerciaux.length ? p.commerciaux.map(function(c){ return '- ' + c.nom + ' : ' + eur(c.commission); }).join('\n') : '- aucune commission';
+  return t + '\n';
+}
+function peindreAdministratif(){
+  var t = TABLEAU || {}, L = t.adminLiens || {}, auj = isoJour();
+  var ob = t.obligations || [];
+  var h = bandeauMot();
+  /* 1. échéances */
+  h += '<div class="card"><h2>Échéances qui approchent</h2>' +
+    (ob.length ? ob.map(function(o){
+      var quand = o.jours < 0 ? '<b style="color:var(--danger)">en retard (' + jjmm(o.echeance) + ')</b>'
+        : (o.jours === 0 ? '<b>aujourd\'hui</b>' : 'le ' + ech(String(jourLisible(o.echeance)).replace(/^./, function(c){ return c.toLowerCase(); })) + ' · dans ' + o.jours + ' j');
+      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)">' +
+        '<div style="flex:1"><b>' + ech(o.titre) + '</b><div class="mini">' + quand + '</div>' +
+        (o.detail ? '<details><summary class="mini">Comment faire</summary><div class="mini">' + ech(o.detail) + '</div></details>' : '') + '</div>' +
+        '<button class="btn sec sm" style="width:auto" onclick="obligationFaite(\'' + ech(o.cle) + '\', this)">Fait</button></div>';
+    }).join('') : '<div class="mini">Rien dans les semaines qui viennent.</div>') +
+    (L.calendrier ? '<a class="btn sec sm" style="margin-top:10px;display:block;text-align:center" href="' + ech(L.calendrier) + '" target="_blank" rel="noopener">Ouvrir le calendrier des obligations</a>' : '') +
+    '</div>';
+  /* 2. paie */
+  var mois = [];
+  for(var k = 0; k < 6; k++){ mois.push(isoJour(new Date(new Date().getFullYear(), new Date().getMonth() - k, 15)).slice(0, 7)); }
+  h += '<div class="card"><div style="display:flex;gap:10px;align-items:center"><h2 style="flex:1;margin:0">Éléments de paie</h2>' +
+    '<select id="paieMois" style="width:auto" onchange="choisirMoisPaie(this.value)">' +
+    mois.map(function(m){ return '<option value="' + m + '"' + (m === PAIE_MOIS ? ' selected' : '') + '>' + ech(nomMois(m)) + '</option>'; }).join('') + '</select></div>';
+  var p = PAIE;
+  if(!p) h += '<div class="mini" style="margin-top:8px">' + (navigator.onLine ? 'Chargement…' : 'Hors connexion : les éléments de paie se calculent au bureau.') + '</div>';
+  else if(p.erreur) h += '<div class="mini" style="margin-top:8px;color:var(--danger)">' + ech(p.erreur) + '</div>';
+  else {
+    h += '<div style="margin-top:10px"><b>Salariés</b> <span class="mini">jours d\'absence (lun.–sam., fériés exclus)</span>' +
+      p.salaries.map(function(s){
+        return '<div style="padding:6px 0;border-bottom:1px solid var(--line);display:flex;gap:8px"><span style="flex:1">' + ech(s.nom) +
+          (s.periodes.length ? '<div class="mini">' + ech(s.periodes.map(periodeLisible).join(', ')) + '</div>' : '') + '</span><b>' + s.jours + ' j</b></div>';
+      }).join('') +
+      (p.fermetures.length ? '<div class="mini" style="margin-top:4px">Fermeture : ' + ech(p.fermetures.map(periodeLisible).join(', ')) + ' (comptée pour chacun)</div>' : '') +
+      '</div><div style="margin-top:12px"><b>Commerciaux</b> <span class="mini">commission brute du mois</span>' +
+      (p.commerciaux.length ? p.commerciaux.map(function(c){
+        return '<div style="padding:6px 0;border-bottom:1px solid var(--line);display:flex;gap:8px"><span style="flex:1">' + ech(c.nom) +
+          '<div class="mini">signé ' + eur(c.signe) + '</div></span><b>' + eur(c.commission) + '</b></div>';
+      }).join('') : '<div class="mini">Aucune commission ce mois-ci.</div>') + '</div>' +
+      '<div class="row" style="gap:8px;margin-top:12px">' +
+        '<button class="btn sec sm" style="flex:1" onclick="copierTexte(this, textePaie())">Copier pour le comptable</button>' +
+        '<button class="btn sec sm" style="flex:1" onclick="ecrireFichierPaie(this)">Mettre dans le fichier</button></div>' +
+      '<div class="mini" style="margin-top:6px">Le fichier « Éléments de paie » se remplit aussi tout seul le dernier jour du mois au soir.' +
+        (L.paie ? ' <a href="' + ech(L.paie) + '" target="_blank" rel="noopener">Ouvrir le fichier</a>' : '') + '</div>';
+  }
+  h += '</div>';
+  /* 3. dossier */
+  var lien = function(u, t2){ return u ? '<a class="btn sec sm" style="display:block;text-align:center;margin-top:8px" href="' + ech(u) + '" target="_blank" rel="noopener">' + t2 + '</a>' : ''; };
+  h += '<div class="card"><h2>Dossier administratif</h2>' +
+    (L.dossier ? lien(L.registre, 'Registre unique du personnel') + lien(L.checklist, 'Check-list d\'embauche') +
+       lien(L.calendrier, 'Calendrier des obligations (et suivi des salariés)') + lien(L.paie, 'Éléments de paie') + lien(L.dossier, 'Le dossier dans Drive')
+     : '<div class="mini">Le dossier n\'est pas encore créé.</div>') + '</div>';
+  h += '<button class="btn sec" style="margin-top:8px" onclick="listeConges()">Les congés</button>' +
+    '<button class="btn sec" style="margin-top:8px" onclick="retourTableau()">Retour au tableau</button>';
+  $('adFiche').innerHTML = h;
+}
+function obligationFaite(cle, btn){
+  var o = ((TABLEAU||{}).obligations||[]).filter(function(x){ return x.cle === cle; })[0];
+  var moi = session();
+  if(!o || !moi) return;
+  if(!navigator.onLine) return erreur('Hors connexion : réessaie au retour du réseau.');
+  occuper(btn, '…');
+  poster({action:'obligationFaite', nom:moi.nom, code:moi.code, appareil:APPAREIL, onglet:o.onglet, ligne:o.ligne, type:o.type || '', echeance:o.echeance}, 40000)
+    .then(function(r){
+      libere(btn);
+      if(!r || !r.ok) return erreur((r && r.erreur) || 'Pas enregistré, recommence.');
+      if(r.obligations) TABLEAU.obligations = r.obligations;
+      try{ lsj('tableau', TABLEAU); }catch(e){}
+      erreur(r.prochaine ? 'Noté. Prochaine échéance le ' + jourLisible(r.prochaine) + '.' : 'Noté.');
+      peindreAdministratif();
+    }, function(){ libere(btn); erreur('Le bureau n\'a pas répondu. Réessaie.'); });
+}
+function ecrireFichierPaie(btn){
+  var moi = session();
+  if(!moi || !navigator.onLine) return erreur('Hors connexion : réessaie au retour du réseau.');
+  occuper(btn, 'Écriture…');
+  poster({action:'paieFichier', nom:moi.nom, code:moi.code, appareil:APPAREIL, mois:PAIE_MOIS}, 60000).then(function(r){
+    libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) || 'Pas écrit, recommence.');
+    erreur('Écrit dans l\'onglet « ' + r.onglet + ' » du fichier Éléments de paie.');
+  }, function(){ libere(btn); erreur('Le bureau n\'a pas répondu. Réessaie.'); });
 }
 
 function listeConges(){
