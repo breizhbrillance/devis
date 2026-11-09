@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v106c';
+var VERSION_APP = 'v106d';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -1503,15 +1503,15 @@ function sujetMailPropose(){
 function texteMailPropose(forcer){
   if(MAIL_TOUCHE && !forcer) return;
   var tu = MAIL_TON === 'tu';
-  var qui = appelMail(tu);
-  var ry = (estRecurrent() && PASSAGES) ? rythmeDe(PASSAGES) : null;
-  var t = 'Bonjour' + (qui ? ' ' + qui : '') + ',\n\n' +
-    (tu ? 'J\'espère que tu vas bien.' : 'J\'espère que vous allez bien.') + '\n\n' +
-    (tu ? 'Je te transmets ci-joint le devis correspondant à ta demande'
-        : 'Suite à mon passage, je vous transmets ci-joint le devis correspondant à votre demande') +
-    (ry ? ', soit ' + ry.mot : '') + '.\n\n' +
-    (tu ? 'N\'hésite pas si tu as la moindre question.' : 'Je reste disponible si vous avez la moindre question.') + '\n\n' +
-    (tu ? 'Belle journée !' : 'Je vous souhaite une agréable journée,');
+  /* v106 — le texte de Simon (9 novembre), mot pour mot : il s'arrête à
+     « Belle journée, » ; « Cordialement, Simon - BREIZH BRILLANCE » et le
+     bandeau sont ajoutés par le bureau. */
+  var t = 'Bonjour,\n\n' +
+    (tu ? 'J\u2019espère que tu vas bien !' : 'J\u2019espère que vous allez bien !') + '\n\n' +
+    'Suite à notre contact,\n\n' +
+    (tu ? 'Je te transmets ci-dessous le devis correspondant à ta demande.'
+        : 'Je vous transmets ci-dessous le devis correspondant à votre demande.') + '\n\n' +
+    'Belle journée,';
   /* v103 — la signature (« CORDIALEMENT, Simon - BREIZH BRILLANCE ») et le
      bandeau sont ajoutés par le bureau, comme dans Gmail : ne pas l'écrire ici,
      sinon le client la lirait deux fois. */

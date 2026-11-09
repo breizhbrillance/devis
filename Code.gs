@@ -7521,23 +7521,20 @@ function corpsMailPerso_(devis, texte, reg) {
 }
 
 function corpsMail_(devis, reg, com, revise) {
-  var qui = echHtml_(appelClient_(devis.client));
-  var tel = echHtml_(String((com && com.tel) || reg.societe_tel || '').trim());
+  /* v106 — le texte de Simon (9 novembre) pour tout envoi de devis sans
+     message personnalisé ; la signature et le bandeau suivent, comme ailleurs. */
   return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1f2937">' +
-    '<p>Bonjour' + (qui ? ' ' + qui : '') + ',</p>' +
-    '<p>J\'espère que vous allez bien !</p>' +
-    '<p>Suite au chiffrage réalisé dernièrement, je vous transmets ci-joint le devis ' +
-    (revise ? 'corrigé ' : '') + 'correspondant à votre demande.</p>' +
+    '<p>Bonjour,</p>' +
+    '<p>J\u2019espère que vous allez bien !</p>' +
+    '<p>Suite à notre contact,</p>' +
+    '<p>Je vous transmets ci-dessous le devis ' + (revise ? 'corrigé ' : '') + 'correspondant à votre demande.</p>' +
     (devis && devis.numero && !devis.signature
       ? '<p style="margin:22px 0"><a href="' + lienSignature_(devis.numero) + '" style="background:#004C92;color:#fff;' +
         'padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold">Signer le devis en ligne</a></p>' +
         '<p style="font-size:12px;color:#6b7280">Un clic, une signature au doigt ou à la souris : c\'est tout. ' +
         'Vous recevrez aussitôt votre copie signée.</p>'
       : '') +
-    '<p>Si vous avez des questions ou quoi que ce soit d\'autre, je reste disponible' +
-    (tel ? ' par téléphone au ' + tel : '') + '.</p>' +
-    '<p>Belle fin de journée,<br>Cordialement,</p>' +
-    '<p>' + echHtml_(nomDocument_(devis.commercial, reg)) + ' — ' + echHtml_(reg.societe_nom) + '</p>' +
+    '<p>Belle journée,</p>' + signatureHtml_(reg) +
     '</div>';
 }
 
