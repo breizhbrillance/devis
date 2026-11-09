@@ -1005,7 +1005,10 @@ function config_(com) {
 }
 
 /** POST {action:'sync', nom, code, devis, pdf(base64)} */
+var PERF_ = null, T0_DOPOST_ = 0;
+function perf_(k) { if (!PERF_) return; var t = Date.now(); PERF_.push(k + ' ' + (t - PERF_.t)); PERF_.t = t; }
 function doPost(e) {
+  T0_DOPOST_ = Date.now();
   var lock = LockService.getScriptLock();
   try {
     var d = JSON.parse(e.postData.contents);
@@ -1134,7 +1137,14 @@ function doPost(e) {
     if (d.action === 'config') {
       return reponse_({ ok: true, config: configPour_(com.role, com) });
     }
-    if (d.action === 'tableau') return reponse_(tableauAdmin_());
+    if (d.action === 'tableau') {
+      /* v106 — le temps de chaque partie du tableau, au journal d'exécution
+         (Apps Script › Exécutions) : pour savoir où passent les secondes. */
+      PERF_ = [String(Date.now() - T0_DOPOST_) + ' ms avant']; PERF_.t = Date.now();
+      var tab = tableauAdmin_();
+      console.log('tableau ' + PERF_.join(' · ') + ' · total ' + (Date.now() - T0_DOPOST_) + ' ms');
+      return reponse_(tab);
+    }
     /* v105 — l'appli n'attend plus la réponse pour fermer la fiche : deux
        créations peuvent donc partir coup sur coup. Le verrou évite qu'elles
        prennent le même numéro CH-, et qu'une ligne réécrite d'un bloc
@@ -2081,6 +2091,7 @@ function tableauAdmin_() {
   });
   devis.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
   if (devis.length > 300) devis = devis.slice(0, 300);
+  perf_('devis');
 
   var hier = new Date(); hier.setDate(hier.getDate() - 30); hier.setHours(0, 0, 0, 0);
   var loin = new Date(); loin.setDate(loin.getDate() + 90);
@@ -2152,6 +2163,7 @@ function tableauAdmin_() {
   /* v93 : le mois entier se lit dans le calendrier — 300 ne tenait plus avec
      les contrats posés sur huit semaines. */
   if (chantiers.length > 900) chantiers = chantiers.slice(0, 900);
+  perf_('chantiers');
 
   /* Le compte ne peut se poser qu'ici : parDevis vient d'être rempli en lisant
      les chantiers, et la liste des devis, elle, a été dressée plus haut. */
@@ -2169,23 +2181,33 @@ function tableauAdmin_() {
   var liste = [];
   for (var k in par) if (par.hasOwnProperty(k)) liste.push(par[k]);
   liste.sort(function (a, b) { return b.htSigne - a.htSigne; });
+  perf_('séries');
+  var gensP = lirePrestataires_().map(function (p) { return p.nom; });
+  var gensC = lireCommerciaux_().map(function (c) { return c.nom; });
+  perf_('équipe');
+  var ignT = ignoresAFaire_(), absT = absencesPourAdmin_();
+  perf_('à faire+congés');
+  var recT = recurrentsPourAdmin_();
+  perf_('contrats');
+  var cliT = clientsPourAdmin_();
+  perf_('clients');
 
   return {
     ok: true, maj: new Date().getTime(), fenetre: jours,
     chiffres: chiffres, parCommercial: liste,
     devis: devis, chantiers: chantiers,
-    prestataires: lirePrestataires_().map(function (p) { return p.nom; }),
-    commerciaux: lireCommerciaux_().map(function (c) { return c.nom; }),
+    prestataires: gensP,
+    commerciaux: gensC,
     /* Les contrats, et jusqu'où leurs passages sont déjà posés : au-delà,
        l'écran du gérant les prolonge lui-même en pointillé, comme un agenda
        montre une répétition sans fin. */
     /* v102 — ce que « À faire » a mis de côté lors de la dernière remise à zéro. */
-    aFaireIgnores: ignoresAFaire_(),
+    aFaireIgnores: ignT,
     /* v104 — les congés en cours et à venir : le planning les montre, et les
        dates que l'appli propose les évitent. */
-    absences: absencesPourAdmin_(),
-    recurrents: recurrentsPourAdmin_(),
-    clients: clientsPourAdmin_(),
+    absences: absT,
+    recurrents: recT,
+    clients: cliT,
     horizon: (function () {
       var h = new Date(); h.setDate(h.getDate() + semainesRecurrents_(reg) * 7);
       return isoJour_(h);
