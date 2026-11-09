@@ -1029,7 +1029,7 @@ function doPost(e) {
                    'mesDevis', 'devisArchive',
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
-                   'absenceAjouter', 'absenceRetirer'];
+                   'absenceAjouter', 'absenceRetirer', 'commissions'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1086,14 +1086,16 @@ function doPost(e) {
          'aFaireRemise', 'recurrentRenouveler',
          /* v104 — les congés des salariés, saisis par le gérant. */
          'absenceAjouter', 'absenceRetirer',
-         'mesDevis', 'devisArchive']
+         'mesDevis', 'devisArchive', 'commissions']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
            'prospects', 'appel', 'historique',
            /* Ses devis à lui, relus dans le classeur : l'action filtre sur
               son nom, elle ne sait pas rendre ceux d'un autre. */
-           'mesDevis', 'devisArchive', 'lienSignature'];
+           'mesDevis', 'devisArchive', 'lienSignature',
+           /* v107 — son chiffre, ses commissions et le total de la société. */
+           'commissions'];
     /* Le commercial qui fait aussi des chantiers lit son planning et pointe.
        On ne lui ouvre que ces deux actions, et seulement s'il figure vraiment
        parmi les prestataires : c'est la liste qui protège, pas l'écran. Et
@@ -1185,6 +1187,7 @@ function doPost(e) {
       return reponse_(facturesDuMois_(d, com));
     }
     if (d.action === 'mesDevis') return reponse_(mesDevis_(d, com));
+    if (d.action === 'commissions') return reponse_(commissions_(d, com));
     if (d.action === 'suggestions') return reponse_(suggestionsPlacement_(d));
     if (d.action === 'lienSignature') return reponse_(lienSignatureAppli_(d, com));
     if (d.action === 'devisArchive') return reponse_(devisArchive_(d, com));
@@ -10598,6 +10601,131 @@ function miseEnPlaceV103() {
    taux de renouvellement sur les 3 premières reconductions. Ponctuel : % du HT. */
 var COMMISSIONS_DEFAUT_ = 'CONTRAT_PART=5;CONTRAT_PRO=6;RENOUV_PART=2;RENOUV_PRO=3;RENOUV_MAX=3;' +
   'VITRERIE_PART=6;VITRERIE_PRO=7;CHANTIER=8;REMISE=8;FACADE=8;BASE_CONTRAT_MOIS=12';
+
+/* ====================== LES COMMISSIONS (v107) ======================
+   Simon, 9 novembre 2026 : « il faut que les commerciaux voient leur propre
+   chiffre et le chiffre généré au total […] il faudra aussi qu'ils puissent
+   voir leur commission brute mensuelle selon les contrats qu'ils ont
+   rapportés ; commissions calculées automatiquement selon tes taux ».
+   Le calcul se fait ici, seul endroit qui voit tous les devis (le total de la
+   société) et les contrats (les reconductions) :
+   — un devis signé compte le mois de sa signature (DATE_STATUT, à défaut la
+     date du devis). Contrat : % de la 1re année (mensuel × 12) ; ponctuel :
+     % du HT. Les essais au nom de la société ne comptent pas ;
+   — une reconduction compte le mois de l'anniversaire du contrat (DÉBUT +
+     k × durée d'engagement), si le contrat court au-delà (FIN), pour les
+     RENOUV_MAX premières seulement, au taux de renouvellement ;
+   — le commercial reçoit ses lignes et le total de la société (jamais le
+     détail des autres) ; le gérant reçoit aussi le relevé par commercial.
+   Prévu pour deux sociétés : la réponse porte le nom de la société, l'appli
+   additionnera celle de Breizh Brillance Services quand elle existera. */
+function tauxCommissions_() {
+  var s = String(lireReglages_().commissions || COMMISSIONS_DEFAUT_);
+  var t = {};
+  s.split(/\s*;\s*/).forEach(function (p) {
+    var m = p.match(/^([A-Z_]+)\s*=\s*([\d.,]+)$/i);
+    if (m) t[m[1].toUpperCase()] = Number(m[2].replace(',', '.'));
+  });
+  return t;
+}
+function commissionLigne_(o, t) {
+  var nat = natureDevis_(o.NATURE), part = /^PART/i.test(String(o.TYPE_CLIENT || ''));
+  var mensuel = Number(o.TOTAL_HT_MENSUEL) || 0;
+  if (recurrentDevis_(o.NATURE, o.PASSAGES_MOIS, o.SANS_CONTRAT) && mensuel > 0) {
+    var base = Math.round(mensuel * (t.BASE_CONTRAT_MOIS || 12) * 100) / 100;
+    var taux = (part ? t.CONTRAT_PART : t.CONTRAT_PRO) || 0;
+    return { contrat: true, part: part, nature: nat, base: base, taux: taux,
+             com: Math.round(base * taux) / 100, tauxR: (part ? t.RENOUV_PART : t.RENOUV_PRO) || 0, mensuel: mensuel };
+  }
+  var tx = nat === 'VITRERIE' ? ((part ? t.VITRERIE_PART : t.VITRERIE_PRO) || 0) : (t[nat] || t.REMISE || 0);
+  var b = Number(o.TOTAL_HT) || 0;
+  return { contrat: false, part: part, nature: nat, base: b, taux: tx, com: Math.round(b * tx) / 100 };
+}
+function commissions_(d, com) {
+  var t = tauxCommissions_();
+  var admin = String(com.role || '') === 'ADMIN';
+  var moi = normNom_(com.nom);
+  var auj = new Date();
+  var nbMois = Math.min(Math.max(Number(d.mois) || 12, 1), 36);
+  var cles = [];
+  for (var k = 0; k < nbMois; k++) {
+    var x = new Date(auj.getFullYear(), auj.getMonth() - k, 1, 12);
+    cles.push(Utilities.formatDate(x, 'Europe/Paris', 'yyyy-MM'));
+  }
+  var an = Utilities.formatDate(auj, 'Europe/Paris', 'yyyy');
+  var debut = cles[cles.length - 1] < an + '-01' ? cles[cles.length - 1] : an + '-01';
+  var moisDe = function (v) {
+    var dt = v instanceof Date ? v : (v ? new Date(v) : null);
+    return dt && !isNaN(dt.getTime()) ? Utilities.formatDate(dt, 'Europe/Paris', 'yyyy-MM') : '';
+  };
+  var admins = {};
+  try { lireAdmins_().forEach(function (a) { admins[normNom_(a.nom)] = true; }); } catch (eA) {}
+
+  var societe = {}, lignes = [], parDevis = {};
+  var ajouter = function (o, l) {
+    var c = String(o.COMMERCIAL || '').trim();
+    l.commercial = c;
+    if (admin || normNom_(c) === moi) lignes.push(l);
+  };
+  objetsDe_(SH.DEVIS).forEach(function (o) {
+    var num = String(o.NUMERO || '').trim();
+    if (!num || String(o.STATUT || '').toUpperCase().trim() !== 'SIGNE' || devisEssai_(o)) return;
+    parDevis[num] = o;
+    var m = moisDe(o.DATE_STATUT) || moisDe(o.DATE);
+    if (!m || m < debut) return;
+    var c = commissionLigne_(o, t);
+    var s = societe[m] || (societe[m] = { ca: 0, n: 0 });
+    s.ca = Math.round((s.ca + c.base) * 100) / 100; s.n++;
+    ajouter(o, { mois: m, type: 'signature', numero: num, client: String(o.CLIENT || ''), nature: c.nature,
+                 part: c.part, contrat: c.contrat, mensuel: c.mensuel || 0, base: c.base, taux: c.taux, com: c.com });
+  });
+
+  /* Les reconductions des contrats issus d'un devis. */
+  var max = Math.round(t.RENOUV_MAX || 0);
+  if (max > 0) objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    var o = parDevis[String(r.DEVIS || '').trim()];
+    if (!o || !r.DEBUT) return;
+    var c = commissionLigne_(o, t);
+    if (!c.contrat || !c.tauxR) return;
+    var deb = new Date(r.DEBUT), fin = r.FIN ? new Date(r.FIN) : null;
+    if (isNaN(deb.getTime())) return;
+    var duree = Math.round(Number(r.ENGAGEMENT_MOIS) || Number(o.ENGAGEMENT_MOIS) || 12);
+    for (var k = 1; k <= max; k++) {
+      var anniv = new Date(deb.getFullYear(), deb.getMonth() + k * duree, deb.getDate(), 12);
+      if (anniv > auj) break;
+      if (!fin || isNaN(fin.getTime()) || fin < minuit_(anniv)) break;
+      var m = moisDe(anniv);
+      if (m < debut) continue;
+      ajouter(o, { mois: m, type: 'reconduction', rang: k, numero: String(o.NUMERO || '').trim(),
+                   client: String(r.CLIENT || o.CLIENT || ''), nature: c.nature, part: c.part, contrat: true,
+                   mensuel: c.mensuel, base: c.base, taux: c.tauxR, com: Math.round(c.base * c.tauxR) / 100 });
+    }
+  });
+
+  lignes.sort(function (a, b) { return a.mois < b.mois ? 1 : (a.mois > b.mois ? -1 : 0); });
+  var resume = function (liste) {
+    var r = {};
+    liste.forEach(function (l) {
+      var x = r[l.mois] || (r[l.mois] = { ca: 0, com: 0, n: 0 });
+      if (l.type === 'signature') { x.ca = Math.round((x.ca + l.base) * 100) / 100; x.n++; }
+      x.com = Math.round((x.com + l.com) * 100) / 100;
+    });
+    return r;
+  };
+  var miennes = lignes.filter(function (l) { return normNom_(l.commercial) === moi; });
+  var out = { ok: true, societe: String(lireReglages_().societe_nom || 'BREIZH BRILLANCE'), mois: cles, an: an,
+              moi: resume(miennes), total: societe, lignes: miennes, taux: t, maj: Date.now() };
+  if (admin) {
+    var par = {};
+    lignes.forEach(function (l) {
+      var n = l.commercial || '(sans commercial)';
+      if (admins[normNom_(n)]) return;           // le gérant ne se commissionne pas
+      (par[n] || (par[n] = [])).push(l);
+    });
+    out.commerciaux = Object.keys(par).sort().map(function (n) { return { nom: n, mois: resume(par[n]), lignes: par[n] }; });
+  }
+  return out;
+}
 
 
 

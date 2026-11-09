@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v106e';
+var VERSION_APP = 'v107';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -9765,9 +9765,10 @@ function enteteDevisAdmin(){
       if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'devis') peindreTableau();
     }, function(){});
   }
+  chargerCommissions(false);
   var h = chiffresHtml();
   var att = DEVIS_A_ENVOYER;
-  return (h ? '<div class="card">' + h + '</div>' : '') +
+  return (h ? '<div class="card">' + h + '</div>' : '') + commissionsAdminHtml() +
     (att ? '<div class="card" style="border-color:var(--warn)"><b>' + att + ' devis sur ce téléphone pas encore parti' + (att > 1 ? 's' : '') +
       ' au bureau</b><button class="btn sec sm" style="margin-top:8px" onclick="synchroniser(true, this)">Envoyer maintenant</button></div>' : '');
 }
@@ -9783,10 +9784,114 @@ function compterDevisAEnvoyer(){
 function peindreChiffresCommercial(){
   var z = $('mesChiffres');
   if(!z) return;
+  if(ECRAN_VU === 'e6') chargerCommissions(false);
   var h = chiffresHtml();
   z.innerHTML = h; z.classList.toggle('hide', !h);
 }
+/* ---- v107 — le chiffre et les commissions, calculés au bureau ----
+   « Les commerciaux voient leur propre chiffre et le chiffre généré au total,
+   et leur commission brute mensuelle selon les contrats qu'ils ont rapportés. »
+   Le bureau rend : ses lignes (signatures et reconductions, mois par mois), le
+   total de la société, et pour le gérant le relevé de chaque commercial. Gardé
+   sur le téléphone pour s'afficher hors connexion. */
+var COMM = null, COMM_DEMANDE = 0, COMM_MOIS_ADMIN = '';
+try{ COMM = JSON.parse(localStorage.getItem('bb_commissions') || 'null'); }catch(e){ COMM = null; }
+function chargerCommissions(force){
+  var moi = session();
+  if(!moi || !navigator.onLine) return;
+  if(!force && Date.now() - COMM_DEMANDE < 120000) return;
+  COMM_DEMANDE = Date.now();
+  poster({action:'commissions', nom:moi.nom, code:moi.code, appareil:APPAREIL, mois:12}, 40000).then(function(r){
+    if(!r || !r.ok) return;
+    r.pour = moi.nom;
+    COMM = r;
+    try{ localStorage.setItem('bb_commissions', JSON.stringify(r)); }catch(e){}
+    if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'devis') peindreTableau();
+    try{ peindreChiffresCommercial(); }catch(e){}
+  }, function(){});
+}
+function commValide(){
+  var moi = session();
+  return COMM && moi && Array.isArray(COMM.mois) && normNom(COMM.pour || '') === normNom(moi.nom) ? COMM : null;
+}
+function nomMois(m){
+  var p = String(m || '').split('-');
+  return p.length === 2 ? MOIS_NOM[Number(p[1]) - 1] + ' ' + p[0] : m;
+}
+function sommeAn(par, an){
+  var r = { ca: 0, com: 0, n: 0 };
+  Object.keys(par || {}).forEach(function(m){
+    if(m.slice(0, 4) !== String(an)) return;
+    r.ca += Number(par[m].ca) || 0; r.com += Number(par[m].com) || 0; r.n += Number(par[m].n) || 0;
+  });
+  return r;
+}
+function ligneCommHtml(l){
+  var nat = natureVue(l.nature) ? natureVue(l.nature).nom : (l.nature || '');
+  var calc = l.type === 'reconduction'
+    ? 'Reconduction n° ' + l.rang + ' · ' + eur(l.base) + '/an × ' + nb(l.taux) + ' %'
+    : (l.contrat ? 'Contrat ' + eur(l.mensuel) + '/mois → ' + eur(l.base) + ' la 1re année × ' + nb(l.taux) + ' %'
+                 : eur(l.base) + ' HT × ' + nb(l.taux) + ' %');
+  return '<div style="padding:6px 0;border-bottom:1px solid var(--line)"><b>' + ech(l.client) + '</b> <span class="mini">' +
+    ech(nat) + (l.part ? ' · particulier' : ' · pro') + '</span>' +
+    '<div class="mini">' + calc + ' = <b>' + eur(l.com) + '</b></div></div>';
+}
 function chiffresHtml(){
+  var c = commValide();
+  if(!c) return chiffresHtmlAncien();
+  var mois = (c.mois || [])[0] || isoJour().slice(0, 7), an = c.an || isoJour().slice(0, 4);
+  var mm = (c.moi || {})[mois] || { ca: 0, com: 0, n: 0 }, ma = sommeAn(c.moi, an);
+  var sm = (c.total || {})[mois] || { ca: 0, n: 0 }, sa = sommeAn(c.total, an);
+  var tuile = function(titre, ca, com, n){
+    return '<div class="card" style="flex:1;margin:0"><div class="mini">' + titre + '</div><b style="font-size:18px">' + eur(ca) + '</b>' +
+      '<div class="mini">signé HT' + (n != null ? ' · ' + n + ' devis' : '') + '</div>' +
+      (com != null ? '<div class="mini">commission brute <b>' + eur(com) + '</b></div>' : '') + '</div>';
+  };
+  var parMois = (c.mois || []).filter(function(m){ return (c.moi || {})[m]; }).map(function(m){
+    var x = c.moi[m];
+    var ls = (c.lignes || []).filter(function(l){ return l.mois === m; });
+    return '<details style="margin-top:6px"><summary><b>' + ech(nomMois(m)) + '</b> · commission brute <b>' + eur(x.com) + '</b>' +
+      ' <span class="mini">(signé ' + eur(x.ca) + ')</span></summary>' + ls.map(ligneCommHtml).join('') + '</details>';
+  }).join('');
+  /* Le gérant ne se commissionne pas : chez lui, le chiffre de la société. */
+  if(c.commerciaux) return '<div style="display:flex;gap:10px;align-items:baseline"><h2 style="flex:1;margin:0">Chiffre de la société</h2>' +
+      '<button class="btn sec sm" onclick="chargerCommissions(true)">Actualiser</button></div>' +
+    '<div class="mini" style="margin-top:4px">' + ech(c.societe || '') + ' · devis signés, contrats comptés sur leur 1re année</div>' +
+    '<div class="row" style="gap:8px;margin-top:8px">' + tuile('Ce mois-ci', sm.ca, null, sm.n) + tuile('Depuis janvier', sa.ca, null, sa.n) + '</div>';
+  return '<div style="display:flex;gap:10px;align-items:baseline"><h2 style="flex:1;margin:0">Mon chiffre</h2>' +
+      '<button class="btn sec sm" onclick="chargerCommissions(true)">Actualiser</button></div>' +
+    '<div class="row" style="gap:8px;margin-top:8px">' + tuile('Ce mois-ci', mm.ca, mm.com, mm.n) + tuile('Depuis janvier', ma.ca, ma.com, ma.n) + '</div>' +
+    '<div class="mini" style="margin:12px 0 4px"><b>Toute la société</b> — ' + ech(c.societe || '') + '</div>' +
+    '<div class="row" style="gap:8px">' + tuile('Ce mois-ci', sm.ca, null, sm.n) + tuile('Depuis janvier', sa.ca, null, sa.n) + '</div>' +
+    '<div style="margin-top:12px"><b>Mes commissions mois par mois</b>' +
+      (parMois || '<div class="mini">Pas encore de devis signé sur les 12 derniers mois.</div>') + '</div>' +
+    '<div class="mini" style="margin-top:8px">Brut, calculé par le bureau aux taux fixés par la direction : un devis compte le mois de sa signature ' +
+      '(contrat : % de la 1re année), une reconduction le mois de l\'anniversaire du contrat.' +
+      (c.maj ? ' Mis à jour le ' + ech(jjmmaa(isoJour(new Date(c.maj)))) + '.' : '') + '</div>';
+}
+/* Le relevé du gérant : par commercial, pour le mois choisi. */
+function commissionsAdminHtml(){
+  var c = commValide();
+  if(!c || !c.commerciaux) return '';
+  var mois = COMM_MOIS_ADMIN && (c.mois || []).indexOf(COMM_MOIS_ADMIN) >= 0 ? COMM_MOIS_ADMIN : (c.mois || [])[0];
+  var tot = 0;
+  var lignes = c.commerciaux.map(function(x){
+    var r = (x.mois || {})[mois];
+    if(!r) return '';
+    tot += Number(r.com) || 0;
+    var ls = (x.lignes || []).filter(function(l){ return l.mois === mois; });
+    return '<details style="margin-top:6px"><summary><b>' + ech(x.nom) + '</b> · <b>' + eur(r.com) + '</b> <span class="mini">(signé ' + eur(r.ca) +
+      ', ' + r.n + ' devis)</span></summary>' + ls.map(ligneCommHtml).join('') + '</details>';
+  }).join('');
+  return '<div class="card"><div style="display:flex;gap:10px;align-items:center"><h2 style="flex:1;margin:0">Commissions des commerciaux</h2>' +
+      '<select id="commMois" onchange="COMM_MOIS_ADMIN=this.value;peindreTableau()" style="width:auto">' +
+      (c.mois || []).map(function(m){ return '<option value="' + m + '"' + (m === mois ? ' selected' : '') + '>' + ech(nomMois(m)) + '</option>'; }).join('') +
+      '</select></div>' +
+    (lignes ? lignes + '<div style="margin-top:8px">Total brut du mois : <b>' + eur(tot) + '</b></div>'
+            : '<div class="mini" style="margin-top:8px">Aucune commission sur ce mois.</div>') +
+    '<div class="mini" style="margin-top:6px">Le gérant ne se commissionne pas : ses propres devis comptent dans le total de la société seulement.</div></div>';
+}
+function chiffresHtmlAncien(){
   var t = tauxCommission();
   var signes = (typeof ARCH !== 'undefined' && ARCH ? ARCH : []).filter(function(d){ return String(d.statut).toUpperCase() === 'SIGNE'; });
   if(!signes.length) return '';
