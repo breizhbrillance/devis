@@ -15,7 +15,8 @@ var REMISE = {valeur:0, muet:false};
 var NATURE = null;      // 'ENTRETIEN' | 'VITRERIE' | 'FACADE' | 'CHANTIER' | 'REMISE'
 var ETAT = 'NORMAL';    // état du site constaté : 'NORMAL' | 'TRES_SALE'
 var PASSAGES = 0;       // par mois, seulement pour un entretien
-var ENGAGEMENT = { mois: 0, tacite: true };   // v103 — durée d'engagement d'un contrat
+var ENGAGEMENT = { mois: 0, tacite: true };
+var SANS_CONTRAT = false;   // v106 — « Entretien des locaux (sans contrat) »   // v103 — durée d'engagement d'un contrat
 var ETAPE = 1;
 var TYPE = null;           // 'PRO' ou 'PART' — choisi au début de chaque devis
 var PLUS2ANS = null;       // particulier : logement de plus de deux ans (true/false)
@@ -360,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v105';
+var VERSION_APP = 'v106';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -599,12 +600,32 @@ function majOnglets(){
   $('ongPl').classList.toggle('hide', !(CFG && CFG.planning));
   /* L'onglet du tableau n'existe pas dans une page servie avant la v82 : on ne
      tombe pas pour autant. */
-  var oT = $('ongT');
-  if(oT){ oT.classList.toggle('hide', !estAdmin()); oT.classList.toggle('on', ou === 'tableau'); }
+  var oT = $('ongT'), adm = estAdmin();
+  if(oT){ oT.classList.toggle('hide', !adm); oT.classList.toggle('on', ou === 'tableau' && (AD_ONGLET === 'aujourdhui' || AD_ONGLET === 'clients')); }
+  /* v106 — le gérant : Tableau · Planning · Devis · Factures · Phoning. */
+  ['ongAPl','ongADv','ongAF'].forEach(function(k){ if($(k)) $(k).classList.toggle('hide', !adm); });
+  if(adm){
+    /* v106 — « enlève complètement l'onglet Phoning » (barre du gérant). */
+    $('ongD').classList.add('hide'); $('ongL').classList.add('hide'); $('ongPl').classList.add('hide'); $('ongP').classList.add('hide');
+    var surT = ou === 'tableau' || ou === 'devis' || ou === 'liste';
+    if($('ongAPl')) $('ongAPl').classList.toggle('on', surT && AD_ONGLET === 'chantiers');
+    if($('ongADv')) $('ongADv').classList.toggle('on', (ou === 'tableau' && AD_ONGLET === 'devis') || ou === 'devis' || ou === 'liste');
+    if($('ongAF')) $('ongAF').classList.toggle('on', ou === 'tableau' && AD_ONGLET === 'factures');
+  } else {
+    $('ongD').classList.remove('hide'); $('ongL').classList.remove('hide');
+  }
   $('ongD').classList.toggle('on', ou === 'devis');
   $('ongL').classList.toggle('on', ou === 'liste');
   $('ongP').classList.toggle('on', ou === 'phoning');
   $('ongPl').classList.toggle('on', ou === 'planning');
+}
+/* Un bouton de la barre du gérant : le tableau, sur le bon onglet. */
+function barreAdmin(quoi){
+  if(quoi === 'devis') compterDevisAEnvoyer();
+  if(ECRAN_VU !== 'eAd1') ecranAdmin();
+  ongletAdmin(quoi);
+  try{ majOnglets(); }catch(e){}
+  window.scrollTo(0,0);
 }
 /* L'onglet « Devis » reprend le devis en cours là où il en était ; il n'en
    commence pas un neuf, qui effacerait la saisie entamée. */
@@ -840,7 +861,7 @@ function ouvrirVerdict(id){
    à saisir et donc un « Continuer » à offrir. */
 function barreVisible(){
   if(ETAPE >= 5) return false;
-  if(ETAPE === 1) return estEntretien() || estVitrerie();
+  if(ETAPE === 1) return (estEntretien() && !SANS_CONTRAT) || estVitrerie();
   return true;
 }
 
@@ -903,7 +924,7 @@ function suivant(){
   if(ETAPE===4){
     // La question revient ici si elle est restée sans réponse sur le premier
     // écran : sans elle, pas de montant mensuel ni de chantiers à créer.
-    if(estEntretien() && !PASSAGES){
+    if(estEntretien() && !SANS_CONTRAT && !PASSAGES){
       $('cFreq').classList.remove('hide');
       var ch = $('fPassages4'); if(ch){ ch.focus(); }
       return erreur('Quel rythme de passages ? Le devis doit être mensualisé (moyenne sur 52 semaines).');
@@ -1289,6 +1310,11 @@ function choisirType(t){
 }
 
 function choisirNature(n){
+  /* v106 — l'entretien sans contrat garde le catalogue de l'entretien (la
+     nature reste ENTRETIEN) mais ne se mensualise jamais et ne fait pas de
+     contrat : il se vend comme une intervention. */
+  SANS_CONTRAT = (n === 'ENTRETIEN_SC');
+  if(SANS_CONTRAT){ n = 'ENTRETIEN'; PASSAGES = 0; }
   NATURE = n;
   if(n !== 'ENTRETIEN' && n !== 'VITRERIE') PASSAGES = 0;
   var retirees = purgerSelonNature();
@@ -1300,7 +1326,7 @@ function choisirNature(n){
   sauverBrouillon();
   // Sur un entretien on reste : le commercial a un champ à remplir sous les
   // yeux. Sur une intervention il n'y a plus rien à dire ici.
-  if(n !== 'ENTRETIEN' && n !== 'VITRERIE') etape(2);
+  if((n !== 'ENTRETIEN' && n !== 'VITRERIE') || SANS_CONTRAT) etape(2);
 }
 
 /* v97 — demande de Simon : « quand on fait un devis, bien mettre sur 52
@@ -1315,6 +1341,8 @@ var RYTHMES = [
   { v: 13,    mot: '3 fois par semaine',      calc: '3 passages par semaine × 52 semaines ÷ 12 mois' },
   { v: 17.33, mot: '4 fois par semaine',      calc: '4 passages par semaine × 52 semaines ÷ 12 mois' },
   { v: 21.67, mot: '5 fois par semaine',      calc: '5 passages par semaine × 52 semaines ÷ 12 mois' },
+  { v: 26,    mot: '6 fois par semaine',      calc: '6 passages par semaine × 52 semaines ÷ 12 mois' },
+  { v: 30.33, mot: '7 fois par semaine',      calc: '7 passages par semaine × 52 semaines ÷ 12 mois' },
   { v: 2.17,  mot: 'toutes les 2 semaines',   calc: '26 passages par an ÷ 12 mois' },
   { v: 1,     mot: '1 fois par mois',         calc: '' },
   { v: 0.5,   mot: 'tous les 2 mois',         calc: '6 passages par an ÷ 12 mois' },
@@ -1365,14 +1393,15 @@ function majNature(){
   $('blocNature').classList.toggle('hide', !TYPE);
   // L'entretien des locaux ne se propose qu'au professionnel.
   $('chENT').classList.toggle('hide', !pro);
-  $('chENT').classList.toggle('on', NATURE === 'ENTRETIEN');
+  $('chENT').classList.toggle('on', NATURE === 'ENTRETIEN' && !SANS_CONTRAT);
+  if($('chENS')){ $('chENS').classList.toggle('hide', !pro); $('chENS').classList.toggle('on', NATURE === 'ENTRETIEN' && SANS_CONTRAT); }
   $('chVIT').classList.toggle('on', NATURE === 'VITRERIE');
   $('chFAC').classList.toggle('on', NATURE === 'FACADE');
   $('chCHA').classList.toggle('on', NATURE === 'CHANTIER');
   $('chREM').classList.toggle('on', NATURE === 'REMISE');
   /* Un entretien est toujours au contrat ; une vitrerie se vend au contrat ou
      en une fois, et c'est le champ laissé vide qui dit « une fois ». */
-  $('blocFreq').classList.toggle('hide', NATURE !== 'ENTRETIEN' && NATURE !== 'VITRERIE');
+  $('blocFreq').classList.toggle('hide', (NATURE !== 'ENTRETIEN' && NATURE !== 'VITRERIE') || SANS_CONTRAT);
   var lf = $('lFreq'), mf = $('mFreq');
   if(lf) lf.textContent = 'Rythme des passages';
   if(mf) mf.textContent = estVitrerie()
@@ -1440,7 +1469,7 @@ function estMajorableKm(){ return estEntretien() || estVitrerie() || estFacade()
    seulement si elle est vendue au contrat. C'est cette question, et non la
    nature seule, qui commande la mensualisation du total et la planification. */
 function estRecurrent(){
-  return estEntretien() || (estVitrerie() && PASSAGES > 0);
+  return (estEntretien() && !SANS_CONTRAT) || (estVitrerie() && PASSAGES > 0);
 }
 
 /* v100 — LE MAIL AU CLIENT, À SA MANIÈRE.
@@ -3119,7 +3148,7 @@ function sauverBrouillon(){
                     plus2ans:PLUS2ANS, taux:TAUX, dateSouhaitee:val('fDate'),
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
-                    nature:NATURE, passages:PASSAGES, etat:ETAT, engagement:ENGAGEMENT,
+                    nature:NATURE, sansContrat:SANS_CONTRAT, passages:PASSAGES, etat:ETAT, engagement:ENGAGEMENT,
                     km:KM, kmAuto:KM_AUTO, origine:ORIGINE, lieu:LIEU,
                     modif:MODIF});
 }
@@ -3133,6 +3162,7 @@ function restaurer(b){
   recalerLibreSeq();
   ETAT = (b.etat === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';   // l'ancien palier « sale » n'existe plus
   NATURE = b.nature || null;
+  SANS_CONTRAT = !!b.sansContrat;
   PASSAGES = Number(b.passages) || 0;
   KM = (b.km === undefined || b.km === null) ? '' : String(b.km);
   KM_AUTO = b.kmAuto !== false;
@@ -3329,6 +3359,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       origine: ORIGINE,                       // 'PROSPECTION' | 'ENTRANT', pour le suivi
       lieuSignature: TYPE === 'PART' ? LIEU : '',   // commande le formulaire de rétractation
       passages: estRecurrent() ? PASSAGES : 0,
+      sansContrat: NATURE === 'ENTRETIEN' && SANS_CONTRAT,
       engagement: estRecurrent() ? { mois: ENGAGEMENT.mois, tacite: ENGAGEMENT.tacite } : null,
       notes: val('fNotes'),
       signataire: val('fSignataire'),
@@ -3862,6 +3893,9 @@ function peindreMois(){
   s.classList.toggle('hide', !l.length);
 }
 function ouvrirHistorique(){
+  /* v106 — pour le gérant, « Mes devis » est l'onglet Devis du tableau (même
+     liste, « Mon chiffre » au-dessus, « Nouveau devis »). */
+  if(estAdmin()){ if(ETAPE >= 1 && ETAPE <= 5) ECRAN_AVANT = ETAPE; return barreAdmin('devis'); }
   if(ETAPE >= 1 && ETAPE <= 5) ECRAN_AVANT = ETAPE;
   ETAPE=6; montrer('e6');
   majBandeauModif();            // on quitte le parcours : le rappel n'a plus lieu d'être
@@ -3892,6 +3926,7 @@ function rendreHistorique(){
     });
     MOIS_LOCAUX = {};
     l.forEach(function(e){ var m = moisDe(e.cree); if(m) MOIS_LOCAUX[m] = 1; });
+
     peindreMois();
     rendreArchive();
     var tout = l.length;
@@ -4052,6 +4087,7 @@ function ouvrirModification(id, btn){
     REMISE = {valeur: Number(d.remise) || 0, muet: false};
     LIGNES.forEach(function(l){ if(l.remMuet) REMISE.muet = true; });
     NATURE = d.nature || NATURE;
+    SANS_CONTRAT = !!d.sansContrat;
     PASSAGES = Number(d.passages) || 0;
     KM = (d.km === undefined || d.km === null) ? '' : String(d.km);
     KM_AUTO = false;                // la distance du devis, pas celle d'aujourd'hui
@@ -4134,6 +4170,7 @@ function dupliquerEnr(e){
     });
     recalerLibreSeq();
     NATURE = d.nature || NATURE;
+    SANS_CONTRAT = !!d.sansContrat;
     PASSAGES = Number(d.passages) || 0;
     KM = (d.km === undefined || d.km === null) ? '' : String(d.km);
     KM_AUTO = true;
@@ -4811,71 +4848,77 @@ function allerDevis(){ ongletAdmin('devis'); window.scrollTo(0,0); }
 
 function taches(t){
   t = sansIgnores(t);
+  /* v106 — « Tout effacer et repartir de zéro » vide vraiment la liste :
+     chaque élément a sa clé (« ferie:CH-0251 », « contrat:DEV-… »…), la
+     remise à zéro les met toutes de côté, et seuls les éléments apparus
+     ensuite s'affichent. */
+  var ign = {};
+  ((t.aFaireIgnores && t.aFaireIgnores.cles) || []).forEach(function(k){ ign[k] = 1; });
   var auj = isoJour(), hier = isoJour(new Date(Date.now() - 86400000));
   var ch = (t.chantiers||[]).filter(function(c){ return !estAnnule(c); });
   var st = function(c){ return String(c.statut||'').toUpperCase(); };
   var l = [];
-  var sansDate = ch.filter(function(c){ return !c.date; }).length;
-  if(sansDate) l.push({ n:sansDate, mot:'intervention' + (sansDate>1?'s':'') + ' à placer dans le planning',
-                         go:"allerAPlacer()", ton:'warn' });
-  var sansQui = ch.filter(function(c){ return c.date && c.date >= auj && !c.prestataire; }).length;
-  if(sansQui) l.push({ n:sansQui, mot:'intervention' + (sansQui>1?'s':'') + ' sans personne pour la faire',
-                        go:"allerAPlacer()", ton:'warn' });
-  var oublis = ch.filter(function(c){ return c.date && c.date.slice(0,10) === hier && st(c) !== 'FAIT'; }).length;
-  if(oublis) l.push({ n:oublis, mot:'intervention' + (oublis>1?'s':'') + ' d\'hier pas pointée' + (oublis>1?'s':'') +
-                       ' (faite ou pas ?)', go:"allerPlanning('liste')", ton:'danger' });
-  var soucis = ch.filter(function(c){ return st(c) === 'PROBLEME' || String(c.signalement||'').trim(); })
-    .filter(function(c){ return !c.date || c.date >= isoJour(new Date(Date.now() - 7*86400000)); }).length;
-  if(soucis) l.push({ n:soucis, mot:'problème' + (soucis>1?'s':'') + ' signalé' + (soucis>1?'s':'') + ' par l\'équipe cette semaine',
-                       go:"allerPlanning('liste')", ton:'danger' });
+  var ajout = function(type, liste, cle, texte, go, ton){
+    var restes = liste.filter(function(x){ return !ign[type + ':' + cle(x)]; });
+    if(!restes.length) return;
+    var n = restes.length;
+    l.push({ n:n, mot: typeof texte === 'function' ? texte(n, restes) : texte, go:go, ton:ton,
+             cles: restes.map(function(x){ return type + ':' + cle(x); }) });
+  };
+  var id = function(c){ return c.id; };
+  var pl = function(n, un, plu){ return n > 1 ? plu : un; };
+  ajout('placer', ch.filter(function(c){ return !c.date; }), id,
+    function(n){ return pl(n,'intervention','interventions') + ' à placer dans le planning'; }, "allerAPlacer()", 'warn');
+  ajout('sansqui', ch.filter(function(c){ return c.date && c.date >= auj && !c.prestataire; }), id,
+    function(n){ return pl(n,'intervention','interventions') + ' sans personne pour la faire'; }, "allerAPlacer()", 'warn');
+  ajout('oubli', ch.filter(function(c){ return c.date && c.date.slice(0,10) === hier && st(c) !== 'FAIT'; }), id,
+    function(n){ return pl(n,'intervention d\'hier pas pointée','interventions d\'hier pas pointées') + ' (faite ou pas ?)'; }, "allerPlanning('liste')", 'danger');
+  ajout('souci', ch.filter(function(c){ return st(c) === 'PROBLEME' || String(c.signalement||'').trim(); })
+    .filter(function(c){ return !c.date || c.date >= isoJour(new Date(Date.now() - 7*86400000)); }), id,
+    function(n){ return pl(n,'problème signalé','problèmes signalés') + ' par l\'équipe cette semaine'; }, "allerPlanning('liste')", 'danger');
   var ech45 = isoJour(new Date(Date.now() + 45*86400000));
-  var echeances = (t.recurrents || []).filter(function(s){
+  ajout('echeance', (t.recurrents || []).filter(function(s){
     return s.actif && s.fin && s.fin >= auj && s.fin <= ech45 && s.reconduction !== 'TACITE';
-  }).length;
-  if(echeances) l.push({ n:echeances, mot:'contrat' + (echeances>1?'s':'') + ' arrive' + (echeances>1?'nt':'') +
-                          ' à échéance dans moins de 45 jours (renouveler ?)', go:'listeContrats()', ton:'warn' });
-  /* v105 — les fériés restent au planning : Simon appelle lui-même les
-     clients pour décaler. « À faire » les compte jusqu'à ce qu'ils bougent. */
-  var dansFerie = ch.filter(function(c){
+  }), function(s){ return s.id + '|' + s.fin; },
+    function(n){ return pl(n,'contrat arrive','contrats arrivent') + ' à échéance dans moins de 45 jours (renouveler ?)'; }, 'listeContrats()', 'warn');
+  /* v105 — les fériés restent au planning : Simon appelle lui-même les clients. */
+  ajout('ferie', ch.filter(function(c){
     return c.date && c.date.slice(0,10) >= auj && st(c) !== 'FAIT' && nomFerie(c.date.slice(0,10));
-  }).length;
-  if(dansFerie) l.push({ n:dansFerie, mot:'intervention' + (dansFerie>1?'s':'') + ' un jour férié (appeler le client pour décaler)',
-                         go:'listeFeries()', ton:'warn' });
+  }), function(c){ return c.id + '|' + c.date.slice(0,10); },
+    function(n){ return pl(n,'intervention','interventions') + ' un jour férié (appeler le client pour décaler)'; }, 'listeFeries()', 'warn');
   /* v104 — une intervention posée pendant un congé de celui qui la fait. */
-  var pendantConge = ch.filter(function(c){
+  ajout('conge', ch.filter(function(c){
     return c.date && c.date.slice(0,10) >= auj && st(c) !== 'FAIT' && absentsDe(c.date.slice(0,10), c.prestataire, t).length;
-  }).length;
-  if(pendantConge) l.push({ n:pendantConge, mot:'intervention' + (pendantConge>1?'s':'') + ' pendant un congé (à replacer ou à confier)',
-                            go:'listeConges()', ton:'danger' });
-  /* v104 — contrats-cadres BB : un an ferme, reconduction tacite, préavis de
-     trois mois avant l'échéance. Le mois qui précède la fin du préavis est le
-     moment de proposer une révision de prix (ou de l'entendre). */
+  }), function(c){ return c.id + '|' + c.date.slice(0,10) + '|' + c.prestataire; },
+    function(n){ return pl(n,'intervention','interventions') + ' pendant un congé (à replacer ou à confier)'; }, 'listeConges()', 'danger');
+  /* v104 — préavis de 3 mois avant l'échéance des contrats tacites. */
   var d90 = isoJour(new Date(Date.now() + 90*86400000)), d120 = isoJour(new Date(Date.now() + 120*86400000));
-  var preavis = {};
+  var preavis = {}, lp = [];
   (t.recurrents || []).forEach(function(s){
-    if(s.actif && s.fin && s.reconduction === 'TACITE' && s.fin > d90 && s.fin <= d120) preavis[String(s.client).split(' — ')[0]] = 1;
+    var k = String(s.client).split(' — ')[0] + '|' + s.fin;
+    if(s.actif && s.fin && s.reconduction === 'TACITE' && s.fin > d90 && s.fin <= d120 && !preavis[k]){ preavis[k] = 1; lp.push(k); }
   });
-  var nPre = Object.keys(preavis).length;
-  if(nPre) l.push({ n:nPre, mot:'contrat' + (nPre>1?'s':'') + ' à moins de 4 mois de l\'échéance annuelle (préavis de 3 mois : révision de prix ?)',
-                    go:'listeContrats()', ton:'' });
+  ajout('preavis', lp, function(k){ return k; },
+    function(n){ return pl(n,'contrat','contrats') + ' à moins de 4 mois de l\'échéance annuelle (préavis de 3 mois : révision de prix ?)'; }, 'listeContrats()', '');
   var dv = t.devis || [];
-  var contrats = dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat; }).length;
-  if(contrats) l.push({ n:contrats, mot:'contrat' + (contrats>1?'s':'') + ' signé' + (contrats>1?'s':'') +
-                         ' à mettre au calendrier', go:'allerDevis()', ton:'warn' });
-  var aPoser = dv.filter(function(d){ return d.statut === 'SIGNE' && !d.recurrent && Number(d.aPoser||0) > 0; }).length;
-  if(aPoser) l.push({ n:aPoser, mot:'devis signé' + (aPoser>1?'s':'') + ' dont le travail n\'est pas planifié',
-                       go:'allerDevis()', ton:'warn' });
-  /* Un devis à relancer : envoyé il y a 10 à 30 jours, sans réponse. Au-delà,
-     il n'est plus « à relancer », il est perdu ou oublié — et compter les
-     vieux devis noyait la liste (36 le 8 novembre). */
+  /* v106 — un contrat signé = UNE ligne « à mettre au calendrier » : un appui
+     ouvre le devis, « Mettre au calendrier comme contrat » propose le rythme
+     du devis, Simon confirme. */
+  dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat; }).forEach(function(d){
+    ajout('contrat', [d], function(x){ return x.numero; }, 'contrat signé à mettre au calendrier : ' + (d.client || d.numero),
+      'ficheDevis(\'' + String(d.numero).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\')', 'warn');
+  });
+  ajout('aposer', dv.filter(function(d){ return d.statut === 'SIGNE' && !d.recurrent && Number(d.aPoser||0) > 0; }),
+    function(d){ return d.numero; },
+    function(n){ return pl(n,'devis signé','devis signés') + ' dont le travail n\'est pas planifié'; }, 'allerDevis()', 'warn');
+  /* Un devis à relancer : envoyé il y a 10 à 30 jours, sans réponse. */
   var de = isoJour(new Date(Date.now() - 30*86400000)), a = isoJour(new Date(Date.now() - 10*86400000));
-  var relances = dv.filter(function(d){
+  ajout('relance', dv.filter(function(d){
     var s = String(d.statut||'').toUpperCase(), j = String(d.date||'').slice(0,10);
     return s !== 'SIGNE' && s !== 'REFUSE' && j && j >= de && j <= a &&
            !/^BREIZH\s*BRILLANCE$/i.test(String(d.client||'').trim());
-  }).length;
-  if(relances) l.push({ n:relances, mot:'devis à relancer (envoyé' + (relances>1?'s':'') + ' il y a 10 à 30 jours, sans réponse)',
-                         go:'allerDevis()', ton:'' });
+  }), function(d){ return d.numero; },
+    function(n){ return 'devis à relancer (envoyé' + (n>1?'s':'') + ' il y a 10 à 30 jours, sans réponse)'; }, 'allerDevis()', '');
   return l;
 }
 
@@ -4932,6 +4975,9 @@ function accueilHtml(t){
   h += '<div class="mini" style="text-align:center;margin:14px 0 4px">' +
     (ig && ig.quand ? 'Liste repartie de zéro le ' + ech(quandLisible(ig.quand)) + '. ' : '') +
     '<button class="lienTexte" onclick="remiseAFaire(this)">Tout effacer et repartir de zéro</button></div>';
+  /* v106 — les onglets du haut sont devenus la barre du bas ; le répertoire
+     des clients reste à un appui d'ici. */
+  if(estAdmin()) h += '<button class="btn sec" style="margin-top:8px" onclick="barreAdmin(\'clients\')">Répertoire des clients</button>';
   return h;
 }
 
@@ -4951,7 +4997,12 @@ function aPlacerListe(t){
   });
 }
 function aPlacerHtml(t){
-  var l = aPlacerListe(t);
+  /* v106 — la liste « À placer » de l'accueil suit aussi « Tout effacer » (elle
+     restait affichée en entier, d'où l'impression que rien n'était effacé).
+     Le bac du Planning, lui, garde tout. */
+  var ign = {};
+  ((t && t.aFaireIgnores && t.aFaireIgnores.cles) || []).forEach(function(k){ ign[k] = 1; });
+  var l = aPlacerListe(t).filter(function(c){ return !ign['placer:' + c.id] && !ign['sansqui:' + c.id]; });
   if(!l.length) return '<div id="acPlacer"></div>';
   return '<h3 class="acTitre" id="acPlacer">À placer <span class="mini">· touche pour voir les créneaux proposés</span></h3>' +
     '<div class="card">' + l.slice(0, 80).map(function(c){
@@ -5358,6 +5409,7 @@ function ongletAdmin(quoi){
   if(quoi === 'calendrier'){ quoi = 'chantiers'; AD_VUE = 'mois'; SEM_VUE = false; }
   AD_ONGLET = quoi;
   if(quoi !== 'factures') ls('adOnglet3', quoi);
+  try{ majOnglets(); }catch(e){}
   AD_QUI = '';
   AD_PASSE = false;             // chaque retour sur l'onglet repart du travail à venir
   if(quoi === 'factures'){
@@ -5503,7 +5555,7 @@ function peindreTableau(){
     $('adListe').innerHTML = bandeauMot() + $('adListe').innerHTML;
     return;
   }
-  $('adListe').innerHTML = AD_ONGLET === 'devis' ? bandeauMot() + listeDevisAdmin(t)
+  $('adListe').innerHTML = AD_ONGLET === 'devis' ? bandeauMot() + enteteDevisAdmin() + listeDevisAdmin(t)
                                                 : bandeauMot() + listeChantiersAdmin(t);
 }
 
@@ -6317,7 +6369,10 @@ function ficheChantier(id){
   $('hTitre').textContent = 'Chantier';
   erreur(''); window.scrollTo(0,0);
   peindreFicheChantier(c, false);
-  if((!c.date || !c.prestataire) && !estAnnule(c)) chargerSuggestions(c.id);
+  /* v106 — « trop de latence quand je choisis ». La fiche demandait aussi des
+     créneaux au bureau (3 à 10 s, « Recherche de créneaux libres… ») alors
+     que l'appli calcule les siens sur place depuis la v103, instantanément,
+     en tenant compte des fériés et des congés : on ne garde que ceux-là. */
   try{ peindreChoixDate(c, !c.date || !c.prestataire); }catch(e){}
 }
 
@@ -6585,7 +6640,7 @@ function enregistrerPlanif(btn){
     tracer('CHANTIER PLANIFIE', c.prestataire + ' ' + c.date, id);
     var x2 = chantierDuTableau(id);
     if(x2 && r.statut) x2.statut = r.statut;
-    chargerTableau();
+    chargerTableauBientot();
   }, function(){
     if(EN_VOL.maj[id] === champs) delete EN_VOL.maj[id];
     defaireEnVol(id, avant, attenteLisible());
@@ -6596,6 +6651,14 @@ function enregistrerPlanif(btn){
    rafraîchissement du tableau, pour qu'une lecture partie avant l'écriture
    ne fasse pas « revenir » l'ancienne version à l'écran. */
 var EN_VOL = { neufs: [], maj: {} };
+/* v106 — plusieurs enregistrements coup sur coup ne relancent qu'une relecture
+   du tableau (la plus lourde des demandes au bureau), deux secondes après le
+   dernier. */
+var RELIRE_T = null;
+function chargerTableauBientot(){
+  if(RELIRE_T) clearTimeout(RELIRE_T);
+  RELIRE_T = setTimeout(function(){ RELIRE_T = null; chargerTableau(); }, 2000);
+}
 function appliquerEnVol(t){
   if(!t || !t.chantiers) return;
   t.chantiers.forEach(function(x){
@@ -6658,6 +6721,8 @@ var RECURRENCES = [
   {v:'JAMAIS',   l:'Jamais'},
   {v:'SEMAINE',  l:'Toutes les semaines'},
   {v:'OUVRES',   l:'Tous les jours de la semaine (lun. – ven.)'},
+  {v:'SIX',      l:'6 fois par semaine (lun. – sam.)'},
+  {v:'SEPT',     l:'7 fois par semaine (tous les jours)'},
   {v:'QUINZAINE',l:'Toutes les 2 semaines'},
   {v:'MOIS',     l:'Tous les mois'},
   {v:'MOIS2',    l:'Tous les 2 mois'},
@@ -6757,12 +6822,15 @@ function contratDepuisFiche(){
   var rec = 'SEMAINE', nbJours = 1;
   if(n <= 1) rec = 'MOIS';
   else if(n <= 3) rec = 'QUINZAINE';
-  else { nbJours = Math.max(1, Math.min(5, Math.round(n / 4.33))); rec = nbJours > 1 ? 'PERSO' : 'SEMAINE'; }
+  else {
+    nbJours = Math.max(1, Math.min(7, Math.round(n / 4.33)));
+    rec = nbJours === 5 ? 'OUVRES' : (nbJours === 6 ? 'SIX' : (nbJours === 7 ? 'SEPT' : (nbJours > 1 ? 'PERSO' : 'SEMAINE')));
+  }
   var poses = ((TABLEAU||{}).chantiers||[]).filter(function(c){
     return c.numero === d.numero && c.date && !estAnnule(c);
   }).sort(function(a, b){ return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
   var p0 = poses[0] || null;
-  var ordre = [1, 4, 2, 5, 3];                   // lundi, jeudi, mardi, vendredi, mercredi
+  var ordre = [1, 4, 2, 5, 3, 6, 0];             // lundi, jeudi, mardi, vendredi, mercredi, samedi, dimanche
   var jours = p0 ? [jourDe(p0.date).getDay()] : [ordre[0]];
   ordre.forEach(function(j){ if(jours.length < nbJours && jours.indexOf(j) < 0) jours.push(j); });
   /* Le premier passage : celui déjà posé s'il vient, sinon le prochain jour
@@ -6917,6 +6985,8 @@ function ctRec(v){
   /* « Tous les jours de la semaine » est un raccourci : il coche du lundi au
      vendredi. Les autres repartent du jour de la date choisie. */
   if(v === 'OUVRES') CT.jours = [1,2,3,4,5];
+  else if(v === 'SIX') CT.jours = [1,2,3,4,5,6];
+  else if(v === 'SEPT') CT.jours = [0,1,2,3,4,5,6];
   else if(v !== 'PERSO' || !CT.jours.length) CT.jours = [jourDe(CT.date).getDay()];
   peindreContrat();
 }
@@ -6927,7 +6997,7 @@ function ctJour(n){
   else CT.jours.push(n);
   /* Toucher un jour, c'est personnaliser : « Toutes les semaines » avec deux
      jours cochés n'est plus « toutes les semaines » au sens de FamilyWall. */
-  if(CT.rec === 'SEMAINE' || CT.rec === 'OUVRES') CT.rec = CT.jours.length > 1 ? 'PERSO' : 'SEMAINE';
+  if(CT.rec === 'SEMAINE' || CT.rec === 'OUVRES' || CT.rec === 'SIX' || CT.rec === 'SEPT') CT.rec = CT.jours.length > 1 ? 'PERSO' : 'SEMAINE';
   peindreContrat();
 }
 function ctDate(){
@@ -6935,7 +7005,7 @@ function ctDate(){
   lireContrat();
   /* Changer la date d'un contrat d'un seul jour déplace aussi ce jour : c'est
      ce qu'on attend en choisissant « le jeudi 12 ». */
-  if(CT.date !== avant && CT.jours.length <= 1 && CT.rec !== 'OUVRES') CT.jours = [jourDe(CT.date).getDay()];
+  if(CT.date !== avant && CT.jours.length <= 1 && ['OUVRES','SIX','SEPT'].indexOf(CT.rec) < 0) CT.jours = [jourDe(CT.date).getDay()];
   peindreContrat();
 }
 function ctHeure(){
@@ -6951,7 +7021,7 @@ function ctHeure(){
 function peindreContrat(){
   var c = CT, gens = ((TABLEAU||{}).prestataires||[]);
   var recur = c.rec !== 'JAMAIS';
-  var hebdo = ['SEMAINE','OUVRES','QUINZAINE','PERSO'].indexOf(c.rec) >= 0;
+  var hebdo = ['SEMAINE','OUVRES','SIX','SEPT','QUINZAINE','PERSO'].indexOf(c.rec) >= 0;
   var mois = c.rec === 'MOIS' || c.rec === 'MOIS2';
   var dj = jourDe(c.date);
   var ch = function(id, lib, val, attr){
@@ -6966,7 +7036,8 @@ function peindreContrat(){
     h += '<div class="card" style="border-color:var(--acc-b)"><b>Contrat du devis ' + ech(c.devis) + '</b>' +
       '<div class="mini">' + (c.mensuelDevis ? eur(c.mensuelDevis) + ' HT par mois · ' : '') +
       (c.passagesDevis ? c.passagesDevis + ' passage' + (c.passagesDevis > 1 ? 's' : '') + ' par mois au devis · ' : '') +
-      'choisis le jour, l\'heure et la personne, puis enregistre. Les interventions de ce devis restées ' +
+      'choisis le jour, l\'heure et la personne, puis enregistre : c\'est un contrat (un an, ou la durée du devis, ' +
+      'reconduit tacitement), ses passages se posent sur toute la période. Les interventions de ce devis restées ' +
       'sans date sont remplacées par la série ; celles déjà posées restent.</div></div>';
   }
   if(c.mode === 'modif'){
@@ -7079,7 +7150,7 @@ function peindreContrat(){
 /* ---- ce qui part au bureau ---- */
 function envoiContrat(){
   var c = CT;
-  var hebdo = ['SEMAINE','OUVRES','QUINZAINE','PERSO'].indexOf(c.rec) >= 0;
+  var hebdo = ['SEMAINE','OUVRES','SIX','SEPT','QUINZAINE','PERSO'].indexOf(c.rec) >= 0;
   var duree = (!c.journee && minutesDe(c.fin) !== null && minutesDe(c.heure) !== null)
     ? minutesDe(c.fin) - minutesDe(c.heure) : '';
   return {
@@ -7171,7 +7242,7 @@ function posterChantierNeuf(c, btn, fichier){
     tracer('CHANTIER CREE', c.client + ' ' + (c.date||'sans date'), r.id || '');
     loc.id = r.id; loc.statut = r.statut || loc.statut; delete loc.enVol;
     if(fichier && r.id) envoyerFicheApres([r.id], fichier);
-    chargerTableau();
+    chargerTableauBientot();
   }, function(){
     oter();
     if(TABLEAU) TABLEAU.chantiers = (TABLEAU.chantiers||[]).filter(function(x){ return x !== loc; });
@@ -7921,7 +7992,7 @@ function nouveauDevis(){
   debloquer($('bSuiv'));
   LIGNES = [];
   REMISE = {valeur:0, muet:false};
-  NATURE = null; PASSAGES = 0; ENGAGEMENT = { mois: 0, tacite: true }; try{ peindreEngagement(); }catch(e){}
+  NATURE = null; PASSAGES = 0; SANS_CONTRAT = false; ENGAGEMENT = { mois: 0, tacite: true }; try{ peindreEngagement(); }catch(e){}
   ETAT = 'NORMAL';
   KM = ''; KM_AUTO = true;
   GRP = {};
@@ -9220,13 +9291,21 @@ function lireFichierFiche(f){
    part juste après la création (il faut le numéro de l'intervention). */
 function blocFicheForm(c){
   var deja = c.mode === 'modif' ? ((contratDe(c.id + '|') || {}).fiche || '') : '';
-  return '<div class="card"><label>Fiche chantier <span class="mini">(PDF ou photo, facultatif)</span></label>' +
+  return '<div class="card zoneDepot" ' + attrsDepot('ctFicheChoisie({files: f})') + '><label>Fiche chantier <span class="mini">(PDF ou photo, facultatif — tu peux la glisser ici)</span></label>' +
     (c.fichier
       ? '<div class="ctDevisChoisi"><b>📎 ' + ech(c.fichier.nom) + '</b>' +
         '<button type="button" class="btn sec sm" style="width:auto" onclick="ctFicheOter()">Retirer</button></div>'
       : (deja ? '<div class="mini">Fiche actuelle : ' + ech(deja) + '. Choisis un fichier pour la remplacer.</div>' : '') +
         '<input id="ct_fiche" type="file" accept="application/pdf,image/*" onchange="ctFicheChoisie(this)">') +
     '<div class="mini">Le salarié la verra en ouvrant l\'intervention, avec les instructions.</div></div>';
+}
+/* Les attributs d'un cadre qui accepte un fichier glissé-déposé : « f » est la
+   liste des fichiers déposés dans l'appel donné. */
+function attrsDepot(appel){
+  return 'ondragover="event.preventDefault();this.classList.add(\'depotOn\')" ' +
+    'ondragleave="this.classList.remove(\'depotOn\')" ' +
+    'ondrop="event.preventDefault();this.classList.remove(\'depotOn\');' +
+    'var f=event.dataTransfer&&event.dataTransfer.files;if(f&&f.length){' + appel.replace(/"/g, '&quot;') + '}"';
 }
 function ctFicheChoisie(inp){
   var f = inp && inp.files && inp.files[0];
@@ -9254,7 +9333,8 @@ function envoyerFicheApres(ids, fichier){
    remplacer, retirer — tout de suite, sans attendre « Enregistrer ». */
 function blocFicheChantier(c){
   var id = ech(String(c.id)).replace(/'/g,'&#39;');
-  return '<div class="card" id="adFicheJ"><b>Fiche chantier</b>' +
+  /* v106 — on peut aussi glisser-déposer le fichier sur ce cadre. */
+  return '<div class="card zoneDepot" id="adFicheJ" ' + attrsDepot('joindreFicheAd(\'' + id + '\', {files: f})') + '><b>Fiche chantier</b>' +
     (c.fiche
       ? '<div class="mini" style="margin:4px 0 8px">📎 ' + ech(c.fiche) + (c.recurrent ? ' · celle du contrat' : '') + '</div>' +
         '<div class="row" style="gap:8px;flex-wrap:wrap">' +
@@ -9263,7 +9343,7 @@ function blocFicheChantier(c){
           '<input type="file" accept="application/pdf,image/*" class="hide" onchange="joindreFicheAd(\'' + id + '\', this)"></label>' +
         '<button class="btn sec sm" style="flex:1" onclick="retirerFicheAd(\'' + id + '\', this)">Retirer</button></div>'
       : '<div class="mini" style="margin:4px 0 8px">Aucune. Le salarié la verrait en ouvrant l\'intervention.</div>' +
-        '<label class="btn sec sm" style="display:block;text-align:center">📎 Joindre une fiche (PDF ou photo)' +
+        '<label class="btn sec sm" style="display:block;text-align:center">📎 Joindre une fiche (PDF ou photo) — ou glisse-la ici' +
           '<input type="file" accept="application/pdf,image/*" class="hide" onchange="joindreFicheAd(\'' + id + '\', this)"></label>') +
     (c.recurrent ? '<div class="mini" style="margin-top:6px">Pour tous les passages du contrat, joins-la depuis « Modifier le contrat ».</div>' : '') +
     '<div class="mini" id="adFicheEtat"></div></div>';
@@ -9375,15 +9455,22 @@ function sansIgnores(t){
 }
 function remiseAFaire(btn){
   demander('Repartir de zéro ?', 'Tout ce qui est en attente maintenant disparaît de « À faire » ' +
-    '(rien n\'est supprimé du classeur). Ce qui arrivera ensuite s\'affichera normalement. ' +
-    'Les passages tombés un férié restent : ils sont à replacer.', 'Tout effacer').then(function(oui){
+    '(rien n\'est supprimé du classeur). Ce qui arrivera ensuite s\'affichera normalement.', 'Tout effacer').then(function(oui){
     if(!oui) return;
     var moi = session();
     if(btn) occuper(btn, '…');
-    poster({action:'aFaireRemise', nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(r){
+    /* v106 — toutes les clés de ce qui est affiché maintenant, et celles déjà
+       mises de côté (pour qu'une remise n'en ressuscite pas d'anciennes). */
+    var cles = [];
+    taches(TABLEAU || {}).forEach(function(x){ (x.cles || []).forEach(function(k){ cles.push(k); }); });
+    var vieilles = ((TABLEAU && TABLEAU.aFaireIgnores && TABLEAU.aFaireIgnores.cles) || []);
+    vieilles.forEach(function(k){ if(cles.indexOf(k) < 0) cles.push(k); });
+    poster({action:'aFaireRemise', nom:moi.nom, code:moi.code, appareil:APPAREIL, cles:cles}).then(function(r){
       if(btn) libere(btn);
       if(!r || !r.ok) return erreur((r && r.erreur) || attenteLisible());
+      if(TABLEAU){ TABLEAU.aFaireIgnores = TABLEAU.aFaireIgnores || {}; TABLEAU.aFaireIgnores.cles = r.cles || cles; }
       AD_MOT_T = 0; AD_MOT = '« À faire » repart de zéro';
+      try{ peindreTableau(); }catch(e){}
       chargerTableau();
     }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
   });
@@ -9638,13 +9725,46 @@ function commissionDevis(d, t){
   var b = Number(d.ht) || 0;
   return { contrat: false, base: b, taux: tx || 0, com: b * (tx || 0) / 100 };
 }
+/* v106 — en tête de l'onglet Devis du gérant : « Mon chiffre », et les devis
+   restés sur ce téléphone sans être partis au bureau. */
+var CHIFFRES_DEMANDE = 0;
+function enteteDevisAdmin(){
+  if(!ARCH.length) archiveRelue();
+  if(!ARCH.length && navigator.onLine && Date.now() - CHIFFRES_DEMANDE > 60000){
+    CHIFFRES_DEMANDE = Date.now();
+    var moi = session();
+    if(moi) poster({action:'mesDevis', nom:moi.nom, code:moi.code, appareil:APPAREIL, mois:12}, 40000).then(function(r){
+      if(!r || !r.ok) return;
+      ARCH = r.devis || []; ARCH_MOIS = Number(r.mois) || 12; ARCH_MAJ = Date.now(); archiveRangee();
+      if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'devis') peindreTableau();
+    }, function(){});
+  }
+  var h = chiffresHtml();
+  var att = DEVIS_A_ENVOYER;
+  return (h ? '<div class="card">' + h + '</div>' : '') +
+    (att ? '<div class="card" style="border-color:var(--warn)"><b>' + att + ' devis sur ce téléphone pas encore parti' + (att > 1 ? 's' : '') +
+      ' au bureau</b><button class="btn sec sm" style="margin-top:8px" onclick="synchroniser(true, this)">Envoyer maintenant</button></div>' : '');
+}
+var DEVIS_A_ENVOYER = 0;
+function compterDevisAEnvoyer(){
+  try{
+    DB.tous().then(function(l){
+      var n = l.filter(function(e){ return e.statut !== 'envoye'; }).length;
+      if(n !== DEVIS_A_ENVOYER){ DEVIS_A_ENVOYER = n; if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'devis') peindreTableau(); }
+    });
+  }catch(e){}
+}
 function peindreChiffresCommercial(){
   var z = $('mesChiffres');
   if(!z) return;
+  var h = chiffresHtml();
+  z.innerHTML = h; z.classList.toggle('hide', !h);
+}
+function chiffresHtml(){
   var t = tauxCommission();
   var signes = (typeof ARCH !== 'undefined' && ARCH ? ARCH : []).filter(function(d){ return String(d.statut).toUpperCase() === 'SIGNE'; });
-  if(!signes.length){ z.innerHTML = ''; z.classList.add('hide'); return; }
-  z.classList.remove('hide');
+  if(!signes.length) return '';
+  var z = { innerHTML: '' };
   var mois = isoJour().slice(0, 7), an = isoJour().slice(0, 4);
   var somme = function(l){ return l.reduce(function(s, d){ var c = commissionDevis(d, t); s.ca += c.base; s.com += c.com; return s; }, {ca: 0, com: 0}); };
   var quand = function(d){ return String(d.signeLe || d.date || ''); };
@@ -9669,6 +9789,7 @@ function peindreChiffresCommercial(){
           : eur(c.base) + ' HT × ' + nb(c.taux) + ' % = <b>' + eur(c.com) + '</b>') + '</div></div>';
     }).join('') + '</details>' +
     '<div class="mini" style="margin-top:6px">Calculé sur les devis signés du bureau, aux taux fixés par la direction.</div>';
+  return z.innerHTML;
 }
 
 

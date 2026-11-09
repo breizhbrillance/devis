@@ -362,7 +362,10 @@ var ENTETES_DEVIS_ = [
   'LIEU_SIGNATURE',
   /* v103 — la durée d'engagement d'un contrat (mois, vide = sans engagement)
      et sa reconduction (TACITE ou NON). */
-  'ENGAGEMENT_MOIS', 'RECONDUCTION'
+  'ENGAGEMENT_MOIS', 'RECONDUCTION',
+  /* v106 — « Entretien des locaux (sans contrat) » : mêmes prestations, mais
+     quelques passages vendus comme une intervention, jamais un contrat. */
+  'SANS_CONTRAT'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -1110,7 +1113,7 @@ function doPost(e) {
     }
     if (d.action === 'chantier') return reponse_(enregistrerChantier_(d, com));
     if (d.action === 'ficheLire') return reponse_(lireFiche_(d, com));
-    if (d.action === 'aFaireRemise') return reponse_(remiseAFaire_(com));
+    if (d.action === 'aFaireRemise') return reponse_(remiseAFaire_(com, d));
     if (d.action === 'recurrentRenouveler') { lock.waitLock(30000); return reponse_(recurrentRenouveler_(d, com)); }
     if (d.action === 'absenceAjouter' || d.action === 'absenceRetirer') {
       lock.waitLock(30000);
@@ -1461,9 +1464,10 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
     NOTES: devis.notes || '',
     CONTROLE_TARIF: controle,
     ENGAGEMENT_MOIS: engagementMois_(devis),
-    RECONDUCTION: reconductionDevis_(devis)
+    RECONDUCTION: reconductionDevis_(devis),
+    SANS_CONTRAT: devis.sansContrat ? 'OUI' : ''
   };
-  colonneAssuree_(SH.DEVIS, 'ENGAGEMENT_MOIS'); colonneAssuree_(SH.DEVIS, 'RECONDUCTION');
+  colonneAssuree_(SH.DEVIS, 'ENGAGEMENT_MOIS'); colonneAssuree_(SH.DEVIS, 'RECONDUCTION'); colonneAssuree_(SH.DEVIS, 'SANS_CONTRAT');
   majDevis_(numero, maj);
 
   /* Les lignes aussi : leur remise et leur montant ont changé. On réécrit
@@ -1603,6 +1607,8 @@ function signerDevisRecu_(ligne, col, d, devis, reg, com) {
   tracerServeur_(devis.commercial || com.nom, 'DEVIS SIGNE RECU',
                  'signé à l\'écran' + (devis.signataire ? ' par ' + devis.signataire : ''),
                  numero, d.appareil || '');
+  notifierSignature_(numero, String(ligne[col.CLIENT] || ''), ligne[col.TOTAL_HT],
+                     devis.commercial || (com && com.nom) || '', com && com.nom, 'signé sur place');
 
   // Un devis signé fait naître ses interventions ; la fonction ne double pas
   // celles qui existent déjà.
@@ -1748,7 +1754,8 @@ function enregistrer_(d, com) {
     LIEU_SIGNATURE: String(c.type || '').toUpperCase() === 'PART' ? lieuDevis_(devis.lieuSignature) : '',
     PASSAGES_MOIS: Number(devis.passages) || '',
     ENGAGEMENT_MOIS: engagementMois_(devis),
-    RECONDUCTION: reconductionDevis_(devis)
+    RECONDUCTION: reconductionDevis_(devis),
+    SANS_CONTRAT: devis.sansContrat ? 'OUI' : ''
   };
   if (controleTarif) {
     tracerServeur_(devis.commercial || com.nom, 'ECART TARIF', controleTarif,
@@ -1808,6 +1815,9 @@ function enregistrer_(d, com) {
       'devis ' + devis.numero + ' — ' + String((eMail && eMail.message) || eMail), devis.numero);
   }
 
+  if (devis.signature) {
+    notifierSignature_(devis.numero, c.societe || c.contact || '', t.ht, devis.commercial || (com && com.nom) || '', com && com.nom, 'signé sur place');
+  }
   tracerServeur_(devis.commercial, 'DEVIS RECU',
     (c.societe || c.contact || '') + ' — ' + eur_(t.ttc) + ' TTC' +
     (devis.signature ? ' — signé' : ' — non signé') +
@@ -1956,6 +1966,10 @@ function enregistrerStatut_(d, com) {
   // Un devis signé fait naître les interventions à planifier. La fonction ne
   // fait rien si elles existent déjà : un téléphone qui réessaie ne double pas.
   var nes = 0;
+  if (statut === 'SIGNE' && statutAvant !== 'SIGNE') {
+    notifierSignature_(num, avant ? avant.CLIENT : '', avant ? avant.TOTAL_HT : '',
+                       (avant && avant.COMMERCIAL) || '', com ? com.nom : (d.nom || ''), 'déclaré signé');
+  }
   if (statut === 'SIGNE') {
     try {
       nes = genererChantiers_(num);
@@ -2058,7 +2072,7 @@ function tableauAdmin_() {
       note: String(o.NOTE_COMMERCIAL || ''),
       /* v93 — de quoi mettre un devis d'entretien au calendrier comme contrat,
          sans retaper le client : le rythme, l'adresse, la nature, le mensuel. */
-      recurrent: recurrentDevis_(o.NATURE, o.PASSAGES_MOIS),
+      recurrent: recurrentDevis_(o.NATURE, o.PASSAGES_MOIS, o.SANS_CONTRAT),
       passagesMois: Number(o.PASSAGES_MOIS) || 0,
       mensuel: mens,
       nature: natureOuVide_(o.NATURE),
@@ -2375,6 +2389,16 @@ function creerChantier_(d, com) {
   tracerServeur_(com ? com.nom : '', 'CHANTIER CREE',
                  client + ' \u00b7 ' + (date ? isoJour_(date) : 'sans date') +
                  (qui ? ' \u00b7 ' + qui : ''), '', d.appareil || '');
+  /* v106 — une intervention créée déjà datée et attribuée prévient les
+     salariés, comme une intervention qu'on leur attribue ensuite. */
+  if (date && qui) {
+    try {
+      var envoisN = nomsQui_(qui).map(function (n) { return messageChantier_(n, v, false); });
+      notifierLot_(envoisN).forEach(function (r, i) {
+        if (!r.ok && !r.aucun) tracerServeur_(envoisN[i].nom, 'NOTIFICATION RATEE', String(r.erreur || ''), '', '');
+      });
+    } catch (eN) {}
+  }
   return { ok: true, id: id, statut: v.STATUT };
 }
 
@@ -3262,7 +3286,7 @@ function planifierDevis_(numero) {
   if (iNum < 0 || iDate < 0 || iQui < 0) { bilan.motif = 'colonnes manquantes'; return bilan; }
 
   var charge = chargeActuelle_();
-  var recurrent = recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS);
+  var recurrent = recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS, devis.SANS_CONTRAT);
   var prefere = '';
   var curseur = new Date(depuis.getTime());
   var num = String(numero).trim();
@@ -3686,7 +3710,9 @@ function lieuDevis_(v) {
   return String(v || '').toUpperCase().trim() === 'AGENCE' ? 'AGENCE' : 'CLIENT';
 }
 
-function recurrentDevis_(nature, passages) {
+function recurrentDevis_(nature, passages, sansContrat) {
+  /* v106 — un entretien « sans contrat » n'est jamais un contrat. */
+  if (sansContrat === true || /^OUI$/i.test(String(sansContrat || '').trim())) return false;
   var n = natureDevis_(nature);
   if (n === 'ENTRETIEN') return true;
   if (n !== 'VITRERIE') return false;
@@ -3708,9 +3734,13 @@ function recurrentDevis_(nature, passages) {
 function devisEssai_(d) {
   var nom = sansAccent_(String(d && d.CLIENT || '')).replace(/[^A-Z0-9]/g, '');
   if (!nom) return false;
-  var soc = sansAccent_(String(lireReglages_().societe_nom || 'BREIZH BRILLANCE')).replace(/[^A-Z0-9]/g, '');
-  return nom === soc || nom === 'BREIZHBRILLANCE';
+  /* v106 — le nom de la société est lu une fois par exécution : le tableau
+     appelait cette fonction pour chaque devis, et relisait REGLAGES à chaque
+     fois (200 lectures, une quinzaine de secondes par actualisation). */
+  if (SOC_ESSAI_ === null) SOC_ESSAI_ = sansAccent_(String(lireReglages_().societe_nom || 'BREIZH BRILLANCE')).replace(/[^A-Z0-9]/g, '');
+  return nom === SOC_ESSAI_ || nom === 'BREIZHBRILLANCE';
 }
+var SOC_ESSAI_ = null;
 
 function genererChantiers_(numero) {
   var ss = SpreadsheetApp.getActive();
@@ -3746,13 +3776,20 @@ function genererChantiers_(numero) {
      des lignes, pour qu'un contrat signé hier produise les mêmes chantiers
      qu'aujourd'hui. */
   var nature = String(devis.NATURE || '').toUpperCase().trim();
-  var recurrent = recurrentDevis_(nature, devis.PASSAGES_MOIS);
+  var recurrent = recurrentDevis_(nature, devis.PASSAGES_MOIS, devis.SANS_CONTRAT);
   if (!nature) {
     recurrent = lignes.some(function (l) {
       return String(l.TYPE || '').toUpperCase() === 'MENSUEL';
     });
   }
 
+  /* v106 — Simon, 9 novembre : « quand je choisis récurrent pour le devis,
+     mets juste dans À faire une fois Mettre au calendrier et je
+     confirmerai ». Un contrat signé ne fabrique plus une fiche « à placer »
+     par passage du mois (22 pour un 5 fois par semaine) : il ne crée rien
+     ici. « À faire » propose de le mettre au calendrier ; la fiche du devis
+     pré-remplit le rythme, et la série posée remplit le planning. */
+  if (recurrent) return 0;
   var combien = 1;
   if (recurrent) {
     combien = Number(String(devis.PASSAGES_MOIS || '').replace(',', '.')) ||
@@ -4185,7 +4222,7 @@ function contratDepuisDevis_(numero, qui) {
     if (n === num || o === num) devis = d;
   });
   if (!devis) return null;
-  if (!recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS)) return null;
+  if (!recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS, devis.SANS_CONTRAT)) return null;
 
   /* Les passages posés du premier mois, dans l'ordre. */
   var shC = ss.getSheetByName(SH.CHANTIERS);
@@ -4209,11 +4246,7 @@ function contratDepuisDevis_(numero, qui) {
     o._rang = i + 2; o._date = minuit_(d);
     passages.push(o);
   });
-  if (!passages.length) {
-    tracerServeur_(qui || 'SYSTEME', 'CONTRAT A ECRIRE',
-                   'aucun passage daté : la série n\'a pas pu être déduite', num, '');
-    return null;
-  }
+  if (!passages.length) return null;     // v106 : Simon le met au calendrier depuis « À faire »
   passages.sort(function (a, b) { return a._date - b._date; });
 
   var r = rythmeDesPassages_(devis.PASSAGES_MOIS);
@@ -4577,6 +4610,18 @@ function recurrentNeuf_(d, com) {
     f.s.DEVIS = numDevis;
     f.s.NOTE = 'Devis ' + numDevis +
       (mens ? ' — ' + String(mens.toFixed(2)).replace('.', ',') + ' € HT par mois' : '');
+    /* v106 — « quand c'est récurrent, c'est automatiquement un contrat » :
+       l'engagement du devis, ou un an par défaut, reconduit tacitement sauf
+       si le devis dit le contraire. La série court donc sur l'année (et se
+       prolonge seule à l'échéance). */
+    var emD = Math.round(Number(devisLu.ENGAGEMENT_MOIS) || 0) || 12;
+    var recD = String(devisLu.RECONDUCTION || '').toUpperCase().trim() || 'TACITE';
+    if (!f.s.FIN) {
+      var fe = new Date(f.s.DEBUT.getFullYear(), f.s.DEBUT.getMonth() + emD, f.s.DEBUT.getDate() - 1, 12);
+      f.s.FIN = fe;
+    }
+    f.s.ENGAGEMENT_MOIS = emD; f.s.RECONDUCTION = recD;
+    colonneAssuree_(SH.RECURRENTS, 'ENGAGEMENT_MOIS'); colonneAssuree_(SH.RECURRENTS, 'RECONDUCTION');
   }
 
   var ids = ecrireSeries_(f.s, f.jours);
@@ -6426,7 +6471,7 @@ function preparerFacturePennylane_(d, com) {
   if (String(devis.STATUT || '').toUpperCase() !== 'SIGNE') {
     return { ok: false, erreur: 'Le devis ' + num + ' n\'est pas signé.' };
   }
-  if (recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS)) {
+  if (recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS, devis.SANS_CONTRAT)) {
     return { ok: false, erreur: 'C\'est un contrat d\'entretien : il se facture chaque mois depuis ' +
                                 'l\'onglet CONTRATS (menu 29), pas ici.' };
   }
@@ -6858,7 +6903,7 @@ function facturationAppli_(periode) {
     var dv = num ? devisParNum[num] : null;
     if (dv) {
       if (devisEssai_(dv)) return;
-      if (recurrentDevis_(dv.NATURE, dv.PASSAGES_MOIS)) return;   // facturé par le contrat
+      if (recurrentDevis_(dv.NATURE, dv.PASSAGES_MOIS, dv.SANS_CONTRAT)) return;   // facturé par le contrat
       (parDevis[num] = parDevis[num] || []).push(o);
       return;
     }
@@ -6976,17 +7021,20 @@ function facturerDepuisAppli_(d, com) {
  * les contrats du mois écoulé (rattrapage les 4 et 5). Que des brouillons.
  */
 function preparationAutomatique() {
-  if (!pennylaneJeton_()) return;
   var lock = LockService.getScriptLock();
   try { lock.waitLock(30000); } catch (e) { return; }
+  /* v106 — le rappel de la veille aux clients des chantiers ponctuels. */
+  try { rappelsVeille_(new Date()); } catch (e4) {
+    tracerServeur_('SYSTEME', 'RAPPEL VEILLE EN ECHEC', String(e4 && e4.message || e4).slice(0, 200), '', '');
+  }
   try {
-    facturesPonctuels_(null);
+    if (pennylaneJeton_()) facturesPonctuels_(null);
     /* v102 — Simon : « les factures de début de mois des récurrents, le 3,
        comme c'était initialement ». Le 3 ; les 4 et 5 ne rattrapent que ce
        qui aurait échoué (une référence déjà dans Pennylane n'est jamais
        refaite). */
     var jm = new Date().getDate();
-    if (jm >= 3 && jm <= 5) facturesContrats_(moisEcoule_(), null);
+    if (pennylaneJeton_() && jm >= 3 && jm <= 5) facturesContrats_(moisEcoule_(), null);
   } catch (e2) {
     tracerServeur_('SYSTEME', 'PREPARATION AUTO EN ECHEC', String(e2 && e2.message || e2).slice(0, 200), '', '');
   }
@@ -7114,7 +7162,7 @@ function devisPublic_(d) {
     client: String(x.CLIENT || ''), contact: String(x.CONTACT || ''),
     adresse: [x.ADRESSE, [x.CP, x.VILLE].join(' ').trim()].filter(function (v) { return String(v || '').trim(); }).join(', '),
     objet: String(x.OBJET || ''), date: isoDe_(x.DATE) || '',
-    passages: Number(x.PASSAGES_MOIS) || 0, recurrent: recurrentDevis_(x.NATURE, x.PASSAGES_MOIS),
+    passages: Number(x.PASSAGES_MOIS) || 0, recurrent: recurrentDevis_(x.NATURE, x.PASSAGES_MOIS, x.SANS_CONTRAT),
     lignes: lignes, ht: Number(x.TOTAL_HT) || 0, tva: Number(x.TOTAL_TVA) || 0, ttc: Number(x.TOTAL_TTC) || 0,
     mensuel: Number(x.TOTAL_HT_MENSUEL) || 0,
     signe: String(x.STATUT || '').toUpperCase() === 'SIGNE', signataire: String(x.SIGNATAIRE || ''),
@@ -9644,7 +9692,7 @@ function etatFacturation_(periode) {
       soucis: soucis.length
     };
 
-    if (recurrentDevis_(d.NATURE, d.PASSAGES_MOIS)) {
+    if (recurrentDevis_(d.NATURE, d.PASSAGES_MOIS, d.SANS_CONTRAT)) {
       var prevus = Number(d.PASSAGES_MOIS) || 0;
       var duMois = ch.filter(function (c) { return moisDe_(c.DATE) === mois; });
       var faitsMois = duMois.filter(function (c) {
@@ -9825,7 +9873,7 @@ function preparerFacture_(d, com) {
     return { ok: false, erreur: 'Le devis ' + num + ' n\'est pas signé.' };
   }
 
-  var recurrent = recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS);
+  var recurrent = recurrentDevis_(devis.NATURE, devis.PASSAGES_MOIS, devis.SANS_CONTRAT);
   var periode = recurrent
     ? (String(d.periode || '').match(/^\d{4}-\d{2}$/) ? d.periode : moisCourant_())
     : '';
@@ -10268,29 +10316,45 @@ function equipeParJour_(reg) {
    normalement. Les passages tombés un férié, eux, restent : ils sont à
    replacer. Les interventions à venir sans personne restent aussi : il faut
    bien que quelqu'un y aille. */
-function remiseAFaire_(com) {
-  var auj = minuit_(new Date());
-  var devis = lireDevis_().map(function (x) { return String(x.NUMERO || '').trim(); }).filter(String);
-  var ch = [];
-  objetsDe_(SH.CHANTIERS).forEach(function (o) {
-    var id = String(o.ID || '').trim();
-    if (!id || String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') return;
-    if (!o.DATE) {
-      var cle = String(o.RECURRENT || '');
-      if (cle.indexOf('|') > 0 && nomFerieIso_(cle.split('|')[1])) return;
-      ch.push(id); return;
-    }
-    var d = minuit_(o.DATE);
-    if (!isNaN(d.getTime()) && d <= auj) ch.push(id);
+function remiseAFaire_(com, d) {
+  /* v106 — l'appli envoie la clé de chaque élément affiché dans « À faire »
+     (« ferie:CH-0251|2026-11-11 », « contrat:DEV-… »…) : on les garde
+     toutes de côté, et seuls les éléments apparus ensuite s'affichent. (La
+     v102 ne mettait de côté que des devis et des interventions passées : les
+     contrats, fériés, congés et échéances restaient.) */
+  var cles = [];
+  ((d && d.cles) || []).forEach(function (k) {
+    k = String(k || '').slice(0, 90);
+    if (k && cles.indexOf(k) < 0) cles.push(k);
   });
-  var s = { quand: new Date().getTime(), devis: devis, chantiers: ch };
-  PropertiesService.getScriptProperties().setProperty('AFAIRE_IGNORES', JSON.stringify(s));
-  tracerServeur_(com ? com.nom : 'SYSTEME', 'A FAIRE REMIS A ZERO', devis.length + ' devis, ' + ch.length + ' intervention(s) mis de côté', '', '');
-  return { ok: true, devis: devis.length, interventions: ch.length, quand: s.quand };
+  var s = { quand: new Date().getTime(), devis: [], chantiers: [], cles: cles };
+  ecrireGrandeProp_('AFAIRE_IGNORES', JSON.stringify(s));
+  tracerServeur_(com ? com.nom : 'SYSTEME', 'A FAIRE REMIS A ZERO', cles.length + ' élément(s) mis de côté', '', '');
+  return { ok: true, cles: cles, quand: s.quand };
 }
 function ignoresAFaire_() {
-  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('AFAIRE_IGNORES') || 'null'); }
+  try { return JSON.parse(lireGrandeProp_('AFAIRE_IGNORES') || 'null'); }
   catch (e) { return null; }
+}
+/* Une propriété du script ne tient que 9 ko : au-delà, on découpe. */
+function ecrireGrandeProp_(nom, texte) {
+  var p = PropertiesService.getScriptProperties();
+  var n = Number(p.getProperty(nom + '_N') || 0);
+  for (var i = 0; i < n; i++) p.deleteProperty(nom + '_' + i);
+  p.deleteProperty(nom + '_N');
+  if (texte.length <= 8000) { p.setProperty(nom, texte); return; }
+  var parts = Math.ceil(texte.length / 8000);
+  for (var j = 0; j < parts; j++) p.setProperty(nom + '_' + j, texte.slice(j * 8000, (j + 1) * 8000));
+  p.setProperty(nom + '_N', String(parts));
+  p.deleteProperty(nom);
+}
+function lireGrandeProp_(nom) {
+  var p = PropertiesService.getScriptProperties();
+  var n = Number(p.getProperty(nom + '_N') || 0);
+  if (!n) return p.getProperty(nom);
+  var t = '';
+  for (var i = 0; i < n; i++) t += p.getProperty(nom + '_' + i) || '';
+  return t;
 }
 
 /* La mise en place du 8 novembre au soir, lancée une fois depuis l'éditeur :
@@ -10306,7 +10370,7 @@ function miseEnPlaceV102() {
   var z = remiseAFaire_(null);
   Logger.log('Équipe : ' + e.series + ' contrat(s), ' + e.interventions + ' intervention(s). ' +
              'Planning : ' + g.poses + ' posé(s), ' + (g.ferieRetires || 0) + ' férié(s) retiré(s). ' +
-             'À faire : ' + z.devis + ' devis et ' + z.interventions + ' intervention(s) mis de côté.');
+             'À faire : ' + z.cles.length + ' élément(s) mis de côté.');
   return { equipe: e, planning: g, remise: z };
 }
 
@@ -10629,4 +10693,104 @@ function miseEnPlaceV105() {
   Logger.log('Planning : ' + (g.feriesRemis || 0) + ' férié(s) remis à leur date, ' + g.poses + ' posé(s), ' +
              (g.absences || 0) + ' à placer pour congé.');
   return g;
+}
+
+
+/* ====================== v106 — PRÉVENIR À LA SIGNATURE ======================
+   « Rajoute le fait que j'ai une notification quand le client signera le
+   devis. » La signature en ligne prévenait déjà le gérant ; la signature sur
+   place (à l'écran du commercial) et un devis déclaré signé ne prévenaient
+   personne. Le gérant (et le commercial du devis) reçoivent un mot, sauf celui
+   qui vient lui-même de faire signer. */
+function notifierSignature_(numero, client, ht, commercial, acteur, comment) {
+  try {
+    var dest = [], vus = {};
+    var ajoute = function (n) {
+      var k = normNom_(n);
+      if (!k || vus[k] || k === normNom_(acteur)) return;
+      vus[k] = 1; dest.push(n);
+    };
+    lireAdmins_().forEach(function (a) { ajoute(a.nom); });
+    ajoute(commercial);
+    if (!dest.length) return 0;
+    var montant = Number(ht) ? ' · ' + eur_(Number(ht)) + ' HT' : '';
+    var res = notifierLot_(dest.map(function (n) {
+      return { nom: n, titre: 'Devis signé', texte: String(client || 'Client') + montant + ' — ' + comment +
+               (commercial && normNom_(commercial) !== normNom_(n) ? ' (' + commercial + ')' : '') };
+    }));
+    return res.filter(function (r) { return r.ok; }).length;
+  } catch (e) { return 0; }
+}
+
+
+/* ====================== v106 — RAPPEL LA VEILLE (PONCTUELS) ======================
+   « Il faut aussi inclure un rappel automatique 24 h avant la prestation,
+   uniquement pour les chantiers ponctuels, pas sur le récurrent. »
+   Toutes les heures (avec la préparation automatique), entre 8 h et 21 h :
+   chaque intervention ponctuelle (sans clé RECURRENT) planifiée dans les
+   24 heures qui viennent reçoit un mail au client — une seule fois. L'adresse
+   est celle du devis lié ; sans devis ou sans e-mail, rien ne part (journal).
+   Réglage rappel_veille = NON pour couper. */
+function rappelsVeille_(maintenant) {
+  var now = maintenant || new Date();
+  var h = now.getHours();
+  if (h < 8 || h >= 21) return { envoyes: 0 };
+  var reg = lireReglages_();
+  if (/^(non|no|0|off)$/i.test(String(reg.rappel_veille || '').trim())) return { envoyes: 0, motif: 'coupé' };
+  var props = PropertiesService.getScriptProperties();
+  var deja = {};
+  try { deja = JSON.parse(props.getProperty('RAPPELS_VEILLE') || '{}'); } catch (e) { deja = {}; }
+  var emails = {};
+  lireDevis_().forEach(function (d) {
+    var n = String(d.NUMERO || '').trim(), m = String(d.EMAIL || '').trim();
+    if (n && /@/.test(m)) { emails[n] = { email: m, d: d }; }
+    var o = String(d.NUMERO_ORIGINE || '').trim();
+    if (o && /@/.test(m) && !emails[o]) emails[o] = { email: m, d: d };
+  });
+  var b = { envoyes: 0, sansMail: 0 };
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    var id = String(o.ID || '').trim();
+    if (!id || deja[id]) return;
+    if (String(o.RECURRENT || '').trim()) return;                  // pas les contrats
+    var st = String(o.STATUT || '').toUpperCase().trim();
+    if (st !== 'PLANIFIE') return;
+    var d = o.DATE instanceof Date ? o.DATE : (o.DATE ? new Date(o.DATE) : null);
+    if (!d || isNaN(d.getTime())) return;
+    var hm = String(heureTexte_(o.HEURE) || '08:00').split(':');
+    var debut = new Date(d.getFullYear(), d.getMonth(), d.getDate(), Number(hm[0]) || 8, Number(hm[1]) || 0);
+    var ecart = (debut - now) / 3600000;
+    if (ecart <= 0 || ecart > 24) return;
+    var lien = emails[String(o.NUMERO || '').trim()];
+    deja[id] = isoJour_(debut);
+    if (!lien) {
+      b.sansMail++;
+      tracerServeur_('SYSTEME', 'RAPPEL VEILLE SANS E-MAIL', String(o.CLIENT || '') + ' · ' + isoJour_(debut), String(o.NUMERO || ''), '');
+      return;
+    }
+    var heure = heureTexte_(o.HEURE);
+    var lieu = [String(o.ADRESSE || ''), [String(o.CP || ''), String(o.VILLE || '')].join(' ').trim()].filter(String).join(', ');
+    var quand = (isoJour_(debut) === isoJour_(new Date(now.getTime() + 86400000)) ? 'demain, ' : '') + jourFr_(debut) + (heure ? ' à ' + heure : '');
+    var texte = 'Bonjour,\n\nJ\'espère que vous allez bien !\n\nPetit rappel : notre équipe intervient ' + quand +
+      (lieu ? ', au ' + lieu : '') + '.\n\nSi l\'accès demande quelque chose de particulier (code, clés, stationnement), ' +
+      'il suffit de répondre à ce mail.\n\nBelle journée,';
+    try {
+      envoyerMail_({
+        to: lien.email,
+        subject: 'Rappel : notre intervention ' + (quand.indexOf('demain') === 0 ? 'demain' : 'le ' + jourFr_(debut)),
+        name: String(reg.societe_nom || 'BREIZH BRILLANCE'),
+        replyTo: String(reg.societe_email || ''),
+        htmlBody: corpsMailPerso_(null, texte, reg)
+      }, reg);
+      b.envoyes++;
+      tracerServeur_('SYSTEME', 'RAPPEL VEILLE ENVOYE', String(o.CLIENT || '') + ' · ' + lien.email + ' · ' + quand, String(o.NUMERO || ''), '');
+    } catch (eM) {
+      delete deja[id];
+      tracerServeur_('SYSTEME', 'MAIL RATE', 'rappel veille ' + id + ' — ' + String(eM && eM.message || eM), String(o.NUMERO || ''), '');
+    }
+  });
+  /* On n'oublie que ce qui est passé depuis plus de deux jours. */
+  var lim = isoJour_(new Date(now.getTime() - 2 * 86400000));
+  Object.keys(deja).forEach(function (k) { if (deja[k] < lim) delete deja[k]; });
+  props.setProperty('RAPPELS_VEILLE', JSON.stringify(deja));
+  return b;
 }

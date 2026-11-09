@@ -697,7 +697,7 @@
   .factTitre{font-size:15px;margin:18px 2px 6px;color:var(--txt,inherit)}
   /* v100 — les cinq onglets du tableau */
   .adOngs{gap:4px;flex-wrap:nowrap}
-  .ctDevisRes{display:flex;flex-direction:column;gap:6px;margin-top:6px}.ctDevisLigne{text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line,#334);background:transparent;color:inherit;font-size:14px;cursor:pointer}.ctDevisLigne:active{opacity:.7}.ctDevisChoisi{display:flex;gap:8px;align-items:center;justify-content:space-between}.calFer{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(220,38,38,.07) 6px 12px)}.calFerL{display:inline-block;font-size:10px;font-weight:600;color:var(--danger);margin-left:4px;vertical-align:middle}.semFer{display:block;font-size:10px;font-style:normal;color:var(--danger);font-weight:600}.lienTexte{background:none;border:0;color:var(--acc);text-decoration:underline;font-size:12px;cursor:pointer;padding:4px}.factOngs .btn.on{background:var(--acc);color:#fff;border-color:var(--acc)}.factAide summary{cursor:pointer}.miniGrille{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}.miniT{text-align:center;font-size:11px;color:var(--sub)}.miniJ{border:1px solid var(--line);background:transparent;color:inherit;border-radius:8px;padding:4px 0;display:flex;flex-direction:column;align-items:center;min-height:40px;cursor:pointer}.miniJ b{font-size:13px}.miniJ i{font-size:10px;font-style:normal;color:var(--sub);min-height:12px}.miniHors{opacity:.45}.miniOff{opacity:.4}.miniOn{background:var(--acc);color:#fff;border-color:var(--acc)}.miniOn i{color:#fff}.miniAuj{outline:2px solid var(--acc)}.miniDemi{background:repeating-linear-gradient(135deg,transparent 0 5px,rgba(217,119,6,.12) 5px 10px)}.calAbsL{display:inline-block;font-size:10px;font-weight:600;color:var(--warn);margin-left:4px;vertical-align:middle}.semAbs{display:block;font-size:10px;font-style:normal;color:var(--warn);font-weight:600}.adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ctDevisRes{display:flex;flex-direction:column;gap:6px;margin-top:6px}.ctDevisLigne{text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line,#334);background:transparent;color:inherit;font-size:14px;cursor:pointer}.ctDevisLigne:active{opacity:.7}.ctDevisChoisi{display:flex;gap:8px;align-items:center;justify-content:space-between}.calFer{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(220,38,38,.07) 6px 12px)}.calFerL{display:inline-block;font-size:10px;font-weight:600;color:var(--danger);margin-left:4px;vertical-align:middle}.semFer{display:block;font-size:10px;font-style:normal;color:var(--danger);font-weight:600}.lienTexte{background:none;border:0;color:var(--acc);text-decoration:underline;font-size:12px;cursor:pointer;padding:4px}.factOngs .btn.on{background:var(--acc);color:#fff;border-color:var(--acc)}.factAide summary{cursor:pointer}.miniGrille{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}.miniT{text-align:center;font-size:11px;color:var(--sub)}.miniJ{border:1px solid var(--line);background:transparent;color:inherit;border-radius:8px;padding:4px 0;display:flex;flex-direction:column;align-items:center;min-height:40px;cursor:pointer}.miniJ b{font-size:13px}.miniJ i{font-size:10px;font-style:normal;color:var(--sub);min-height:12px}.miniHors{opacity:.45}.miniOff{opacity:.4}.miniOn{background:var(--acc);color:#fff;border-color:var(--acc)}.miniOn i{color:#fff}.miniAuj{outline:2px solid var(--acc)}.zoneDepot.depotOn{outline:2px dashed var(--acc);outline-offset:-4px;background:rgba(0,76,146,.08)}.miniDemi{background:repeating-linear-gradient(135deg,transparent 0 5px,rgba(217,119,6,.12) 5px 10px)}.calAbsL{display:inline-block;font-size:10px;font-weight:600;color:var(--warn);margin-left:4px;vertical-align:middle}.semAbs{display:block;font-size:10px;font-style:normal;color:var(--warn);font-weight:600}body.admin #adOngsHaut{display:none}.adOngs .btn{flex:1 1 0;min-width:0;padding:9px 2px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
   <!-- Les notifications. Le SDK vit chez OneSignal : sans réseau il ne se
        charge pas, et l'application s'en passe — le reste fonctionne hors
@@ -828,6 +828,12 @@
       <button class="choix" id="chENT" onclick="choisirNature('ENTRETIEN')">
         <b>Entretien des locaux</b>
         <span>Passages réguliers. Le devis est mensualisé.</span>
+      </button>
+      <!-- v106 — mêmes prestations, sans contrat : quelques passages sur une
+           courte période (« 1 fois par semaine pendant un mois »). -->
+      <button class="choix" id="chENS" onclick="choisirNature('ENTRETIEN_SC')">
+        <b>Entretien des locaux (sans contrat)</b>
+        <span>Quelques passages sur une courte période. Facturé comme une intervention, jamais au contrat.</span>
       </button>
       <button class="choix" id="chCHA" onclick="choisirNature('CHANTIER')">
         <b>Nettoyage de fin de chantier</b>
@@ -1142,7 +1148,7 @@
   <!-- ÉTAPE 6 : HISTORIQUE -->
   <section id="e6" class="hide">
     <div class="card hide" id="mesChiffres"></div>
-    <div class="card">
+    <div class="card" id="e6Local">
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">
         <h2 style="flex:1;margin:0">Mes devis</h2>
         <button class="btn sec sm" onclick="synchroniser(true, this)">Synchroniser</button>
@@ -1157,7 +1163,7 @@
     <!-- Ce que le bureau a gardé. « Mes devis » ne lisait que la mémoire du
          téléphone : un appareil neuf ou un cache vidé laissait le commercial
          devant une liste vide alors que le classeur avait tout. -->
-    <div class="card">
+    <div class="card" id="e6Bureau">
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px">
         <h2 style="flex:1;margin:0">Devis du bureau</h2>
         <button class="btn sec sm" id="bArch" onclick="chargerArchive(0, this)">Actualiser</button>
@@ -1275,9 +1281,24 @@
 <nav class="ongl hide" id="ongl">
   <!-- Le tableau du gérant. Depuis la v82 il établit ses propres devis : sans
        cet onglet, une saisie commencée serait une impasse. -->
-  <button id="ongT" class="hide" onclick="ecranAdmin()">
+  <button id="ongT" class="hide" onclick="barreAdmin('aujourdhui')">
     <svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M3.5 9h17M9 9v11"/></svg>
     <span>Tableau</span>
+  </button>
+  <!-- v106 — la barre du gérant : Tableau (À faire) · Planning · Devis ·
+       Factures · Phoning. Les boutons « Devis » (saisie) et « Mes devis » du
+       commercial lui sont cachés : l'onglet Devis a « Nouveau devis ». -->
+  <button id="ongAPl" class="hide" onclick="barreAdmin('chantiers')">
+    <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/><path d="M7.5 14h3"/></svg>
+    <span>Planning</span>
+  </button>
+  <button id="ongADv" class="hide" onclick="barreAdmin('devis')">
+    <svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4"/><path d="M9 13h6M9 17h4"/></svg>
+    <span>Devis</span>
+  </button>
+  <button id="ongAF" class="hide" onclick="barreAdmin('factures')">
+    <svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></svg>
+    <span>Factures</span>
   </button>
   <button id="ongD" onclick="ongletDevis()">
     <svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4"/><path d="M9 13h6M9 17h4"/></svg>
@@ -1391,7 +1412,7 @@
     <button class="btn hide" id="bAdDevisNeuf" style="margin-top:12px"
             onclick="devisAdmin(this)">Nouveau devis</button>
 
-    <div class="row adOngs" style="margin-top:12px">
+    <div class="row adOngs" id="adOngsHaut" style="margin-top:12px">
       <!-- v100 : cinq onglets serrés pour tenir sur un téléphone. -->
       <button class="btn sec sm" id="bOngJour" onclick="ongletAdmin('aujourdhui')">À faire</button>
       <button class="btn sec sm" id="bOngChantiers" onclick="ongletAdmin('chantiers')">Planning</button>
@@ -1619,11 +1640,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=105"></script>
-<script src="jspdf.umd.min.js?v=105"></script>
-<script src="police.js?v=105"></script>
-<script src="logo.js?v=105"></script>
-<script src="pdf.js?v=105"></script>
-<script src="app.js?v=105"></script>
+<script src="config.js?v=106"></script>
+<script src="jspdf.umd.min.js?v=106"></script>
+<script src="police.js?v=106"></script>
+<script src="logo.js?v=106"></script>
+<script src="pdf.js?v=106"></script>
+<script src="app.js?v=106"></script>
 </body>
 </html>

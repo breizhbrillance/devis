@@ -219,7 +219,7 @@ var PDF = (function () {
        devinait pas : seules les lignes le disaient. Un devis d'avant la nature
        n'en porte pas — on n'écrit alors rien plutôt que de lui en prêter une. */
     var natD = String(devis.nature || '').toUpperCase().trim();
-    var nomNature = natD === 'ENTRETIEN' ? 'Entretien des locaux'
+    var nomNature = natD === 'ENTRETIEN' ? (devis.sansContrat ? 'Entretien des locaux (sans contrat)' : 'Entretien des locaux')
                   : natD === 'VITRERIE'  ? 'Vitrages et menuiseries'
                   : natD === 'FACADE'    ? 'Nettoyage de façade'
                   : natD === 'REMISE'    ? 'Remise en état'
