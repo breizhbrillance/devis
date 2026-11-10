@@ -4901,6 +4901,9 @@ function recurrentModif_(d, com) {
   } else {
     var veille = new Date(depuis); veille.setDate(veille.getDate() - 1); veille.setHours(12, 0, 0, 0);
     ecrireCase_(L, 'FIN', veille);
+    /* v108m — l'ancienne série est close : elle ne doit plus jamais être
+       reconduite (sinon elle renaît et double la nouvelle). */
+    ecrireCase_(L, 'RECONDUCTION', 'NON');
     f.s.DEBUT = debutNeuf;
     /* Les dates sautées suivent la série : un trou posé exprès ne doit pas se
        refermer parce qu'on a changé l'heure. */
@@ -4928,6 +4931,8 @@ function recurrentStop_(d, com) {
   var debut = L.o.DEBUT ? minuit_(L.o.DEBUT) : null;
 
   ecrireCase_(L, 'FIN', veille);
+  /* v108m — un contrat arrêté n'est plus reconduit. */
+  ecrireCase_(L, 'RECONDUCTION', 'NON');
   /* Une série qui n'aurait jamais eu un seul passage est éteinte : une FIN
      tombée avant son DÉBUT se lirait mal dans le classeur. */
   if (debut && !isNaN(debut.getTime()) && minuit_(veille) < debut) ecrireCase_(L, 'ACTIF', 'NON');
@@ -11093,6 +11098,17 @@ function reconduireContrats_() {
     if (mois < 1 || !v[i][cF]) continue;
     var fin = minuit_(v[i][cF]);
     if (isNaN(fin.getTime())) continue;
+    /* v108m — « je veux arrêter le contrat et il revient » : une FIN posée
+       avant la fin de la première période d'engagement est un arrêt ou une
+       modification, pas une échéance. On ne la reconduit pas. */
+    var cD = en.indexOf('DEBUT');
+    if (cD >= 0 && v[i][cD]) {
+      var deb = minuit_(v[i][cD]);
+      if (!isNaN(deb.getTime())) {
+        var ech1 = new Date(deb); ech1.setMonth(ech1.getMonth() + mois); ech1.setDate(ech1.getDate() - 4);
+        if (fin < ech1) continue;
+      }
+    }
     var jours = Math.round((fin - auj) / 86400000);
     if (jours > 30 || jours < -60) continue;
     var nf = new Date(fin); nf.setMonth(nf.getMonth() + mois); nf.setHours(12, 0, 0, 0);
