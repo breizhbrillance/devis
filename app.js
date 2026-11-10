@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108j';
+var VERSION_APP = 'v108k';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -569,6 +569,13 @@ function montrer(id){
   try{ document.body.classList.toggle('admin', estAdmin()); peindreLiensTheme(); }catch(e){}
   majOnglets();
   try{ majRetourHaut(); }catch(e){}
+  try{ majBoutonDeco(); }catch(e){}
+}
+/* v108k — la déconnexion en haut, sur tous les écrans d'une personne connectée. */
+function majBoutonDeco(){
+  var b = $('bDeco'); if(!b) return;
+  var cache = ECRAN_VU === 'eCo' || ECRAN_VU === 'eAccord' || !session();
+  b.classList.toggle('hide', !!cache);
 }
 
 /* La barre n'a de sens que pour le commercial qui prospecte : sans la
