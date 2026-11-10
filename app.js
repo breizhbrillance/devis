@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108k';
+var VERSION_APP = 'v108l';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
