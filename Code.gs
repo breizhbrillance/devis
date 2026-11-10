@@ -7871,8 +7871,13 @@ function expediteurDispo_(adresse) {
   if (v === '0') return false;
   var ok = false;
   try {
-    ok = GmailApp.getAliases().some(function (x) { return String(x).trim().toLowerCase() === a; });
-  } catch (e) { ok = false; }
+    var al = GmailApp.getAliases();
+    ok = al.some(function (x) { return String(x).trim().toLowerCase() === a; });
+    if (!ok) tracerServeur_('SYSTEME', 'EXPEDITEUR NON DECLARE', a + ' absent des adresses Gmail (' + al.join(', ') + ')', '', '');
+  } catch (e) {
+    ok = false;
+    tracerServeur_('SYSTEME', 'EXPEDITEUR ILLISIBLE', String(e && e.message || e).slice(0, 200), '', '');
+  }
   try { if (cache) cache.put(cle, ok ? '1' : '0', 21600); } catch (e2) {}
   return ok;
 }
@@ -7888,6 +7893,7 @@ function autoriserEnvoiContact() {
   var a = String(lireReglages_().email_expediteur || 'contact@breizhbrillance.fr').trim();
   try { CacheService.getScriptCache().remove('alias:' + a.toLowerCase()); } catch (e) {}
   var dispo = expediteurDispo_(a);
+  tracerServeur_('SYSTEME', 'ESSAI EXPEDITEUR', a + (dispo ? ' disponible' : ' NON disponible'), '', '');
   envoyerMail_({ to: a, subject: 'Essai — les mails partent bien de ' + a,
                  htmlBody: '<p>Bonjour,</p><p>Ce mail d\'essai vient de l\'application BREIZH BRILLANCE. ' +
                    'S\'il est arrivé avec l\'expéditeur ' + a + ', tout est en ordre.</p>' });
