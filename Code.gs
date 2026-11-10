@@ -7020,6 +7020,8 @@ function facturationAppli_(periode) {
   var noms = nomsDeContrats_();
   var demain = new Date(); demain.setHours(0, 0, 0, 0); demain.setDate(demain.getDate() + 1);
   var parDevis = {}, interventions = [];
+  var modeles = [];
+  try { modeles = modelesFacture_(); } catch (eMo) { modeles = []; }
   objetsDe_(SH.CHANTIERS).forEach(function (o) {
     var id = String(o.ID || '').trim();
     if (!id) return;
@@ -7038,12 +7040,18 @@ function facturationAppli_(periode) {
     }
     var deja = (faites[id] || {})[''];
     var prix = prixDeNote_(o.NOTE);
+    /* v108f — un modèle Henrri au montant de la note, ou à défaut le plus
+       récent du client pour préremplir le montant. */
+    var mod = modelePour_(o.CLIENT, prix ? prix.ht : 0, modeles) || (prix ? null : modelePour_(o.CLIENT, 0, modeles));
+    if (mod && !prix) prix = { ht: mod.ht, lu: '' };
     interventions.push({
       cle: id, type: 'chantier', client: String(o.CLIENT || ''), date: isoDe_(d) || '',
       adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
       nature: String(o.NATURE || ''), libelle: libelleNature_(o.NATURE),
       note: String(o.NOTE || '').replace(/\s*—?\s*repris de FamilyWall\s*/i, '').trim().slice(0, 200),
-      ht: prix ? prix.ht : 0, prixLu: prix ? prix.lu : '', tva: estParticulier_(o.CLIENT) ? 10 : 20,
+      ht: prix ? prix.ht : 0, prixLu: prix ? prix.lu : '', tva: mod ? mod.tva : (estParticulier_(o.CLIENT) ? 10 : 20),
+      modele: mod ? { source: mod.source, ht: mod.ht, tva: mod.tva, n: mod.lignes.length, date: mod.date,
+                      lignes: mod.lignes.slice(0, 12).map(function (l) { return l.designation + ' — ' + l.montant.toFixed(2).replace('.', ',') + ' €'; }) } : null,
       particulier: estParticulier_(o.CLIENT),
       qui: String(o.PRESTATAIRE || ''), pointe: st === 'FAIT',
       jamaisPlace: st === 'A PLANIFIER' || !String(o.PRESTATAIRE || '').trim(),
@@ -7080,6 +7088,130 @@ function facturationAppli_(periode) {
            ponctuels: [], henrri: true };
 }
 
+/* ================================================================
+   v108f — LE DÉTAIL DES FACTURES, REPRIS DE HENRRI
+   ================================================================
+   Simon, 10 novembre : « dans la vente des produits ce n'est pas précis, y'a
+   juste Nettoyage des vitrages — alors que d'habitude je détaille bien toutes
+   les opérations ». Ses factures Henrri passées sont rangées dans l'onglet
+   MODELES_FACTURE (une ligne par opération). Quand une intervention se facture
+   pour un client qui a un modèle AU MÊME MONTANT, la facture Pennylane en
+   reprend toutes les lignes. Sinon rien ne change : une ligne unique.
+
+   L'onglet se remplit à partir d'un fichier « MODELES_FACTURE_IMPORT.csv »
+   déposé dans le Drive : il est lu à la première facturation, puis mis à la
+   corbeille. Les données des clients ne passent donc jamais par ce code,
+   publié sur GitHub. Simon peut corriger l'onglet à la main ; ACTIF = NON
+   écarte une ligne. */
+var SH_MODELES_ = 'MODELES_FACTURE';
+var ENTETES_MODELES_ = ['CLIENT', 'CONTACT', 'SOURCE', 'DATE', 'TOTAL_HT', 'TVA', 'ORDRE',
+                        'DESIGNATION', 'QTE', 'PU_HT', 'MONTANT_HT', 'ACTIF'];
+var FICHIER_MODELES_ = 'MODELES_FACTURE_IMPORT.csv';
+
+function importerModelesFacture_() {
+  var it = DriveApp.getFilesByName(FICHIER_MODELES_);
+  if (!it.hasNext()) return 0;
+  var f = it.next();
+  var lignes = Utilities.parseCsv(f.getBlob().getDataAsString('UTF-8'));
+  if (!lignes.length) { f.setTrashed(true); return 0; }
+  var en = lignes[0].map(function (x) { return String(x).replace(/^\uFEFF/, '').trim().toUpperCase(); });
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(SH_MODELES_);
+  if (!sh) { sh = ss.insertSheet(SH_MODELES_); sh.getRange(1, 1, 1, ENTETES_MODELES_.length).setValues([ENTETES_MODELES_]); }
+  var deja = {};
+  objetsDe_(SH_MODELES_).forEach(function (o) { deja[String(o.SOURCE) + '|' + String(o.ORDRE)] = 1; });
+  var out = [];
+  for (var i = 1; i < lignes.length; i++) {
+    var o = {};
+    en.forEach(function (h, j) { o[h] = lignes[i][j]; });
+    if (!String(o.SOURCE || '').trim() || deja[String(o.SOURCE) + '|' + String(o.ORDRE)]) continue;
+    o.ACTIF = o.ACTIF || 'OUI';
+    out.push(ENTETES_MODELES_.map(function (h) {
+      var v = o[h] === undefined ? '' : o[h];
+      if (/^(TOTAL_HT|TVA|ORDRE|QTE|PU_HT|MONTANT_HT)$/.test(h) && v !== '') v = Number(String(v).replace(',', '.')) || 0;
+      if (h === 'SOURCE' || h === 'DATE') v = String(v);
+      return v;
+    }));
+  }
+  if (out.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, out.length, ENTETES_MODELES_.length).setNumberFormat('@')
+      .setValues(out.map(function (r) { return r.map(function (v) { return typeof v === 'number' ? String(v) : v; }); }));
+    // les montants redeviennent des nombres
+    sh.getRange(2, 5, sh.getLastRow() - 1, 1).setNumberFormat('0.00');
+  }
+  f.setTrashed(true);
+  tracerServeur_('SYSTEME', 'MODELES FACTURE IMPORTES', out.length + ' ligne(s)', '', '');
+  return out.length;
+}
+
+function cleClient_(s) {
+  return ' ' + sansAccent_(s).replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\b(M|MR|MME|MLLE|MONSIEUR|MADAME|ET|SARL|SAS|SASU|SCI|EURL|STE|SC)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim() + ' ';
+}
+
+/** Les modèles, regroupés par facture Henrri d'origine. */
+function modelesFacture_() {
+  try { importerModelesFacture_(); } catch (e) {
+    tracerServeur_('SYSTEME', 'MODELES FACTURE NON IMPORTES', String(e && e.message || e).slice(0, 200), '', '');
+  }
+  var ss = SpreadsheetApp.getActive();
+  if (!ss.getSheetByName(SH_MODELES_)) return [];
+  var par = {}, ordre = [];
+  objetsDe_(SH_MODELES_).forEach(function (o) {
+    if (/^N/i.test(String(o.ACTIF || '').trim())) return;
+    var src = String(o.SOURCE || '').trim();
+    if (!src) return;
+    if (!par[src]) {
+      par[src] = { source: src, client: String(o.CLIENT || ''), contact: String(o.CONTACT || ''),
+                   date: String(o.DATE || ''), ht: num_(o.TOTAL_HT), tva: num_(o.TVA), lignes: [] };
+      ordre.push(src);
+    }
+    par[src].lignes.push({ ordre: num_(o.ORDRE), designation: String(o.DESIGNATION || ''),
+                           qte: num_(o.QTE), pu: num_(o.PU_HT), montant: num_(o.MONTANT_HT) });
+  });
+  return ordre.map(function (k) {
+    var m = par[k];
+    m.lignes.sort(function (a, b) { return a.ordre - b.ordre; });
+    return m;
+  });
+}
+function num_(v) { return Number(String(v == null ? '' : v).replace(/\s/g, '').replace(',', '.')) || 0; }
+
+/* Le modèle d'un client : par son nom de société, le nom complet du contact
+   ou son nom de famille (« MME DUPONT » retrouve « Claire DUPONT »).
+   Avec un montant, seul un modèle au même montant compte (à 5 centimes) ;
+   sans montant, le plus récent sert à préremplir. */
+function modelePour_(client, ht, modeles) {
+  var c = cleClient_(client);
+  if (c.trim().length < 3) return null;
+  var bons = (modeles || modelesFacture_()).filter(function (m) {
+    var cles = [cleClient_(m.client), cleClient_(m.contact)];
+    var mots = cleClient_(m.contact).trim().split(' ');
+    if (mots.length > 1 && mots[mots.length - 1].length >= 4) cles.push(' ' + mots[mots.length - 1] + ' ');
+    return cles.some(function (k) {
+      return k.trim().length >= 3 && (c.indexOf(k) >= 0 || k.indexOf(c) >= 0);
+    });
+  });
+  if (ht > 0) bons = bons.filter(function (m) { return Math.abs(m.ht - ht) <= 0.05; });
+  if (!bons.length) return null;
+  bons.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+  return bons[0];
+}
+
+/* Les lignes Pennylane d'un modèle. Quantité × prix unitaire quand le
+   produit retombe juste ; sinon une quantité de 1 au montant de la ligne,
+   pour que la facture fasse exactement le total du modèle. */
+function lignesDuModele_(m, tva) {
+  return m.lignes.filter(function (l) { return l.montant !== 0; }).map(function (l) {
+    var q = l.qte || 1, pu = l.pu;
+    var juste = Math.abs(Math.round(q * pu * 100) / 100 - l.montant) < 0.005;
+    return juste ? { libelle: l.designation, qte: q, prix: pu, tva: tva }
+                 : { libelle: l.designation + (q !== 1 ? ' (× ' + String(q).replace('.', ',') + ')' : ''),
+                     qte: 1, prix: l.montant, tva: tva };
+  });
+}
+
 /** Le brouillon d'une intervention sans devis : le prix vient de l'appli. */
 function facturerIntervention_(d, com) {
   if (!pennylaneJeton_()) return { ok: false, erreur: 'Pennylane n\'est pas connecté (menu 25 du classeur).' };
@@ -7094,6 +7226,12 @@ function facturerIntervention_(d, com) {
   var client = String(d.client || ch.CLIENT || '').trim();
   var libelle = String(d.libelle || libelleNature_(ch.NATURE)).trim();
   var jour = ch.DATE ? Utilities.formatDate(new Date(ch.DATE), 'Europe/Paris', 'dd/MM/yyyy') : '';
+  /* v108f — le détail des opérations, quand un modèle Henrri a ce montant. */
+  var mod = null;
+  try { mod = d.detaille === false ? null : modelePour_(client, ht); } catch (eM) { mod = null; }
+  if (mod && (d.tva === undefined || d.tva === '')) tva = mod.tva;
+  var lignesF = mod ? lignesDuModele_(mod, tva)
+    : [{ libelle: libelle + (jour ? ' — ' + jour : ''), prix: ht, tva: tva, qte: 1, detail: String(d.detail || '').trim() }];
   var res = null, erreur = '';
   try {
     res = pennylaneBrouillon_({
@@ -7104,10 +7242,9 @@ function facturerIntervention_(d, com) {
                 particulier: d.particulier !== undefined ? !!d.particulier
                   : /^(M\.|MME|MR|MONSIEUR|MADAME|M )/i.test(client) },
       sujet: 'Facture — ' + libelle + (jour ? ' du ' + jour : ''),
-      description: 'Prestation réalisée' + (jour ? ' le ' + jour : '') +
+      description: (mod ? libelle + ' — p' : 'P') + 'restation réalisée' + (jour ? ' le ' + jour : '') +
         (ch.ADRESSE ? ', ' + String(ch.ADRESSE) + ' ' + String(ch.CP || '') + ' ' + String(ch.VILLE || '') : '') + '.',
-      lignes: [{ libelle: libelle + (jour ? ' — ' + jour : ''), prix: ht, tva: tva, qte: 1,
-                 detail: String(d.detail || '').trim() }]
+      lignes: lignesF
     });
   } catch (e) { erreur = String(e && e.message || e); }
   return finirFacturePennylane_(res, erreur, { num: id, client: client, type: 'PONCTUEL', periode: '',
@@ -7268,6 +7405,37 @@ function lienSignatureAppli_(d, com) {
   }
   if (String(cible.STATUT || '').toUpperCase() === 'SIGNE') return { ok: false, erreur: 'ce devis est déjà signé' };
   var vrai = String(cible.NUMERO).trim();
+  /* v108f — « ça m'ouvre une page mail alors que tu dois l'envoyer
+     automatiquement, avec la formule de phrase que je t'ai envoyée ». Avec
+     `envoyer`, le bureau envoie lui-même le mail du devis (texte de Simon,
+     PDF joint, bouton « Signer le devis en ligne »), copie au commercial. */
+  if (d.envoyer) {
+    var a = String(d.email || cible.EMAIL || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) {
+      return { ok: false, sansEmail: true, erreur: 'Pas d\'adresse e-mail valable pour ce client : indique-la.' };
+    }
+    var reg = lireReglages_();
+    var pj = [];
+    var idPdf = idDrive_(cible.LIEN_PDF);
+    if (idPdf) { try { pj.push(DriveApp.getFileById(idPdf).getBlob()); } catch (ePj) {} }
+    var copie = [];
+    if (com && com.email) copie.push(com.email);
+    if (reg.email_copie) copie.push(String(reg.email_copie));
+    envoyerMail_({
+      to: a, cc: copie.join(','),
+      subject: 'Devis ' + vrai + ' — ' + (reg.societe_nom || 'BREIZH BRILLANCE'),
+      name: String(reg.societe_nom || 'Devis'),
+      replyTo: (com && com.email) || String(reg.societe_email || ''),
+      htmlBody: corpsMail_({ numero: vrai }, reg, com),
+      attachments: pj
+    }, reg);
+    if (d.email && String(d.email).trim() !== String(cible.EMAIL || '').trim()) {
+      try { majDevis_(vrai, { EMAIL: a }); } catch (eE) {}
+    }
+    tracerServeur_(com.nom, 'LIEN DE SIGNATURE', 'envoyé par e-mail à ' + a + (pj.length ? '' : ' (sans PDF)'), vrai, d.appareil || '');
+    return { ok: true, envoye: true, a: a, pdf: pj.length > 0, numero: vrai, url: lienSignature_(vrai),
+             tel: String(cible.TELEPHONE || ''), contact: String(cible.CONTACT || '') };
+  }
   tracerServeur_(com.nom, 'LIEN DE SIGNATURE', 'créé', vrai, d.appareil || '');
   return { ok: true, numero: vrai, url: lienSignature_(vrai), client: String(cible.CLIENT || ''),
            contact: String(cible.CONTACT || ''), email: String(cible.EMAIL || ''), tel: String(cible.TELEPHONE || '') };

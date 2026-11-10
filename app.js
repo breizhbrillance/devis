@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108e';
+var VERSION_APP = 'v108f';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -828,7 +828,12 @@ function peindreBlocSignature(){
   z.innerHTML = '<button class="btn" onclick="ouvrirSignatureDevis(\'' + ech(DERNIER.id) +
     '\', this)">Faire signer le client</button>' +
     '<div class="mini">Le client signe sur le téléphone. Le PDF est refait avec sa ' +
-    'signature et remplace le précédent — pas de photo du papier à prendre.</div>';
+    'signature et remplace le précédent — pas de photo du papier à prendre.</div>' +
+    /* v108f — pour tous les devis, particulier comme professionnel. */
+    (DERNIER.envoyerClient && ((DERNIER.mail || {}).a)
+      ? '<div class="mini" style="margin-top:10px">Envoyé pour signature à distance à ' + ech(DERNIER.mail.a) + '.</div>'
+      : '<button class="btn sec" style="margin-top:10px" onclick="signatureDistanceFin(this)">Envoyer le lien de signature par e-mail</button>') +
+    '<div id="lienSigFin" class="mini" style="word-break:break-all"></div>';
 }
 
 function modifierVerdict(){
@@ -4527,39 +4532,84 @@ function peindreFicheArchive(d){
 function blocSignatureDistance(d, ou){
   var st = String(d.statut || '').toUpperCase();
   if(st === 'SIGNE' || st === 'REFUSE') return '';
+  var n = ech(d.numero).replace(/'/g,'&#39;');
   return '<div class="card"><h2>Faire signer à distance</h2>' +
-    '<div class="mini" style="margin-top:0">Le client reçoit un lien, lit le devis et signe au doigt ou à la souris. ' +
-    'Le devis passe à « signé » tout seul et tu es prévenu.</div>' +
-    '<button class="btn" style="margin-top:10px" onclick="envoyerLienSignature(\'' +
-      ech(d.numero).replace(/'/g,'&#39;') + '\', this)">Envoyer le lien de signature</button>' +
+    '<div class="mini" style="margin-top:0">Le client reçoit le devis par e-mail avec le bouton « Signer le devis en ligne ». ' +
+    'Il signe au doigt ou à la souris, le devis passe à « signé » tout seul et tu es prévenu.</div>' +
+    '<button class="btn" style="margin-top:10px" onclick="envoyerLienSignature(\'' + n + '\', this)">' +
+      'Envoyer le lien de signature par e-mail</button>' +
     '<div id="lienSig" class="mini" style="word-break:break-all"></div></div>';
 }
 
-function envoyerLienSignature(numero, btn){
+/* v108f — le bureau envoie lui-même le mail (texte de Simon, PDF joint,
+   bouton de signature) : plus de page mail à ouvrir. S'il manque l'adresse,
+   on la demande ici et on renvoie. Le SMS et la copie restent en secours. */
+function envoyerLienSignature(numero, btn, email, zid){
+  zid = zid || ((btn && btn.closest && btn.closest('#blocSignature')) ? 'lienSigFin' : 'lienSig');
   var moi = session();
   if(!moi) return;
-  if(!navigator.onLine) return erreur('Hors connexion : le lien se fabrique au bureau.');
-  occuper(btn, 'Lien…');
-  poster({action:'lienSignature', numero:numero, nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(r){
+  if(!navigator.onLine) return erreur('Hors connexion : le lien part du bureau, réessaie avec du réseau.');
+  occuper(btn, 'Envoi…');
+  var env = {action:'lienSignature', numero:numero, envoyer:1, nom:moi.nom, code:moi.code, appareil:APPAREIL};
+  if(email) env.email = email;
+  poster(env).then(function(r){
     libere(btn);
+    var zone = $(zid);
+    if(r && r.sansEmail){
+      erreur('');
+      if(zone) zone.innerHTML = '<label style="margin-top:10px">E-mail du client</label>' +
+        '<input id="sigMail" type="email" inputmode="email" autocomplete="off" placeholder="client@exemple.fr">' +
+        '<button class="btn sm" style="margin-top:8px" onclick="envoyerLienSignature(\'' +
+          ech(numero).replace(/'/g,'&#39;') + '\', this, (document.getElementById(\'sigMail\')||{}).value, \'' + zid + '\')">Envoyer</button>';
+      var i = $('sigMail'); if(i) i.focus();
+      return;
+    }
     if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
     erreur('');
     var texte = 'Bonjour' + (r.contact ? ' ' + r.contact : '') + ', voici le devis ' + r.numero +
       ' de BREIZH BRILLANCE. Vous pouvez le lire et le signer en ligne ici : ' + r.url;
-    var zone = $('lienSig');
     var sms = r.tel ? 'sms:' + String(r.tel).replace(/\s+/g, '') + '?&body=' + encodeURIComponent(texte) : '';
-    var mail = r.email ? 'mailto:' + r.email + '?subject=' + encodeURIComponent('Devis ' + r.numero + ' à signer') +
-                         '&body=' + encodeURIComponent(texte) : '';
-    if(zone) zone.innerHTML = '<div style="margin-top:10px">' + ech(r.url) + '</div>' +
+    if(zone) zone.innerHTML = '<div class="ok" style="text-align:left;margin-top:10px"><b>E-mail envoyé à ' + ech(r.a) + '</b>' +
+      '<div class="mini" style="color:inherit;opacity:.85">Devis' + (r.pdf ? ' en pièce jointe' : '') +
+      ' et bouton « Signer le devis en ligne ». Tu es prévenu dès qu\'il signe.</div></div>' +
       '<div class="row" style="gap:8px;margin-top:8px">' +
-        (sms ? '<a class="btn sec sm" style="flex:1;text-align:center;text-decoration:none" href="' + ech(sms) + '">SMS</a>' : '') +
-        (mail ? '<a class="btn sec sm" style="flex:1;text-align:center;text-decoration:none" href="' + ech(mail) + '">E-mail</a>' : '') +
-        '<button class="btn sec sm" style="flex:1" onclick="copierTexte(this, ' + ech(JSON.stringify(r.url)).replace(/"/g,'&quot;') + ')">Copier</button>' +
+        (sms ? '<a class="btn sec sm" style="flex:1;text-align:center;text-decoration:none" href="' + ech(sms) + '">Aussi par SMS</a>' : '') +
+        '<button class="btn sec sm" style="flex:1" onclick="copierTexte(this, ' + ech(JSON.stringify(r.url)).replace(/"/g,'&quot;') + ')">Copier le lien</button>' +
       '</div>';
-    if(navigator.share){
-      navigator.share({title:'Devis ' + r.numero, text:texte}).catch(function(){});
-    }
   }, function(){ libere(btn); erreur(attenteLisible()); });
+}
+
+/* L'écran de fin du devis : le même envoi, quel que soit le devis
+   (particulier ou professionnel). Si le devis n'est pas encore au bureau, il
+   part avec le mail de signature à son envoi. */
+function signatureDistanceFin(btn){
+  var e = DERNIER;
+  if(!e) return;
+  if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, '', 'lienSigFin');
+  var a = String(((e.mail || {}).a) || ((e.devis || {}).client || {}).email || '').trim();
+  if(!a){
+    var z = $('lienSigFin');
+    if(z) z.innerHTML = '<label style="margin-top:10px">E-mail du client</label>' +
+      '<input id="sigMail" type="email" inputmode="email" autocomplete="off" placeholder="client@exemple.fr">' +
+      '<button class="btn sm" style="margin-top:8px" onclick="signatureDistanceFinMail(this)">Envoyer</button>';
+    return;
+  }
+  signatureDistanceFinMail(btn, a);
+}
+function signatureDistanceFinMail(btn, a){
+  var e = DERNIER;
+  a = String(a || val('sigMail') || '').trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) return erreur('Adresse e-mail invalide.');
+  if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, a, 'lienSigFin');
+  e.envoyerClient = true;
+  e.mail = e.mail && typeof e.mail === 'object' ? e.mail : {};
+  e.mail.a = a;
+  DB.put(e).then(function(){
+    var z = $('lienSigFin');
+    if(z) z.innerHTML = '<div class="ok" style="text-align:left;margin-top:10px"><b>Le devis part à ' + ech(a) +
+      '</b><div class="mini" style="color:inherit;opacity:.85">Avec le bouton « Signer le devis en ligne », dès qu\'il arrive au bureau.</div></div>';
+    synchroniser(false);
+  });
 }
 function copierTexte(btn, t){
   try{
@@ -5123,6 +5173,7 @@ function accueilHtml(t){
     '<button class="lienTexte" onclick="remiseAFaire(this)">Tout effacer et repartir de zéro</button></div>';
   /* v106 — les onglets du haut sont devenus la barre du bas ; le répertoire
      des clients reste à un appui d'ici. */
+  if(estAdmin()) h += chiffresTableauHtml();
   if(estAdmin()) h += '<button class="btn sec" style="margin-top:8px" onclick="barreAdmin(\'clients\')">Répertoire des clients</button>' +
     '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments de paie du mois</button>' +
     '<button class="btn sec" style="margin-top:8px" onclick="ficheNotifs()">Notifications de l\'équipe</button>';
@@ -5612,6 +5663,9 @@ function peindreTableau(){
   /* Un devis neuf se commence depuis l'onglet des devis. Au-dessus du planning
      il ne servait qu'à repousser le travail plus bas. */
   $('bAdDevisNeuf').classList.toggle('hide', AD_ONGLET !== 'devis');
+  /* v108f — l'onglet Devis ne montre que la création et la liste ; les
+     chiffres sont au Tableau. */
+  try{ $('bAdPli').closest('.card').classList.toggle('hide', AD_ONGLET === 'devis'); }catch(e){}
   var planning = AD_ONGLET === 'chantiers';
   $('adActions').classList.toggle('hide', !planning);
   $('adVues').classList.toggle('hide', AD_ONGLET !== 'chantiers');
@@ -9496,7 +9550,14 @@ function carteInter(x){
          '<div style="flex:1"><label for="' + k + '_tva">TVA</label><select id="' + k + '_tva">' + tvaOpt + '</select></div></div>' +
          (x.prixLu ? '<div class="mini">Prix lu dans la note : « ' + ech(x.prixLu) + ' »' +
                      (/TTC/i.test(x.prixLu) ? ', ramené en HT.' : '.') + '</div>'
-                   : '<div class="mini">Pas de prix dans la note : indique-le.</div>');
+                   : (x.modele ? '' : '<div class="mini">Pas de prix dans la note : indique-le.</div>')) +
+         /* v108f — le détail repris de la dernière facture Henrri du client. */
+         (x.modele ? '<details class="mini" style="margin-top:6px"><summary>Détail repris de la facture Henrri <b>' +
+             ech(x.modele.source) + '</b> (' + x.modele.n + ' ligne' + (x.modele.n > 1 ? 's' : '') + ', ' + eur(x.modele.ht) + ' HT, TVA ' +
+             String(x.modele.tva).replace('.', ',') + ' %)</summary>' +
+             (x.modele.lignes || []).map(function(l){ return '<div>· ' + ech(l) + '</div>'; }).join('') +
+             '<div style="margin-top:4px">La facture reprend ces lignes si le montant reste ' + eur(x.modele.ht) +
+             ' HT ; un autre montant donne une ligne unique.</div></details>' : '');
   }
   if(!x.adresse || !x.cp || !x.ville){
     h += '<div class="mini" style="color:var(--att,#b45309)">Adresse incomplète : si le client n\'existe pas encore ' +
@@ -10031,12 +10092,31 @@ function enteteDevisAdmin(){
       if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'devis') peindreTableau();
     }, function(){});
   }
+  /* v108f — « dans Devis laisse juste de quoi créer un devis et ceux
+     enregistrés pour les modifier / envoyer » : le chiffre et les commissions
+     sont passés au Tableau (chiffresTableauHtml). */
+  var att = DEVIS_A_ENVOYER;
+  return (att ? '<div class="card" style="border-color:var(--warn)"><b>' + att + ' devis sur ce téléphone pas encore parti' + (att > 1 ? 's' : '') +
+      ' au bureau</b><button class="btn sec sm" style="margin-top:8px" onclick="synchroniser(true, this)">Envoyer maintenant</button></div>' : '');
+}
+/* v108f — le chiffre de la société, les commissions des commerciaux et les
+   devis signés, au Tableau, sous « À faire » : là où il restait du vide. */
+function chiffresTableauHtml(){
   chargerCommissions(false);
   var h = chiffresHtml();
-  var att = DEVIS_A_ENVOYER;
-  return (h ? '<div class="card">' + h + '</div>' : '') + commissionsAdminHtml() +
-    (att ? '<div class="card" style="border-color:var(--warn)"><b>' + att + ' devis sur ce téléphone pas encore parti' + (att > 1 ? 's' : '') +
-      ' au bureau</b><button class="btn sec sm" style="margin-top:8px" onclick="synchroniser(true, this)">Envoyer maintenant</button></div>' : '');
+  var t = TABLEAU || {}, ch = t.chiffres || {};
+  var signes = (t.devis || []).filter(function(d){ return String(d.statut || '').toUpperCase() === 'SIGNE'; })
+    .slice(0, 8);
+  var sig = '<div class="card"><div style="display:flex;gap:10px;align-items:baseline"><h2 style="flex:1;margin:0">Devis signés</h2>' +
+      '<button class="btn sec sm" onclick="ongletAdmin(\'devis\')">Tous les devis</button></div>' +
+    '<div class="mini" style="margin-top:4px">' + (ch.nb || 0) + ' devis sur la période · ' + (ch.signes || 0) + ' signés · ' +
+      eur(ch.htSigne || 0) + ' HT signés</div>' +
+    (signes.length ? signes.map(function(d){
+      return '<div class="ch" style="cursor:pointer" onclick="ficheDevis(\'' + ech(d.numero).replace(/'/g,'&#39;') + '\')">' +
+        '<span>' + ech(d.client || '—') + ' <span class="mini">' + ech(jjmmaa(d.date)) + ' · ' + ech(d.commercial || '') + '</span></span>' +
+        '<b>' + eur(d.ht) + '</b></div>';
+    }).join('') : '<div class="mini">Aucun devis signé sur la période.</div>') + '</div>';
+  return '<div style="margin-top:18px">' + (h ? '<div class="card">' + h + '</div>' : '') + commissionsAdminHtml() + sig + '</div>';
 }
 var DEVIS_A_ENVOYER = 0;
 function compterDevisAEnvoyer(){
@@ -10072,7 +10152,7 @@ function chargerCommissions(force){
     r.pour = moi.nom;
     COMM = r;
     try{ localStorage.setItem('bb_commissions', JSON.stringify(r)); }catch(e){}
-    if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'devis') peindreTableau();
+    if(ECRAN_VU === 'eAd1' && (AD_ONGLET === 'devis' || AD_ONGLET === 'aujourdhui')) peindreTableau();
     try{ peindreChiffresCommercial(); }catch(e){}
   }, function(){});
 }
