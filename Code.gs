@@ -877,6 +877,8 @@ function reponse_(obj) {
  * en quelques secondes hors ligne.
  */
 function doGet(e) {
+  var rel = relaisMigration_();
+  if (rel) return relayer_(rel, e, false);
   return reponse_({ ok: true, service: 'devis', message: 'Service en ligne. Identification requise.' });
 }
 
@@ -1011,6 +1013,8 @@ function config_(com) {
 var PERF_ = null, T0_DOPOST_ = 0;
 function perf_(k) { if (!PERF_) return; var t = Date.now(); PERF_.push(k + ' ' + (t - PERF_.t)); PERF_.t = t; }
 function doPost(e) {
+  var rel = relaisMigration_();
+  if (rel) return relayer_(rel, e, true);
   T0_DOPOST_ = Date.now();
   var lock = LockService.getScriptLock();
   try {
@@ -7863,6 +7867,9 @@ function envoyerMail_(m, reg) {
 function expediteurDispo_(adresse) {
   var a = String(adresse || '').trim().toLowerCase();
   if (!a) return false;
+  /* v108k — après la migration, le script tourne sous contact@ : MailApp
+     envoie déjà depuis cette adresse, inutile de passer par Gmail. */
+  try { if (String(Session.getEffectiveUser().getEmail() || '').toLowerCase() === a) return false; } catch (eU) {}
   var cache = null;
   try { cache = CacheService.getScriptCache(); } catch (e0) {}
   var cle = 'alias:' + a;
@@ -7881,6 +7888,153 @@ function expediteurDispo_(adresse) {
   try { if (cache) cache.put(cle, ok ? '1' : '0', 21600); } catch (e2) {}
   return ok;
 }
+/* ===================== MIGRATION VERS contact@ (v108k) =====================
+   « Il faut qu'on ne voie nulle part le simon.horras56 » : le classeur, le
+   script et l'application Web passent sous le compte contact@. Déroulé :
+   1. ANCIEN projet : migrationPreparer() — partage le classeur et les dossiers
+      avec contact@, recopie les propriétés du script dans un onglet caché
+      MIGRATION (aucune clé ne passe par l'écran ni par la discussion).
+   2. contact@ : Fichier > Créer une copie du classeur (le script suit).
+   3. NOUVEAU projet : déployer l'application Web, puis migrationTerminer() —
+      reprend les propriétés, repose les déclencheurs, efface l'onglet et écrit
+      la nouvelle adresse dans l'onglet MIGRATION de l'ancien classeur.
+   4. ANCIEN projet : migrationBasculer() — retire ses déclencheurs et relaie
+      désormais chaque appel vers la nouvelle adresse (les téléphones pas
+      encore mis à jour continuent de marcher).                              */
+var MIGRATION_CIBLE_ = 'contact@breizhbrillance.fr';
+var MIGRATION_ONGLET_ = 'MIGRATION';
+var MIGRATION_PROP_ = 'MIGRATION_URL';
+
+function relaisMigration_() {
+  try {
+    var u = String(PropertiesService.getScriptProperties().getProperty(MIGRATION_PROP_) || '').trim();
+    if (!u) return '';
+    var moi = '';
+    try { moi = String(ScriptApp.getService().getUrl() || ''); } catch (e1) {}
+    return u === moi ? '' : u;
+  } catch (e) { return ''; }
+}
+
+function relayer_(url, e, post) {
+  var q = e && e.queryString ? '?' + e.queryString : '';
+  var opt = { muteHttpExceptions: true, followRedirects: true };
+  if (post) {
+    opt.method = 'post';
+    opt.payload = e && e.postData ? e.postData.contents : '';
+    opt.contentType = e && e.postData && e.postData.type ? e.postData.type : 'text/plain';
+  }
+  try {
+    var r = UrlFetchApp.fetch(url + q, opt);
+    return ContentService.createTextOutput(r.getContentText()).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return reponse_({ ok: false, erreur: 'Service déplacé, relais impossible : ' + String(err && err.message || err) });
+  }
+}
+
+function ongletMigration_(ss, creer) {
+  var sh = ss.getSheetByName(MIGRATION_ONGLET_);
+  if (!sh && creer) { sh = ss.insertSheet(MIGRATION_ONGLET_); sh.hideSheet(); }
+  return sh;
+}
+
+function partagerAvec_(id, qui) {
+  id = String(id || '').trim();
+  if (!id) return '';
+  try { DriveApp.getFileById(id).addEditor(qui); return 'fichier ' + id; } catch (e1) {}
+  try { DriveApp.getFolderById(id).addEditor(qui); return 'dossier ' + id; } catch (e2) {}
+  return 'ÉCHEC ' + id;
+}
+
+/** ÉTAPE 1 — à lancer dans l'ANCIEN projet (compte actuel). */
+function migrationPreparer() {
+  var ss = SpreadsheetApp.getActive();
+  var reg = lireReglages_();
+  var faits = [];
+  [ss.getId(), reg.dossier_racine_id, reg.dossier_drive_id, reg.prospection_fichier_id].forEach(function (id) {
+    var r = partagerAvec_(id, MIGRATION_CIBLE_); if (r) faits.push(r);
+  });
+  var props = PropertiesService.getScriptProperties().getProperties();
+  delete props[MIGRATION_PROP_];
+  var decl = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
+  var sh = ongletMigration_(ss, true);
+  sh.clear();
+  sh.getRange(1, 1, 4, 2).setValues([
+    ['source', ss.getId()],
+    ['proprietes', JSON.stringify(props)],
+    ['declencheurs', JSON.stringify(decl)],
+    ['prepare_le', new Date().toISOString()]
+  ]);
+  tracerServeur_('SYSTEME', 'MIGRATION PREPAREE', Object.keys(props).length + ' propriétés, déclencheurs : ' +
+    decl.join(', ') + ' ; partages : ' + faits.join(' | '), '', '');
+  Logger.log('Propriétés : %s — déclencheurs : %s — partages : %s', Object.keys(props).length, decl.join(', '), faits.join(' | '));
+}
+
+/** ÉTAPE 3 — à lancer dans le NOUVEAU projet (contact@), après le déploiement Web. */
+function migrationTerminer() {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ongletMigration_(ss, false);
+  if (!sh) throw new Error('Onglet MIGRATION absent : lance d\'abord migrationPreparer dans l\'ancien projet, puis recopie le classeur.');
+  var v = {};
+  sh.getDataRange().getValues().forEach(function (l) { v[String(l[0])] = l[1]; });
+  if (String(v.source) === ss.getId()) throw new Error('Ce classeur est l\'ancien : lance cette fonction dans la COPIE.');
+  var props = JSON.parse(String(v.proprietes || '{}'));
+  delete props[MIGRATION_PROP_];
+  var p = PropertiesService.getScriptProperties();
+  p.setProperties(props, false);
+  p.deleteProperty(MIGRATION_PROP_);
+  var voulus = JSON.parse(String(v.declencheurs || '[]'));
+  ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  var poses = [], inconnus = [], vus = {};
+  voulus.forEach(function (h) {
+    if (vus[h]) return; vus[h] = true;
+    if (h === 'preparationAutomatique') {
+      ScriptApp.newTrigger(h).timeBased().everyHours(1).create(); poses.push(h);
+    } else if (h === AUTOMATE_) {
+      ScriptApp.newTrigger(h).timeBased().atHour(7).everyDays(1).inTimezone('Europe/Paris').create(); poses.push(h);
+    } else if (h === MAJ_PROSPECTS_) {
+      [ScriptApp.WeekDay.MONDAY, ScriptApp.WeekDay.WEDNESDAY, ScriptApp.WeekDay.FRIDAY].forEach(function (j) {
+        ScriptApp.newTrigger(h).timeBased().onWeekDay(j).atHour(6).inTimezone('Europe/Paris').create();
+      });
+      poses.push(h);
+    } else inconnus.push(h);
+  });
+  var url = '';
+  try { url = String(ScriptApp.getService().getUrl() || ''); } catch (e0) {}
+  ss.deleteSheet(sh);
+  var ecritAncien = false;
+  if (url && v.source) {
+    try {
+      var ancien = SpreadsheetApp.openById(String(v.source));
+      var sa = ongletMigration_(ancien, true);
+      sa.clear();
+      sa.getRange(1, 1, 2, 2).setValues([['nouvelle_url', url], ['terminee_le', new Date().toISOString()]]);
+      ecritAncien = true;
+    } catch (e1) {}
+  }
+  tracerServeur_('SYSTEME', 'MIGRATION TERMINEE', Object.keys(props).length + ' propriétés ; déclencheurs posés : ' +
+    poses.join(', ') + (inconnus.length ? ' ; À REPOSER À LA MAIN : ' + inconnus.join(', ') : '') +
+    ' ; adresse : ' + (url || 'PAS DÉPLOYÉ') + (ecritAncien ? '' : ' ; ancien classeur non prévenu'), '', '');
+  Logger.log('Propriétés : %s — déclencheurs : %s — à reposer : %s — adresse : %s — ancien prévenu : %s',
+    Object.keys(props).length, poses.join(', '), inconnus.join(', '), url, ecritAncien);
+}
+
+/** ÉTAPE 4 — à lancer dans l'ANCIEN projet : il se tait et relaie vers le nouveau. */
+function migrationBasculer() {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ongletMigration_(ss, false);
+  var v = {};
+  if (sh) sh.getDataRange().getValues().forEach(function (l) { v[String(l[0])] = l[1]; });
+  var url = String(v.nouvelle_url || '').trim();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^\/]+\/exec$/.test(url)) {
+    throw new Error('Nouvelle adresse introuvable : lance d\'abord migrationTerminer dans le nouveau projet.');
+  }
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); n++; });
+  PropertiesService.getScriptProperties().setProperty(MIGRATION_PROP_, url);
+  tracerServeur_('SYSTEME', 'MIGRATION BASCULEE', n + ' déclencheurs retirés ; relais vers ' + url, '', '');
+  Logger.log('Relais vers %s — %s déclencheurs retirés', url, n);
+}
+
 function texteDuHtml_(h) {
   return String(h || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
