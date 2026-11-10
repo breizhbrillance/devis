@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108d';
+var VERSION_APP = 'v108e';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -940,6 +940,15 @@ function suivant(){
     if(dOk && dOk < isoJour()){
       var cd2 = $('fDate'); if(cd2) cd2.focus();
       return erreur('La date d\'intervention est déjà passée.');
+    }
+    var pOk = val('fPlaceDate');
+    if(pOk && pOk < isoJour()){
+      var cp2 = $('fPlaceDate'); if(cp2) cp2.focus();
+      return erreur('Le placement suggéré est déjà passé.');
+    }
+    if(val('fPlaceHeure') && !pOk){
+      var cp3 = $('fPlaceDate'); if(cp3) cp3.focus();
+      return erreur('Placement suggéré : il manque le jour.');
     }
     return enregistrer();
   }
@@ -2792,8 +2801,11 @@ function appliquerSignature(id, image, nom){
    client a pu signer depuis un autre écran, et un devis signé ne se modifie
    plus. Mieux vaut un refus clair qu'un montant changé dans son dos. */
 function enregistrerModification(b, envoi, moi, secours, devis, pdf64){
-  var cible = MODIF.id;
+  var cible = MODIF.id, venu = MODIF.enr || null;
   return DB.get(cible).then(function(enr){
+    /* DB.get rend l'objet de requête quand la clé est absente : on regarde
+       donc s'il y a bien un devis dedans. */
+    if(!(enr && enr.devis)) enr = venu || null;   // v108e — venu du bureau : écrit maintenant
     if(!enr){
       debloquer(b, secours);
       return erreur('Ce devis n\'est plus sur l\'appareil. Rien n\'a été enregistré.');
@@ -3165,6 +3177,7 @@ function lireClient(){
 function sauverBrouillon(){
   lsj('brouillon', {client:lireClient(), lignes:LIGNES, objet:val('fObjet'),
                     plus2ans:PLUS2ANS, taux:TAUX, dateSouhaitee:val('fDate'),
+                    placement:{date:val('fPlaceDate'), heure:val('fPlaceHeure')},
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
                     nature:NATURE, sansContrat:SANS_CONTRAT, passages:PASSAGES, etat:ETAT, engagement:ENGAGEMENT,
@@ -3175,7 +3188,9 @@ function restaurer(b){
   /* Une modification interrompue (batterie, appli fermée) reprend où elle en
      était : sans cela, le commercial croirait continuer et créerait un second
      devis à l'enregistrement. */
-  MODIF = (b.modif && b.modif.id) ? {id:b.modif.id, numero:b.modif.numero || ''} : null;
+  MODIF = (b.modif && b.modif.id) ? {id:b.modif.id, numero:b.modif.numero || '',
+                                     commercial:b.modif.commercial || ''} : null;
+  if(MODIF && b.modif.enr) MODIF.enr = b.modif.enr;
   majBandeauModif();
   LIGNES = sansMajoration(b.lignes);
   recalerLibreSeq();
@@ -3214,6 +3229,8 @@ function restaurer(b){
     ? { mois: Number(b.engagement.mois) || 0, tacite: b.engagement.tacite !== false } : { mois: 0, tacite: true };
   peindreEngagement();
   $('fDate').value = b.dateSouhaitee||'';
+  if($('fPlaceDate')) $('fPlaceDate').value = (b.placement && b.placement.date) || '';
+  if($('fPlaceHeure')) $('fPlaceHeure').value = (b.placement && b.placement.heure) || '';
   $('fDelai').value = b.delai||'';
   PLUS2ANS = (b.plus2ans === true || b.plus2ans === false) ? b.plus2ans : null;
   TAUX = b.taux || null;
@@ -3366,12 +3383,16 @@ function enregistrerSuite(b, envoi, moi, secours){
       km: estMajorableKm() && String(KM).trim() !== '' ? kmDevis() : '',
       date: new Date().toISOString(),
       validite: new Date(Date.now()+jours*86400000).toISOString(),
-      commercial: moi.nom,
+      /* En modification, le devis reste à celui qui l'a établi : le gérant qui
+         corrige le devis d'un commercial ne le lui prend pas. */
+      commercial: (enModification() && MODIF.commercial) || moi.nom,
       client: client,
       lignes: lignesDevis(),
       etatSite: majorationPct() ? ETAT : 'NORMAL',   // ce que le commercial a constaté
       objet: val('fObjet'),
       dateSouhaitee: val('fDate'),   // c'est elle qui sert à planifier
+      /* v108e — interne : jamais imprimé, jamais dans le mail au client. */
+      placement: (val('fPlaceDate') || val('fPlaceHeure')) ? {date: val('fPlaceDate'), heure: val('fPlaceHeure')} : null,
       delai: val('fDelai'),          // la phrase pour le client, rien de plus
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
       nature: NATURE || 'CHANTIER',   // ENTRETIEN | VITRERIE | FACADE | CHANTIER | REMISE
@@ -4023,7 +4044,7 @@ function peindreRappels(l){
   var auj = isoJour();
   var hier = new Date(Date.now() - 86400000).getTime();
   var rel = l.filter(function(e){ return e.verdict === 'RELANCE' && e.relance && e.relance <= auj; });
-  var sans = l.filter(function(e){ return !e.verdict && Number(e.cree||0) < hier; });
+  var sans = l.filter(function(e){ return !e.verdict && !e.depuisBureau && Number(e.cree||0) < hier; });
   var sig = l.filter(function(e){
     return e.verdict === 'SIGNE' && !estSigne(e) &&
            !(e.photos||[]).some(function(p){ return p.t === 'SIGNE'; });
@@ -4081,6 +4102,15 @@ function ouvrirModification(id, btn){
   if(btn) occuper(btn, '…');
   DB.get(id).then(function(e){
     if(btn) libere(btn);
+    ouvrirModificationEnr(e, null);
+  });
+}
+
+/* v108e — `horsAppareil` : le devis vient du bureau (fiche du tableau) et n'est
+   pas sur ce téléphone. Il n'y est écrit qu'à l'enregistrement de la
+   modification ; d'ici là il voyage avec MODIF, brouillon compris. */
+function ouvrirModificationEnr(e, horsAppareil){
+  (function(){
     if(!e || !e.devis) return;
     if(estSigne(e)){
       return erreur('Ce devis est signé : il ne se modifie plus. Utilise « Dupliquer » ' +
@@ -4088,7 +4118,8 @@ function ouvrirModification(id, btn){
     }
     var d = e.devis, c = d.client || {};
     nouveauDevis();                 // remet tout à zéro, MODIF compris
-    MODIF = {id: e.id, numero: e.numero};
+    MODIF = {id: e.id, numero: e.numero, commercial: d.commercial || ''};
+    if(horsAppareil) MODIF.enr = horsAppareil;
     TYPE = (c.type === 'PART') ? 'PART' : 'PRO';
     PLUS2ANS = (c.plus2ans === true || c.plus2ans === false) ? c.plus2ans : null;
     majType();
@@ -4112,6 +4143,7 @@ function ouvrirModification(id, btn){
     KM_AUTO = false;                // la distance du devis, pas celle d'aujourd'hui
     majNature();
     majKm();
+    retirerKmDesPrix();
     ETAT = (d.etatSite === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';
     ORIGINE = (d.origine === 'ENTRANT') ? 'ENTRANT' : 'PROSPECTION';
     LIEU = (d.lieuSignature === 'AGENCE') ? 'AGENCE' : 'CLIENT';
@@ -4121,6 +4153,8 @@ function ouvrirModification(id, btn){
       ? { mois: Number(d.engagement.mois) || 0, tacite: d.engagement.tacite !== false } : { mois: 0, tacite: true };
     peindreEngagement();
     $('fDate').value = d.dateSouhaitee || '';
+    $('fPlaceDate').value = (d.placement && d.placement.date) || '';
+    $('fPlaceHeure').value = (d.placement && d.placement.heure) || '';
     $('fDelai').value = d.delai || '';
     $('fNotes').value = d.notes || '';
     tracer('DEVIS MODIFIE', 'ouvert pour modification', e.numero);
@@ -4128,7 +4162,90 @@ function ouvrirModification(id, btn){
     sauverBrouillon();
     etape(2);
     window.scrollTo(0,0);
+  })();
+}
+
+/* v108e — les prix enregistrés d'un devis d'entretien portent déjà
+   l'éloignement du client (lignesDevis les relève au moment de l'envoi). Les
+   reprendre tels quels pour une modification les relevait une seconde fois.
+   On repart donc des prix d'avant relèvement : à l'enregistrement, le même
+   calcul les relève de nouveau, et une ligne ajoutée prend sa part du trajet
+   comme sur un devis neuf. */
+function retirerKmDesPrix(){
+  var sup = supplementKm();
+  if(!(sup > 0)) return;
+  var dans = function(l){ return String(l.reference||'') !== REF_MAJ && !estLigneLibre(l); };
+  var tot = 0;
+  LIGNES.forEach(function(l){ if(dans(l)) tot += (Number(l.qte)||0) * (Number(l.pu)||0); });
+  var base = tot - sup;
+  if(!(base > 0)) return;
+  var taux = sup / base;
+  LIGNES.forEach(function(l){
+    if(dans(l)) l.pu = Math.round((Number(l.pu)||0) / (1 + taux) * 10000) / 10000;
   });
+}
+
+/* v108e — « Modifier ce devis » depuis la fiche du tableau. Le gérant n'a pas
+   forcément établi le devis sur ce téléphone : s'il y est, on le reprend tel
+   quel ; sinon on le fait venir du bureau, lignes et prix compris. Il repart
+   en révision sous le même identifiant, si bien que le classeur remplace sa
+   ligne au lieu d'en ajouter une. */
+function modifierDepuisFiche(btn){
+  var f = AD_FICHE;
+  if(!f || f.type !== 'devis') return;
+  var num = String(f.cle || '');
+  var moi = session();
+  if(!moi) return;
+  erreur('');
+  if(btn) occuper(btn, 'Chargement…');
+  DB.tous().then(function(l){
+    var ici = (l || []).filter(function(e){
+      return e && e.devis && (e.numero === num || e.numeroOrigine === num || e.numeroPdf === num);
+    })[0];
+    if(ici){ if(btn) libere(btn); return ouvrirModificationEnr(ici, null); }
+    if(!(CFG && CFG.catalogue)){ if(btn) libere(btn); return erreur('Le catalogue n\'est pas encore arrivé.'); }
+    if(!navigator.onLine){ if(btn) libere(btn); return erreur('Hors connexion : les lignes de ce devis sont au bureau.'); }
+    return poster({action:'devisArchive', nom:moi.nom, code:moi.code, appareil:APPAREIL, numero:num}, 40000)
+      .then(function(r){
+        if(btn) libere(btn);
+        if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : 'Le bureau n\'a pas répondu.');
+        if(r.signe) return erreur('Ce devis est signé : il ne se modifie plus. Utilise « Refaire un devis ' +
+                                  'pour ce client » pour en établir un nouveau.');
+        if(!r.idDevis) return erreur('Ce devis est trop ancien pour être modifié d\'ici (il n\'a pas ' +
+                                     'd\'identifiant au classeur). Refais un devis pour ce client.');
+        var e = enrDepuisArchive(r);
+        ouvrirModificationEnr(e, e);
+      }, function(){
+        if(btn) libere(btn);
+        erreur('Le bureau n\'a pas répondu. Réessaie dans un instant.');
+      });
+  });
+}
+
+/* La fiche d'appareil d'un devis venu du bureau : la même forme que celles
+   que l'application écrit à l'enregistrement, pour que « Mes devis » et la
+   révision la traitent sans cas particulier. */
+function enrDepuisArchive(r){
+  var st = String(r.statut || '').toUpperCase();
+  var cree = Date.parse(r.date || '');
+  return {
+    id: String(r.idDevis), numero: String(r.numero || ''),
+    cree: isNaN(cree) ? Date.now() : cree,
+    statut: 'envoye', photos: [], depuisBureau: true,
+    verdict: st === 'REFUSE' ? 'REFUSE' : (st === 'RELANCE' ? 'RELANCE' : ''),
+    verdictEnvoye: true, motif: '', relance: '', note: '',
+    devis: {
+      numero: String(r.numero || ''), date: r.date || new Date().toISOString(),
+      commercial: r.commercial || '', client: r.client || {}, lignes: r.lignes || [],
+      nature: r.nature || 'CHANTIER', passages: Number(r.passages) || 0,
+      sansContrat: !!r.sansContrat, km: (r.km === '' || r.km === undefined || r.km === null) ? '' : r.km,
+      etatSite: r.etatSite || 'NORMAL', origine: r.origine || 'PROSPECTION',
+      lieuSignature: r.lieuSignature || '', objet: r.objet || '', delai: r.delai || '',
+      dateSouhaitee: r.dateSouhaitee || '', notes: r.notes || '', placement: r.placement || null,
+      remise: Number(r.remise) || 0, engagement: r.engagement || null,
+      totaux: r.totaux || {ht:0, ttc:0}, signature: ''
+    }
+  };
 }
 
 /* Le bandeau qui rappelle, à chaque écran, qu'on reprend un devis et qu'on n'en
@@ -5007,7 +5124,8 @@ function accueilHtml(t){
   /* v106 — les onglets du haut sont devenus la barre du bas ; le répertoire
      des clients reste à un appui d'ici. */
   if(estAdmin()) h += '<button class="btn sec" style="margin-top:8px" onclick="barreAdmin(\'clients\')">Répertoire des clients</button>' +
-    '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments de paie du mois</button>';
+    '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments de paie du mois</button>' +
+    '<button class="btn sec" style="margin-top:8px" onclick="ficheNotifs()">Notifications de l\'équipe</button>';
   return h;
 }
 
@@ -5585,8 +5703,41 @@ function peindreTableau(){
     $('adListe').innerHTML = bandeauMot() + $('adListe').innerHTML;
     return;
   }
-  $('adListe').innerHTML = AD_ONGLET === 'devis' ? bandeauMot() + enteteDevisAdmin() + listeDevisAdmin(t)
-                                                : bandeauMot() + listeChantiersAdmin(t);
+  /* La recherche garde le doigt dans le champ quand le tableau se rafraîchit
+     tout seul pendant qu'on tape. */
+  var tapait = document.activeElement && document.activeElement.id === 'adCherche';
+  var pos = tapait ? document.activeElement.selectionStart : 0;
+  $('adListe').innerHTML = AD_ONGLET === 'devis'
+    ? bandeauMot() + champRechercheDevis() + enteteDevisAdmin() + listeDevisAdmin(t)
+    : bandeauMot() + listeChantiersAdmin(t);
+  if(tapait && $('adCherche')){
+    $('adCherche').focus();
+    try{ $('adCherche').setSelectionRange(pos, pos); }catch(e){}
+  }
+}
+
+/* v108e — retrouver un devis en tapant le nom du client. Le filtre s'applique
+   à chaque lettre, sans accents ni majuscules, sur le client, le numéro, la
+   ville et le commercial ; seule la liste se repeint, pas le champ, pour que
+   le clavier reste ouvert. */
+var AD_CHERCHE = '';
+function champRechercheDevis(){
+  return '<div style="position:relative;margin-bottom:10px">' +
+    '<input id="adCherche" type="search" autocomplete="off" enterkeyhint="search" ' +
+      'placeholder="Chercher un client, un numéro, une ville…" value="' + ech(AD_CHERCHE) + '" ' +
+      'oninput="chercherDevis(this.value)" style="margin:0">' +
+  '</div>';
+}
+function cleRecherche(s){ return sansAccents(String(s == null ? '' : s)).toLowerCase().replace(/\s+/g, ' ').trim(); }
+function devisCorrespond(d, q){
+  if(!q) return true;
+  var h = cleRecherche([d.client, d.numero, d.ville, d.commercial].join(' '));
+  return q.split(' ').every(function(m){ return !m || h.indexOf(m) >= 0; });
+}
+function chercherDevis(v){
+  AD_CHERCHE = String(v || '');
+  var z = $('adDevisCartes');
+  if(z && TABLEAU) z.innerHTML = cartesDevisAdmin(TABLEAU);
 }
 
 /* ---- OÙ EN EST LE TRAVAIL D'UN DEVIS ----
@@ -5645,7 +5796,16 @@ function listeDevisAdmin(t){
       parCom[0].nb + ' devis · ' + parCom[0].signes + ' signés · ' +
       eur(parCom[0].htSigne) + ' HT signés</div></div>'
     : '';
-  return tete + legendeDevis() + l.map(function(d){
+  return tete + legendeDevis() + '<div id="adDevisCartes">' + cartesDevisAdmin(t) + '</div>';
+}
+function cartesDevisAdmin(t){
+  var q = cleRecherche(AD_CHERCHE);
+  var l = (t.devis||[]).filter(function(d){
+    return (!AD_QUI || d.commercial === AD_QUI) && devisCorrespond(d, q);
+  });
+  if(!l.length) return '<div class="card"><div class="empty">Aucun devis ne correspond à « ' +
+    ech(AD_CHERCHE.trim()) + ' ».</div></div>';
+  return l.map(function(d){
     return '<div class="card ' + ETATS_DEVIS[etatDevis(d)].classe +
       '" style="cursor:pointer;margin-bottom:10px" onclick="ficheDevis(\'' +
       ech(d.numero) + '\')">' +
@@ -5922,6 +6082,7 @@ function gesteVite(id, champs, mot){
       return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
     }
     tracer('CHANTIER DEPLACE', mot, id);
+    direNotifs(r);
     chargerTableau();
   }, function(){
     var c3 = chantierDuTableau(id);
@@ -6236,6 +6397,8 @@ function peindreFicheDevis(d){
         eur(d.ht) + '</b></div>' +
       '<div class="ch gros"><span>Total TTC</span><span>' + eur(d.ttc) + '</span></div>' +
       (d.note ? '<div class="mini" style="margin-top:8px">Note du commercial : ' + ech(d.note) + '</div>' : '') +
+      (d.placement && d.placement.date ? '<div class="mini" style="margin-top:8px">Placement suggéré (interne) : <b>' +
+        ech(jjmmaa(d.placement.date)) + (d.placement.heure ? ' à ' + ech(d.placement.heure) : '') + '</b></div>' : '') +
       (d.pdf ? '<a class="btn sec" style="display:block;text-align:center;margin-top:12px;' +
         'text-decoration:none" href="' + ech(d.pdf) + '" target="_blank" rel="noopener">' +
         'Voir le devis (PDF)</a>' : '<div class="mini" style="margin-top:10px">Aucun PDF archivé.</div>') +
@@ -6256,6 +6419,7 @@ function peindreFicheDevis(d){
       '<input id="adMotif" placeholder="Trop cher, concurrent…" value="' + ech(d.motif||'') + '">' +
     '</div>' +
 
+    blocModifierDevis(d) +
     blocSignatureDistance(d, 'admin') +
     blocPoserTravail(d) +
 
@@ -6265,6 +6429,20 @@ function peindreFicheDevis(d){
     '<button class="btn sec" style="margin-bottom:10px" onclick="devisDepuisFiche(this)">' +
       'Refaire un devis pour ce client</button>' +
     '<button class="btn sec" onclick="retourTableau()">Retour au tableau</button>';
+}
+
+/* v108e — corriger un devis déjà établi : ajouter ou retirer des prestations,
+   changer une quantité, l'adresse, la date. Même numéro, et le client reçoit
+   le devis corrigé si la case d'envoi est cochée. Un devis signé n'y a pas
+   droit : le client a accepté un montant. */
+function blocModifierDevis(d){
+  if(String(d.statut || '').toUpperCase() === 'SIGNE') return '';
+  return '<div class="card"><h2>Modifier ce devis</h2>' +
+    '<div class="mini" style="margin-top:0">Ajoute ou retire des prestations, change une quantité, ' +
+    'l\'adresse ou la date. Le devis garde son numéro et ses prix ; s\'il part par e-mail, ' +
+    'le client reçoit la version corrigée.</div>' +
+    '<button class="btn" style="margin-top:12px" onclick="modifierDepuisFiche(this)">Modifier ce devis</button>' +
+  '</div>';
 }
 
 /* ---- POSER LE TRAVAIL SANS ATTENDRE LA SIGNATURE ----
@@ -6428,7 +6606,8 @@ function chargerSuggestions(id){
     z.innerHTML = '<label>Créneaux proposés</label><div class="row" style="flex-wrap:wrap;gap:6px">' +
       AD_SUGG.map(function(sg, i){
         return '<span class="puce" onclick="prendreSuggestion(' + i + ')">' +
-          ech(sg.jour) + ' · ' + ech(sg.heure) + ' · ' + ech(sg.nom) + '</span>';
+          (sg.devis ? '★ ' : '') + ech(sg.jour) + (sg.heure ? ' · ' + ech(sg.heure) : '') +
+          (sg.nom ? ' · ' + ech(sg.nom) : '') + (sg.devis ? ' (suggéré au devis)' : '') + '</span>';
       }).join('') + '</div><div class="mini">Un appui remplit la date, l\'heure et la personne. ' +
       'Ajoute le second du binôme si besoin, puis Enregistrer.</div>';
   }, function(){ var z = $('adSugg'); if(z) z.innerHTML = ''; });
@@ -6437,9 +6616,8 @@ function prendreSuggestion(i){
   var sg = AD_SUGG[i];
   if(!sg) return;
   if($('adDate')) $('adDate').value = sg.date;
-  if($('adHeure')) $('adHeure').value = sg.heure;
-  AD_PRESTA = '';
-  choisirPresta(sg.nom);
+  if($('adHeure') && sg.heure) $('adHeure').value = sg.heure;
+  if(sg.nom){ AD_PRESTA = ''; choisirPresta(sg.nom); }
   Array.prototype.forEach.call(document.querySelectorAll('#adSugg .puce'), function(e, k){
     e.classList.toggle('on', k === i);
   });
@@ -6509,6 +6687,7 @@ function poserAnnulation(annuler, btn){
     if(btn) libere(btn);
     if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
     tracer(annuler ? 'CHANTIER ANNULE' : 'CHANTIER RETABLI', '', f.cle);
+    direNotifs(r);
     retourTableau();
     chargerTableau();
   }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
@@ -6668,6 +6847,7 @@ function enregistrerPlanif(btn){
     if(EN_VOL.maj[id] === champs) delete EN_VOL.maj[id];
     if(!r || !r.ok) return defaireEnVol(id, avant, (r && r.erreur) ? String(r.erreur) : attenteLisible());
     tracer('CHANTIER PLANIFIE', c.prestataire + ' ' + c.date, id);
+    direNotifs(r);
     var x2 = chantierDuTableau(id);
     if(x2 && r.statut) x2.statut = r.statut;
     chargerTableauBientot();
@@ -6713,6 +6893,7 @@ function rouvrirFiche(){
   if(f.type === 'conges'){ peindreConges(); return; }
   if(f.type === 'admin'){ peindreAdministratif(); return; }
   if(f.type === 'feries'){ peindreFeries(); return; }
+  if(f.type === 'notifs'){ peindreEtatNotifs(); return; }
   if(f.type === 'contrats') return;
   if(f.type === 'devis'){
     var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === f.cle; })[0];
@@ -7271,6 +7452,7 @@ function posterChantierNeuf(c, btn, fichier){
       return erreur('« ' + c.client + ' » n\'a pas été créée : ' + ((r && r.erreur) ? String(r.erreur) : attenteLisible()) + ' — recommence.');
     }
     tracer('CHANTIER CREE', c.client + ' ' + (c.date||'sans date'), r.id || '');
+    direNotifs(r);
     loc.id = r.id; loc.statut = r.statut || loc.statut; delete loc.enVol;
     if(fichier && r.id) envoyerFicheApres([r.id], fichier);
     chargerTableauBientot();
@@ -7479,11 +7661,86 @@ function listeContrats(){
    secondes — le tableau se repeint deux fois de suite (tout de suite, puis
    quand le bureau a répondu), et le mot ne doit pas disparaître à la première. */
 var AD_MOT = '', AD_MOT_T = 0;
+/* v108e — « j'ai créé une intervention puis je l'ai déplacée : 0 notification,
+   et mes prestataires non plus ». Le bureau répondait « personne n'est inscrit
+   sous ce nom » et l'écran n'en disait rien. Maintenant chaque envoi raté
+   revient ici, avec le nom, jusqu'à ce que le gérant le ferme. */
+var AD_ALERTE = '';
+function direNotifs(r){
+  var l = (r && r.notifs) || [];
+  var rates = l.filter(function(n){ return n && !n.ok; });
+  if(!rates.length) return;
+  var noms = function(a){ return a.map(function(n){ return n.nom; }).filter(function(n, i, t){ return t.indexOf(n) === i; }).join(', '); };
+  var sans = rates.filter(function(n){ return n.aucun; });
+  var err = rates.filter(function(n){ return !n.aucun; });
+  var t = [];
+  if(sans.length) t.push('Pas de notification pour ' + noms(sans) + ' : aucun téléphone inscrit sous ce nom.');
+  if(err.length) t.push('Notification ratée pour ' + noms(err) + ' (' + String(err[0].erreur || 'erreur') + ').');
+  AD_ALERTE = t.join(' ');
+  if(!AD_FICHE && ECRAN_VU === 'eAd1') peindreTableau();
+}
+function fermerAlerte(){ AD_ALERTE = ''; peindreTableau(); }
+function bandeauAlerte(){
+  if(!AD_ALERTE) return '';
+  return '<div class="card" style="border-color:var(--warn);margin-bottom:10px"><b>' + ech(AD_ALERTE) + '</b>' +
+    '<div class="mini">Sur le téléphone concerné : ouvrir l\'application, se connecter, et accepter les ' +
+    'notifications (sur iPhone, l\'application doit être ajoutée à l\'écran d\'accueil).</div>' +
+    '<div style="display:flex;gap:8px;margin-top:10px">' +
+      '<button class="btn sec sm" onclick="ficheNotifs()">Voir les téléphones inscrits</button>' +
+      '<button class="btn sec sm" onclick="fermerAlerte()">OK</button></div></div>';
+}
+
+/* v108e — qui recevra vraiment une notification : la réponse de OneSignal pour
+   chaque personne de l'équipe. */
+var NOTIFS_ETAT = null;
+function ficheNotifs(){
+  AD_FICHE = {type:'notifs'};
+  montrer('eAd2');
+  $('hTitre').textContent = 'Notifications';
+  erreur(''); window.scrollTo(0,0);
+  NOTIFS_ETAT = null;
+  peindreEtatNotifs();
+  var moi = session();
+  if(!moi) return;
+  poster({action:'etatNotifs', nom:moi.nom, code:moi.code, appareil:APPAREIL}, 40000).then(function(r){
+    NOTIFS_ETAT = r || {ok:false};
+    if(AD_FICHE && AD_FICHE.type === 'notifs') peindreEtatNotifs();
+  }, function(){
+    NOTIFS_ETAT = {ok:false, erreur:attenteLisible()};
+    if(AD_FICHE && AD_FICHE.type === 'notifs') peindreEtatNotifs();
+  });
+}
+function peindreEtatNotifs(){
+  var r = NOTIFS_ETAT, h = '<div class="card"><h2>Notifications de l\'équipe</h2>' +
+    '<div class="mini" style="margin-top:0">Un téléphone reçoit les notifications s\'il s\'est connecté à ' +
+    'l\'application sous son nom et a accepté les notifications.</div></div>';
+  if(!r) h += '<div class="card"><div class="empty">Interrogation du service de notifications…</div></div>';
+  else if(!r.ok) h += '<div class="card" style="border-color:var(--warn)"><b>Le bureau n\'a pas pu répondre</b>' +
+    '<div class="mini">' + ech(r.erreur || '') + '</div></div>';
+  else h += (r.gens || []).map(function(g){
+    var bon = g.actifs > 0;
+    return '<div class="card" style="border-color:' + (bon ? 'var(--ok)' : 'var(--warn)') + ';margin-bottom:10px">' +
+      '<div style="display:flex;gap:10px;align-items:baseline"><b style="flex:1">' + ech(g.nom) + '</b>' +
+      '<span class="mini">' + ech(g.role || '') + '</span></div>' +
+      '<div class="mini" style="margin-top:4px">' +
+      (g.erreur ? 'Réponse illisible du service (' + ech(g.erreur) + ').'
+        : bon ? 'Reçoit les notifications · ' + g.actifs + ' appareil' + (g.actifs > 1 ? 's' : '') +
+                (g.types ? ' (' + ech(g.types) + ')' : '')
+        : g.appareils ? 'Inscrit, mais notifications coupées sur ' + (g.appareils > 1 ? 'ses appareils' : 'son appareil') + '.'
+        : 'Aucun téléphone inscrit : il ne reçoit rien.') +
+      (g.vu ? '<br>Dernière ouverture : ' + ech(quandLisible(Date.parse(g.vu))) : '') +
+      '</div></div>';
+  }).join('');
+  h += '<button class="btn sec" style="margin-top:4px" onclick="ficheNotifs()">Actualiser</button>' +
+       '<button class="btn sec" style="margin-top:8px" onclick="retourTableau()">Retour au tableau</button>';
+  $('adFiche').innerHTML = h;
+}
+
 function bandeauMot(){
-  if(!AD_MOT) return '';
+  if(!AD_MOT) return bandeauAlerte();
   if(!AD_MOT_T) AD_MOT_T = Date.now();
-  if(Date.now() - AD_MOT_T > 12000){ AD_MOT = ''; AD_MOT_T = 0; return ''; }
-  return '<div class="card" style="border-color:var(--ok);margin-bottom:10px"><b>' + ech(AD_MOT) + '</b></div>';
+  if(Date.now() - AD_MOT_T > 12000){ AD_MOT = ''; AD_MOT_T = 0; return bandeauAlerte(); }
+  return bandeauAlerte() + '<div class="card" style="border-color:var(--ok);margin-bottom:10px"><b>' + ech(AD_MOT) + '</b></div>';
 }
 
 /* ====================== ESPACE PRESTATAIRE ======================
@@ -8029,7 +8286,7 @@ function nouveauDevis(){
   GRP = {};
   PHOTO_ID = null;
   cacherSugg();
-  ['cSociete','cSiret','cTva','cCiv','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate']
+  ['cSociete','cSiret','cTva','cCiv','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate','fPlaceDate','fPlaceHeure']
     .forEach(function(id){ if($(id)) $(id).value=''; });
   $('fEnvoi').checked = false;
   MAIL_MODE = ''; try{ majCadreMail(); }catch(e){}

@@ -365,7 +365,10 @@ var ENTETES_DEVIS_ = [
   'ENGAGEMENT_MOIS', 'RECONDUCTION',
   /* v106 — « Entretien des locaux (sans contrat) » : mêmes prestations, mais
      quelques passages vendus comme une intervention, jamais un contrat. */
-  'SANS_CONTRAT'
+  'SANS_CONTRAT',
+  /* v108e — « 2026-11-20 09:00 » : où le commercial verrait l'intervention.
+     Interne : ne s'imprime pas, proposé en premier au placement. */
+  'PLACEMENT_SUGGERE'
 ];
 
 /* Les états qu'un devis peut prendre, dans l'ordre de la vie réelle.
@@ -1030,7 +1033,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie'];
+                   'elementsPaie', 'etatNotifs'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1088,8 +1091,8 @@ function doPost(e) {
          /* v104 — les congés des salariés, saisis par le gérant. */
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
-         /* v108 — les éléments de paie du mois. */
-         'elementsPaie']
+         /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
+         'elementsPaie', 'etatNotifs']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1192,6 +1195,7 @@ function doPost(e) {
     if (d.action === 'mesDevis') return reponse_(mesDevis_(d, com));
     if (d.action === 'commissions') return reponse_(commissions_(d, com));
     if (d.action === 'elementsPaie') return reponse_(elementsPaie_(d));
+    if (d.action === 'etatNotifs') return reponse_(etatNotifs_());
     if (d.action === 'suggestions') return reponse_(suggestionsPlacement_(d));
     if (d.action === 'lienSignature') return reponse_(lienSignatureAppli_(d, com));
     if (d.action === 'devisArchive') return reponse_(devisArchive_(d, com));
@@ -1482,8 +1486,10 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
     CONTROLE_TARIF: controle,
     ENGAGEMENT_MOIS: engagementMois_(devis),
     RECONDUCTION: reconductionDevis_(devis),
-    SANS_CONTRAT: devis.sansContrat ? 'OUI' : ''
+    SANS_CONTRAT: devis.sansContrat ? 'OUI' : '',
+    PLACEMENT_SUGGERE: placementTexte_(devis.placement)
   };
+  colonneAssuree_(SH.DEVIS, 'PLACEMENT_SUGGERE');
   colonneAssuree_(SH.DEVIS, 'ENGAGEMENT_MOIS'); colonneAssuree_(SH.DEVIS, 'RECONDUCTION'); colonneAssuree_(SH.DEVIS, 'SANS_CONTRAT');
   majDevis_(numero, maj);
 
@@ -1772,7 +1778,8 @@ function enregistrer_(d, com) {
     PASSAGES_MOIS: Number(devis.passages) || '',
     ENGAGEMENT_MOIS: engagementMois_(devis),
     RECONDUCTION: reconductionDevis_(devis),
-    SANS_CONTRAT: devis.sansContrat ? 'OUI' : ''
+    SANS_CONTRAT: devis.sansContrat ? 'OUI' : '',
+    PLACEMENT_SUGGERE: placementTexte_(devis.placement)
   };
   if (controleTarif) {
     tracerServeur_(devis.commercial || com.nom, 'ECART TARIF', controleTarif,
@@ -2087,6 +2094,7 @@ function tableauAdmin_() {
       pdf: String(o.LIEN_PDF || ''), signe: String(o.SIGNE || '').toUpperCase() === 'OUI',
       preuve: String(o.PREUVE_SIGNATURE || '') ? true : false,
       note: String(o.NOTE_COMMERCIAL || ''),
+      placement: placementLire_(o.PLACEMENT_SUGGERE),
       /* v93 — de quoi mettre un devis d'entretien au calendrier comme contrat,
          sans retaper le client : le rythme, l'adresse, la nature, le mensuel. */
       recurrent: recurrentDevis_(o.NATURE, o.PASSAGES_MOIS, o.SANS_CONTRAT),
@@ -2329,9 +2337,7 @@ function planifierChantier_(d, com) {
       var neuf = !quiContient_(avant.PRESTATAIRE, nomN) || !avant.DATE;
       return messageChantier_(nomN, lgN, !neuf);
     });
-    if (envois.length) notifierLot_(envois).forEach(function (r, i) {
-      if (!r.ok && !r.aucun) tracerServeur_(envois[i].nom, 'NOTIFICATION RATEE', String(r.erreur || ''), String(avant.NUMERO || ''), '');
-    });
+    if (envois.length) var notifs = bilanNotifs_(envois, notifierLot_(envois), String(avant.NUMERO || id));
   }
 
   tracerServeur_(com ? com.nom : '', 'CHANTIER PLANIFIE',
@@ -2340,7 +2346,68 @@ function planifierChantier_(d, com) {
                  (v.HEURE ? ' ' + v.HEURE : ''),
                  String(avant.NUMERO || ''), d.appareil || '');
 
-  return { ok: true, id: id, statut: v.STATUT || avant.STATUT };
+  return { ok: true, id: id, statut: v.STATUT || avant.STATUT, notifs: notifs || [] };
+}
+
+/* v108e — « ça déconne les notifications : j'ai créé une intervention puis
+   déplacée, 0 notif, mes prestataires non plus ». Quand OneSignal répond que
+   personne n'est inscrit sous un nom, rien ne le disait : ni le journal, ni
+   l'écran. Désormais chaque envoi rend son bilan à l'appli (qui l'affiche)
+   et un nom sans téléphone inscrit laisse une ligne au journal. */
+/* v108e — le placement suggéré au devis : { date:'2026-11-20', heure:'09:00' }
+   ↔ « 2026-11-20 09:00 » dans la colonne. Du texte, pour que le classeur ne le
+   convertisse pas en date à l'heure de minuit. */
+function placementTexte_(p) {
+  if (!p || typeof p !== 'object') return '';
+  var d = String(p.date || '').trim(), h = String(p.heure || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
+  if (!/^\d{1,2}:\d{2}$/.test(h)) h = '';
+  return d + (h ? ' ' + ('0' + h).slice(-5) : '');
+}
+function placementLire_(v) {
+  if (v instanceof Date) return { date: isoJour_(v), heure: '' };
+  var m = String(v || '').trim().match(/^(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}:\d{2}))?/);
+  return m ? { date: m[1], heure: m[2] ? ('0' + m[2]).slice(-5) : '' } : null;
+}
+
+function bilanNotifs_(envois, res, ref) {
+  return envois.map(function (m, i) {
+    var r = res[i] || {};
+    if (!r.ok) tracerServeur_(m.nom, r.aucun ? 'NOTIFICATION SANS TELEPHONE' : 'NOTIFICATION RATEE',
+                              String(r.erreur || ''), ref || '', '');
+    return { nom: m.nom, ok: !!r.ok, aucun: !!r.aucun, erreur: r.ok ? '' : String(r.erreur || '') };
+  });
+}
+/* L'état des inscriptions chez OneSignal, pour chacun : le gérant voit d'un
+   coup d'œil qui recevra un message (et depuis quel genre d'appareil). */
+function etatNotifs_() {
+  var c = notifConfig_();
+  if (!c.app || !c.cle) return { ok: false, erreur: 'notifications non connectées (clé ou identifiant OneSignal manquant)' };
+  var gens = [], vus = {};
+  var ajouter = function (l, role) { (l || []).forEach(function (p) { var k = normNom_(p.nom); if (k && !vus[k]) { vus[k] = 1; gens.push({ nom: p.nom, role: role }); } }); };
+  try { ajouter(lirePrestataires_(), 'salarié'); } catch (e1) {}
+  try { ajouter(lireAdmins_(), 'gérant'); } catch (e2) {}
+  try { ajouter(lireCommerciaux_ ? lireCommerciaux_() : [], 'commercial'); } catch (e3) {}
+  var req = gens.map(function (g) {
+    return { url: 'https://api.onesignal.com/apps/' + encodeURIComponent(c.app) + '/users/by/external_id/' + encodeURIComponent(notifId_(g.nom)),
+             method: 'get', headers: { Authorization: 'Key ' + c.cle }, muteHttpExceptions: true };
+  });
+  var reps = req.length ? UrlFetchApp.fetchAll(req) : [];
+  gens.forEach(function (g, i) {
+    var r = reps[i], code = r.getResponseCode(), rep = {};
+    try { rep = JSON.parse(r.getContentText() || '{}'); } catch (e) {}
+    var subs = (rep.subscriptions || []).filter(function (x) { return /Push/i.test(String(x.type || '')); });
+    var actives = subs.filter(function (x) { return x.enabled !== false && Number(x.notification_types == null ? 1 : x.notification_types) > 0 && x.token; });
+    g.inscrit = code >= 200 && code < 300;
+    g.appareils = subs.length;
+    g.actifs = actives.length;
+    g.types = actives.map(function (x) { return String(x.type || '').replace(/Push$/, ''); }).join(', ');
+    var last = 0;
+    subs.forEach(function (x) { var t = Number(x.last_active || 0); if (t > last) last = t; });
+    g.vu = last ? new Date(last * (last < 1e12 ? 1000 : 1)).toISOString() : '';
+    if (!(code >= 200 && code < 300) && code !== 404) g.erreur = 'réponse ' + code;
+  });
+  return { ok: true, gens: gens };
 }
 
 /* Les champs d'identité d'un chantier que le gérant peut corriger, et le nom
@@ -2423,12 +2490,10 @@ function creerChantier_(d, com) {
   if (date && qui) {
     try {
       var envoisN = nomsQui_(qui).map(function (n) { return messageChantier_(n, v, false); });
-      notifierLot_(envoisN).forEach(function (r, i) {
-        if (!r.ok && !r.aucun) tracerServeur_(envoisN[i].nom, 'NOTIFICATION RATEE', String(r.erreur || ''), '', '');
-      });
+      var notifsN = bilanNotifs_(envoisN, notifierLot_(envoisN), id);
     } catch (eN) {}
   }
-  return { ok: true, id: id, statut: v.STATUT };
+  return { ok: true, id: id, statut: v.STATUT, notifs: notifsN || [] };
 }
 
 /**
@@ -2663,15 +2728,24 @@ function suggestionsPlacement_(d) {
   var adresse = adresseComplete_(ch.ADRESSE, ch.CP, ch.VILLE);
   var depuis = new Date(); depuis.setDate(depuis.getDate() + 1);
   var num = String(ch.NUMERO || '').trim();
+  var duDevis = null;
   if (num) {
     lireDevis_().forEach(function (x) {
-      if (String(x.NUMERO || '').trim() === num && x.DATE_SOUHAITEE instanceof Date && x.DATE_SOUHAITEE > depuis) {
+      if (String(x.NUMERO || '').trim() !== num) return;
+      if (x.DATE_SOUHAITEE instanceof Date && x.DATE_SOUHAITEE > depuis) {
         depuis = new Date(x.DATE_SOUHAITEE.getTime());
+      }
+      /* v108e — le créneau que le commercial a noté au devis passe devant. */
+      var pl = placementLire_(x.PLACEMENT_SUGGERE);
+      if (pl) {
+        var jP = new Date(pl.date + 'T12:00:00');
+        var demain = new Date(); demain.setHours(0, 0, 0, 0);
+        if (!isNaN(jP.getTime()) && jP >= demain) duDevis = { date: pl.date, heure: pl.heure, nom: '', route: 0, jour: jourFr_(jP), devis: true };
       }
     });
   }
   var gens = prestatairesPlanning_();
-  if (!gens.length) return { ok: true, suggestions: [], motif: 'aucun salarié décrit dans PRESTATAIRES (jours, plages)' };
+  if (!gens.length) return { ok: true, suggestions: duDevis ? [duDevis] : [], motif: 'aucun salarié décrit dans PRESTATAIRES (jours, plages)' };
   /* La route au forfait : interroger Google Maps pour chaque journée de
      chaque salarié prend plus de temps qu'un téléphone n'en accorde. Une
      suggestion n'a pas besoin de la minute près. */
@@ -2684,6 +2758,7 @@ function suggestionsPlacement_(d) {
                jour: jourFr_(c.date) });
     depuis = new Date(c.date.getTime()); depuis.setDate(depuis.getDate() + 1);
   }
+  if (duDevis) out.unshift(duDevis);
   return { ok: true, id: id, minutes: minutes, suggestions: out };
 }
 
@@ -5900,7 +5975,32 @@ function devisArchive_(d, com) {
     objet: String(cible.OBJET || ''), nature: String(cible.NATURE || ''),
     passages: Number(cible.PASSAGES_MOIS) || 0,
     etatSite: String(cible.ETAT_SITE || 'NORMAL'),
-    delai: String(cible.DELAI || ''), notes: String(cible.NOTES || '')
+    delai: String(cible.DELAI || ''), notes: String(cible.NOTES || ''),
+    /* v108e — de quoi rouvrir le devis pour le MODIFIER depuis la fiche du
+       tableau, sur un téléphone qui ne l'a pas établi. L'identifiant est ce
+       qui fait remplacer la ligne au lieu d'en ajouter une : sans lui, la
+       correction deviendrait un second devis. */
+    idDevis: String(cible.ID_DEVIS || ''),
+    placement: placementLire_(cible.PLACEMENT_SUGGERE),
+    commercial: String(cible.COMMERCIAL || ''),
+    statut: String(cible.STATUT || ''),
+    signe: String(cible.SIGNE || '').toUpperCase() === 'OUI' || String(cible.STATUT || '').toUpperCase() === 'SIGNE',
+    date: cible.DATE instanceof Date ? cible.DATE.toISOString() : String(cible.DATE || ''),
+    remise: Number(cible.REMISE_PCT) || 0,
+    km: (cible.KM_AGENCE === '' || cible.KM_AGENCE === undefined || cible.KM_AGENCE === null)
+      ? '' : Number(cible.KM_AGENCE),
+    origine: origineDevis_(cible.ORIGINE),
+    lieuSignature: String(cible.LIEU_SIGNATURE || ''),
+    dateSouhaitee: cible.DATE_SOUHAITEE instanceof Date ? isoJour_(cible.DATE_SOUHAITEE)
+      : (/^\d{4}-\d{2}-\d{2}/.test(String(cible.DATE_SOUHAITEE || '')) ? String(cible.DATE_SOUHAITEE).slice(0, 10) : ''),
+    sansContrat: /^OUI$/i.test(String(cible.SANS_CONTRAT || '').trim()),
+    engagement: Number(cible.ENGAGEMENT_MOIS) > 0
+      ? { mois: Number(cible.ENGAGEMENT_MOIS), tacite: String(cible.RECONDUCTION || '').toUpperCase() !== 'NON' }
+      : null,
+    totaux: {
+      htPonctuel: Number(cible.TOTAL_HT_PONCTUEL) || 0, htMensuel: Number(cible.TOTAL_HT_MENSUEL) || 0,
+      ht: Number(cible.TOTAL_HT) || 0, tva: Number(cible.TOTAL_TVA) || 0, ttc: Number(cible.TOTAL_TTC) || 0
+    }
   };
 
   /* Le PDF ne part que si on le demande : il pèse, et l'écran n'en a besoin

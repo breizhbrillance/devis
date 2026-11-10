@@ -393,7 +393,7 @@ var PDF = (function () {
     var avecRemise = remiseEur > 0.005;
 
     var hBoite = 18 + ordreTaux.length * 5.4 + (avecRemise ? 10.8 : 0)
-                 + (entretien ? 10.8 : 0);
+                 + (entretien ? 5.4 : 0);
     if (y + hBoite + 10 > BAS_UTILE) { y = nouvellePage(); }
     y += 6;
 
@@ -406,10 +406,9 @@ var PDF = (function () {
     fond(MARQUE); doc.rect(xB, y, wB, hBoite, 'F');
     var yt = y + 6.2;
     if (entretien) {
+      /* v108e — plus de ligne « Prix d'un passage HT » (demande de Simon,
+         10 novembre 2026) : le client lit le total au mois. */
       police('normal', 9, [255, 255, 255]);
-      doc.text('Prix d\'un passage HT', xL, yt, { align: 'right' });
-      doc.text(eur(parPassage), R - 4, yt, { align: 'right' });
-      yt += 5.4;
       doc.text('Passages par mois (sur 52 sem.)', xL, yt, { align: 'right' });
       doc.text(nbPassages(passages), R - 4, yt, { align: 'right' });
       yt += 5.4;

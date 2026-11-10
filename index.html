@@ -1023,6 +1023,15 @@
       <div class="mini">Si le client sait quand il veut qu'on vienne, pose la date : elle
         s'imprime sur le devis et sert à poser le chantier sur le planning. Sinon, laisse
         vide — le bureau planifiera à partir du jour de la signature.</div>
+      <!-- v108e — une précision pour nous seulement : où le commercial verrait
+           l'intervention. Elle ne s'imprime pas et ne part pas au client. -->
+      <label>Placement suggéré — interne (facultatif)</label>
+      <div class="row" style="gap:8px">
+        <input id="fPlaceDate" type="date" style="flex:1.4">
+        <input id="fPlaceHeure" type="time" step="900" style="flex:1">
+      </div>
+      <div class="mini">Visible uniquement par nous : n'apparaît ni sur le devis ni dans le
+        mail au client. Il est proposé en premier quand on place l'intervention au planning.</div>
       <label>Précision sur le délai (facultatif)</label>
       <input id="fDelai" placeholder="Sur deux jours, de préférence en fin de semaine">
       <label>Précisions / conditions particulières</label>
@@ -1644,11 +1653,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=108d"></script>
-<script src="jspdf.umd.min.js?v=108d"></script>
-<script src="police.js?v=108d"></script>
-<script src="logo.js?v=108d"></script>
-<script src="pdf.js?v=108d"></script>
-<script src="app.js?v=108d"></script>
+<script src="config.js?v=108e"></script>
+<script src="jspdf.umd.min.js?v=108e"></script>
+<script src="police.js?v=108e"></script>
+<script src="logo.js?v=108e"></script>
+<script src="pdf.js?v=108e"></script>
+<script src="app.js?v=108e"></script>
 </body>
 </html>
