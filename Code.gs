@@ -7839,7 +7839,59 @@ function envoyerMail_(m, reg) {
     delete o.cc;
   }
   if (o.bcc && String(o.bcc).split(',').every(function (x) { return String(x).trim().toLowerCase() === String(o.to || '').trim().toLowerCase(); })) delete o.bcc;
+  /* v108i — l'expéditeur est contact@ (adresse « Envoyer en tant que »
+     déclarée dans le Gmail du compte du script, le 10 novembre). GmailApp
+     sait choisir l'expéditeur, MailApp non. Si l'adresse n'est pas (ou plus)
+     déclarée, on retombe sur MailApp plutôt que de perdre le mail. */
+  if (expediteurDispo_(maison)) {
+    try {
+      var opt = { htmlBody: o.htmlBody, from: maison, name: o.name, replyTo: o.replyTo };
+      if (o.bcc) opt.bcc = o.bcc;
+      if (o.attachments && o.attachments.length) opt.attachments = o.attachments;
+      GmailApp.sendEmail(o.to, o.subject, texteDuHtml_(o.htmlBody), opt);
+      return;
+    } catch (eG) {
+      tracerServeur_('SYSTEME', 'ENVOI CONTACT@ IMPOSSIBLE', String(eG && eG.message || eG).slice(0, 200), '', '');
+    }
+  }
   MailApp.sendEmail(o);
+}
+
+/* L'adresse est-elle déclarée comme expéditeur dans le Gmail du script ?
+   Vérifié une fois par 6 heures (cache), pour ne pas interroger Gmail à
+   chaque mail. */
+function expediteurDispo_(adresse) {
+  var a = String(adresse || '').trim().toLowerCase();
+  if (!a) return false;
+  var cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e0) {}
+  var cle = 'alias:' + a;
+  var v = cache ? cache.get(cle) : null;
+  if (v === '1') return true;
+  if (v === '0') return false;
+  var ok = false;
+  try {
+    ok = GmailApp.getAliases().some(function (x) { return String(x).trim().toLowerCase() === a; });
+  } catch (e) { ok = false; }
+  try { if (cache) cache.put(cle, ok ? '1' : '0', 21600); } catch (e2) {}
+  return ok;
+}
+function texteDuHtml_(h) {
+  return String(h || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** À lancer une fois depuis l'éditeur : accorde l'accès Gmail au script et
+    envoie un mail d'essai de contact@ à contact@. */
+function autoriserEnvoiContact() {
+  var a = String(lireReglages_().email_expediteur || 'contact@breizhbrillance.fr').trim();
+  try { CacheService.getScriptCache().remove('alias:' + a.toLowerCase()); } catch (e) {}
+  var dispo = expediteurDispo_(a);
+  envoyerMail_({ to: a, subject: 'Essai — les mails partent bien de ' + a,
+                 htmlBody: '<p>Bonjour,</p><p>Ce mail d\'essai vient de l\'application BREIZH BRILLANCE. ' +
+                   'S\'il est arrivé avec l\'expéditeur ' + a + ', tout est en ordre.</p>' });
+  Logger.log(dispo ? 'Expéditeur ' + a + ' disponible : mail d\'essai envoyé.' : 'Expéditeur ' + a + ' introuvable dans Gmail : mail envoyé par MailApp.');
 }
 
 /* Caractères spéciaux neutralisés : un nom de client avec une esperluette ne
