@@ -4147,9 +4147,21 @@ function genererRecurrents_() {
   bilan.feries = 0;
   var regleQ = regleEquipe_(reg);
 
+  /* v108l — « planifie les interventions suivant le contrat, ne t'arrête pas
+     à janvier : adapte-toi à la vraie durée du contrat ». Un contrat qui a une
+     date de FIN est posé jusqu'à elle (trois ans au plus) ; sans FIN, on garde
+     l'horizon des réglages. La reconduction tacite repousse la FIN, et la
+     génération suivante pose l'année d'après. */
+  var plafond = new Date(aujourd); plafond.setFullYear(plafond.getFullYear() + 3);
+  function horizonDe_(r) {
+    var f = r.FIN ? minuit_(r.FIN) : null;
+    if (!f || isNaN(f.getTime())) return horizon;
+    if (f > plafond) f = plafond;
+    return f > horizon ? f : horizon;
+  }
   series.forEach(function (r) {
     var id = String(r.ID).trim();
-    occurrencesRecurrent_(r, aujourd, horizon).forEach(function (d) {
+    occurrencesRecurrent_(r, aujourd, horizonDe_(r)).forEach(function (d) {
       var cle = id + '|' + isoJour_(d);
       if (deja[cle]) return;
       var fer = ferie_(cal, d);
