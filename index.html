@@ -41,13 +41,14 @@
      volontairement plus sombre que celui des messages d'erreur, qui doivent
      rester les plus visibles. */
   body.admin{
-    --acc:#8C1D18; --acc-d:#6B1512;
-    --acc-f:#FBEDEC; --acc-b:#E8C3C0; --acc-t:#6B1512;
+    --acc:#B3131B; --acc-d:#8A0E14;
+    --acc-f:#FCEBEC; --acc-b:#EDB9BC; --acc-t:#7A0C11;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   /* manipulation : le défilement reste normal, mais le double-appui n'agrandit plus.
      C'est l'autre geste de zoom, que le réglage d'affichage ne couvre pas. */
   html,body{margin:0;background:var(--bg);touch-action:manipulation}
+  .chTel{color:var(--acc-t);text-decoration:none;font-weight:600;white-space:nowrap}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
        color:var(--txt);font-size:16px;padding-bottom:120px}
   header{position:sticky;top:0;z-index:20;background:var(--acc);color:#fff;
@@ -657,12 +658,13 @@
      Ce qui reste blanc exprès : la feuille de signature (l'encre est noire)
      et les pages du devis, qui sont du papier. */
   html.sombre{color-scheme:dark;
-    --bg:#0f1216; --card:#181c22; --txt:#e7e9ec; --mut:#9aa3ad; --line:#2b313a;
+    --bg:#06080b; --card:#0f1216; --txt:#e7e9ec; --mut:#9aa3ad; --line:#232830;
     --acc:#2f7bc9; --acc-d:#1f5f9f; --acc-f:#15263a; --acc-b:#28496f; --acc-t:#a9cdf3;
     --danger:#f87171; --warn:#f0a43a; --ok:#3ccf8e;
-    --sub:#1f242b; --press:#262c35}
-  html.sombre body.admin{--acc:#b23a32; --acc-d:#8f2a24; --acc-f:#2c1716; --acc-b:#5b2723; --acc-t:#f3b0aa}
-  html.sombre header{background:#12161c;border-bottom:2px solid var(--acc)}
+    --sub:#15191f; --press:#1c2128}
+  /* v108n — « un fond plus sombre et un rouge un peu plus vif ». */
+  html.sombre body.admin{--acc:#e0241b; --acc-d:#b51b14; --acc-f:#2a0c0b; --acc-b:#6e1a16; --acc-t:#ff9d95}
+  html.sombre header{background:#0a0c10;border-bottom:2px solid var(--acc)}
   html.sombre .btn.sec.on, html.sombre .bsel.on, html.sombre .choix.on b,
   html.sombre .ctAva.on{color:var(--acc-t)}
   html.sombre .ctAva.on span{border-color:var(--acc-t)}
@@ -1316,6 +1318,12 @@
     <svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></svg>
     <span>Factures</span>
   </button>
+  <!-- v108n — « un nouvel onglet salariés : heures, disponibilités, congés,
+       éléments variables ». Les admins seuls. -->
+  <button id="ongAS" class="hide" onclick="barreAdmin('salaries')">
+    <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 5.3"/></svg>
+    <span>Salariés</span>
+  </button>
   <button id="ongD" onclick="ongletDevis()">
     <svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4"/><path d="M9 13h6M9 17h4"/></svg>
     <span>Devis</span>
@@ -1554,6 +1562,7 @@
       <div id="agAdresse" style="margin-top:12px;font-size:16px;line-height:1.35"></div>
       <button class="btn sec sm" style="margin-top:10px" onclick="itineraire()">Itinéraire</button>
 
+      <div id="agTel" class="tvaInfo hide" style="margin-top:14px"></div>
       <div id="agAcces" class="tvaInfo hide" style="margin-top:14px"></div>
       <div id="agFiche" class="hide" style="margin-top:14px"></div>
     </div>
@@ -1656,11 +1665,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=108m"></script>
-<script src="jspdf.umd.min.js?v=108m"></script>
-<script src="police.js?v=108m"></script>
-<script src="logo.js?v=108m"></script>
-<script src="pdf.js?v=108m"></script>
-<script src="app.js?v=108m"></script>
+<script src="config.js?v=108n"></script>
+<script src="jspdf.umd.min.js?v=108n"></script>
+<script src="police.js?v=108n"></script>
+<script src="logo.js?v=108n"></script>
+<script src="pdf.js?v=108n"></script>
+<script src="app.js?v=108n"></script>
 </body>
 </html>

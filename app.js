@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108m';
+var VERSION_APP = 'v108n';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -371,7 +371,7 @@ function peindreLiensTheme(){
   var mot = themeSombre() ? 'mode clair' : 'mode sombre';
   Array.prototype.forEach.call(document.querySelectorAll('.lienTheme'), function(a){ a.textContent = mot; });
   var m = document.querySelector('meta[name="theme-color"]');
-  if(m) m.setAttribute('content', themeSombre() ? '#12161c' : (document.body.classList.contains('admin') ? '#8C1D18' : '#004C92'));
+  if(m) m.setAttribute('content', themeSombre() ? '#0a0c10' : (document.body.classList.contains('admin') ? '#B3131B' : '#004C92'));
 }
 function basculerTheme(){
   var sombre = !themeSombre();
@@ -610,7 +610,7 @@ function majOnglets(){
   var oT = $('ongT'), adm = estAdmin();
   if(oT){ oT.classList.toggle('hide', !adm); oT.classList.toggle('on', ou === 'tableau' && (AD_ONGLET === 'aujourdhui' || AD_ONGLET === 'clients')); }
   /* v106 — le gérant : Tableau · Planning · Devis · Factures · Phoning. */
-  ['ongAPl','ongADv','ongAF'].forEach(function(k){ if($(k)) $(k).classList.toggle('hide', !adm); });
+  ['ongAPl','ongADv','ongAF','ongAS'].forEach(function(k){ if($(k)) $(k).classList.toggle('hide', !adm); });
   if(adm){
     /* v106 — « enlève complètement l'onglet Phoning » (barre du gérant). */
     $('ongD').classList.add('hide'); $('ongL').classList.add('hide'); $('ongPl').classList.add('hide'); $('ongP').classList.add('hide');
@@ -618,6 +618,7 @@ function majOnglets(){
     if($('ongAPl')) $('ongAPl').classList.toggle('on', surT && AD_ONGLET === 'chantiers');
     if($('ongADv')) $('ongADv').classList.toggle('on', (ou === 'tableau' && AD_ONGLET === 'devis') || ou === 'devis' || ou === 'liste');
     if($('ongAF')) $('ongAF').classList.toggle('on', ou === 'tableau' && AD_ONGLET === 'factures');
+    if($('ongAS')) $('ongAS').classList.toggle('on', ou === 'tableau' && AD_ONGLET === 'salaries');
   } else {
     $('ongD').classList.remove('hide'); $('ongL').classList.remove('hide');
   }
@@ -5712,6 +5713,7 @@ function ongletAdmin(quoi){
      (contrats, interventions du mois, Pennylane). On ne la charge donc qu'en
      arrivant sur l'onglet. */
   if(quoi === 'factures' && !FACT) chargerFacturation($('bFactAct'));
+  if(quoi === 'salaries') chargerDispos();
 }
 function filtreAdmin(nom){ AD_QUI = nom; peindreTableau(); }
 
@@ -5779,6 +5781,11 @@ function peindreTableau(){
 
   /* La facturation se peint à part : elle ne lit pas le tableau, et elle doit
      s'afficher même si le tableau n'a jamais été rafraîchi sur cet appareil. */
+  if(AD_ONGLET === 'salaries'){
+    $('adFiltres').innerHTML = '';
+    $('adListe').innerHTML = bandeauMot() + salariesHtml();
+    return;
+  }
   if(AD_ONGLET === 'factures'){
     if(!FACT_MOIS) FACT_MOIS = moisAujourdhui();
     $('bFactMois').textContent = moisNom(FACT_MOIS);
@@ -6385,6 +6392,128 @@ function bandeJour(iso, nb){
 /* La carte d'un chantier sur l'écran du gérant. Elle porte les couleurs de sa
    nature, comme sur le téléphone du salarié : c'est le même travail, il n'y a
    pas de raison qu'il change d'aspect en changeant de lecteur. */
+/* ====================== SALARIÉS (v108n) ======================
+   « Les heures des salariés au mois et ce qu'il me reste de temps pour placer
+   une intervention — seulement les prestataires, vu par les admins ; dans un
+   onglet Salariés avec les congés et les éléments variables. » Le bureau
+   calcule (disposSalaries) : contrat du mois, prévu (passages + trajets),
+   libre, semaine par semaine et jour par jour. */
+var DISPOS = null, DISPOS_MOIS = '', DISPOS_OUVERT = {}, DISPOS_EN_COURS = '';
+function chargerDispos(){
+  var moi = session();
+  if(!DISPOS_MOIS) DISPOS_MOIS = moisAujourdhui();
+  if(!moi || !navigator.onLine){ return; }
+  var m = DISPOS_MOIS;
+  DISPOS = null; DISPOS_EN_COURS = m;
+  poster({action:'disposSalaries', nom:moi.nom, code:moi.code, appareil:APPAREIL, mois:m}, 60000).then(function(r){
+    if(DISPOS_EN_COURS === m) DISPOS_EN_COURS = '';
+    if(m !== DISPOS_MOIS) return;
+    DISPOS = r && r.ok ? r : { erreur: (r && r.erreur) || 'Le bureau n\'a pas répondu.' };
+    if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'salaries' && !AD_FICHE) peindreTableau();
+  }, function(){ DISPOS_EN_COURS = ''; DISPOS = { erreur: attenteLisible() }; if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'salaries') peindreTableau(); });
+}
+function moisDispos(dec){
+  var p = (DISPOS_MOIS || moisAujourdhui()).split('-');
+  var d = new Date(Number(p[0]), Number(p[1]) - 1 + dec, 15);
+  DISPOS_MOIS = isoJour(d).slice(0, 7);
+  chargerDispos(); peindreTableau();
+}
+function hLisible(mn){
+  mn = Math.round(Number(mn) || 0);
+  var neg = mn < 0; mn = Math.abs(mn);
+  var h = Math.floor(mn / 60), r = mn % 60;
+  return (neg ? '−' : '') + h + ' h' + (r ? (r < 10 ? '0' : '') + r : '');
+}
+function basculerJoursLibres(i){ DISPOS_OUVERT[i] = !DISPOS_OUVERT[i]; peindreTableau(); }
+function poserChezSalarie(iso, nom){
+  nouveauChantier(iso);
+  try{ CT.prestataire = nom; peindreContrat(); }catch(e){}
+}
+function salariesHtml(){
+  if(!DISPOS_MOIS) DISPOS_MOIS = moisAujourdhui();
+  var h = '<div class="card" style="display:flex;align-items:center;gap:8px">' +
+    '<button class="btn sec sm" style="width:auto" onclick="moisDispos(-1)" aria-label="Mois précédent">‹</button>' +
+    '<b style="flex:1;text-align:center">' + ech(moisNom(DISPOS_MOIS)) + '</b>' +
+    '<button class="btn sec sm" style="width:auto" onclick="moisDispos(1)" aria-label="Mois suivant">›</button></div>';
+  var r = DISPOS;
+  if(!r && DISPOS_EN_COURS !== DISPOS_MOIS) setTimeout(chargerDispos, 0);
+  if(!r) h += '<div class="card"><div class="empty">Calcul des heures… (les trajets prennent quelques secondes la première fois)</div></div>';
+  else if(r.erreur) h += '<div class="card" style="border-color:var(--warn)"><b>Le bureau n\'a pas pu répondre</b><div class="mini">' + ech(r.erreur) + '</div>' +
+    '<button class="btn sec sm" style="margin-top:8px" onclick="chargerDispos();peindreTableau()">Réessayer</button></div>';
+  else {
+    h += (r.salaries || []).map(function(sx, i){
+      var pc = sx.contrat ? Math.min(100, Math.round(sx.prevu * 100 / sx.contrat)) : 0;
+      var trop = sx.libre < 0;
+      var libres = (sx.jours || []).filter(function(j){ return !j.passe && j.cap - j.prevu >= 60; });
+      return '<div class="card" style="margin-bottom:10px">' +
+        '<div style="display:flex;gap:10px;align-items:baseline"><b style="flex:1;font-size:17px">' + ech(sx.nom) + '</b>' +
+          '<span class="mini">' + sx.heuresSemaine + ' h / semaine</span></div>' +
+        '<div style="display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 6px;font-size:14px">' +
+          '<span>Contrat <b>' + hLisible(sx.contrat) + '</b></span>' +
+          '<span>Prévu <b>' + hLisible(sx.prevu) + '</b></span>' +
+          '<span style="color:' + (trop ? 'var(--danger)' : 'var(--ok)') + '">' + (trop ? 'Dépassement ' : 'Libre ') + '<b>' + hLisible(Math.abs(sx.libre)) + '</b></span></div>' +
+        '<div style="height:9px;border-radius:5px;background:var(--sub);overflow:hidden"><div style="width:' + pc + '%;height:100%;background:' + (trop ? 'var(--danger)' : 'var(--acc)') + '"></div></div>' +
+        '<div class="mini" style="margin-top:6px">' + sx.n + ' passage' + (sx.n > 1 ? 's' : '') + ' · travail ' + hLisible(sx.travail) + ' + trajets ' + hLisible(sx.trajet) + '</div>' +
+        '<div style="display:flex;gap:6px;margin-top:10px">' + (sx.semaines || []).map(function(w){
+          var l = w.contrat - w.prevu;
+          return '<div style="flex:1;text-align:center;background:var(--sub);border-radius:8px;padding:5px 0">' +
+            '<div class="mini" style="margin:0">' + ech(jjmm(w.lundi)) + '</div>' +
+            '<b style="font-size:13px;color:' + (l < 0 ? 'var(--danger)' : 'var(--txt)') + '">' + hLisible(l) + '</b></div>';
+        }).join('') + '</div>' +
+        '<div class="mini" style="margin-top:2px">Libre par semaine (semaine du lundi indiqué).</div>' +
+        '<button class="btn sec sm" style="margin-top:10px" onclick="basculerJoursLibres(' + i + ')">' +
+          (DISPOS_OUVERT[i] ? 'Masquer les jours libres' : 'Voir les jours libres (' + libres.length + ')') + '</button>' +
+        (DISPOS_OUVERT[i] ? (libres.length ? libres.map(function(j){
+          return '<div style="display:flex;gap:10px;align-items:center;border-top:1px solid var(--line);padding:8px 0">' +
+            '<div style="flex:1"><b>' + ech(jourLisible(j.iso)) + '</b><div class="mini" style="margin:0">' + hLisible(j.cap - j.prevu) + ' libres · ' +
+              j.n + ' intervention' + (j.n > 1 ? 's' : '') + ' déjà</div></div>' +
+            '<button class="btn sec sm" style="width:auto" onclick="poserChezSalarie(\'' + j.iso + '\', \'' + ech(sx.nom).replace(/'/g,'&#39;') + '\')">Poser ici</button></div>';
+        }).join('') : '<div class="mini" style="margin-top:8px">Aucun jour avec au moins une heure de libre ce mois-ci.</div>') : '') +
+      '</div>';
+    }).join('');
+    h += '<div class="mini" style="margin:-2px 0 12px">Contrat = heures par semaine réparties sur ses jours de travail, moins les fériés et les congés. ' +
+      'Prévu = durée des passages (un binôme compte pour chacun) + route entre deux chantiers du même jour' +
+      (r.trajetsEstimes ? ' (certains trajets au forfait de ' + r.trajetForfait + ' min, affinés au prochain calcul)' : '') + '.</div>';
+  }
+  h += '<button class="btn sec" style="margin-top:4px" onclick="listeConges()">Congés et absences</button>' +
+       '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments variables de paie</button>' +
+       '<button class="btn sec" style="margin-top:8px" onclick="ficheNotifs()">Notifications : ce téléphone et l\'équipe</button>';
+  return h;
+}
+/* v108n — le numéro du client sur chaque intervention. Un appui appelle ;
+   sur la carte, l'appui ne doit pas ouvrir la fiche en même temps. */
+function lienTel(tel, contact){
+  var t = String(tel || '').trim();
+  if(!t) return '';
+  return '<a class="chTel" href="tel:' + ech(t.replace(/[^\d+]/g, '')) + '" onclick="event.stopPropagation()">' +
+    '<span aria-hidden="true">&#9742;</span> ' + ech(t) + (contact ? ' · ' + ech(contact) : '') + '</a>';
+}
+function blocTelFiche(c){
+  return '<div class="card" style="margin-bottom:10px"><b>Téléphone du client</b>' +
+    (c.tel ? '<div style="margin-top:8px;font-size:17px">' + lienTel(c.tel, c.contactTel) + '</div>'
+           : '<div class="mini" style="margin-top:6px">Aucun numéro connu pour ce client.</div>') +
+    '<div class="row" style="gap:8px;margin-top:10px;align-items:flex-end">' +
+      '<div style="flex:1"><label>' + (c.tel ? 'Corriger le numéro' : 'Ajouter le numéro') + '</label>' +
+      '<input id="adTelCli" type="tel" inputmode="tel" value="' + ech(c.tel || '') + '" placeholder="06 12 34 56 78"></div>' +
+      '<button class="btn sec sm" style="width:auto" onclick="enregistrerTelClient(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\', this)">Valider le numéro</button>' +
+    '</div><div class="mini">Le numéro vaut pour toutes les interventions de ce client.</div></div>';
+}
+function enregistrerTelClient(id, btn){
+  var moi = session(); if(!moi) return;
+  var c = ((TABLEAU||{}).chantiers||[]).filter(function(x){ return String(x.id) === String(id); })[0];
+  if(!c) return;
+  var tel = ($('adTelCli')||{}).value || '';
+  occuper(btn, 'Envoi…');
+  poster({action:'telClient', nom:moi.nom, code:moi.code, appareil:APPAREIL, client:c.client, tel:tel}, 30000).then(function(r){
+    libere(btn);
+    if(!r || !r.ok){ erreur((r && r.erreur) || 'Le bureau n\'a pas pu enregistrer le numéro.'); return; }
+    var cle = String(c.client||'').replace(/\s+[—–-]\s+.*$/, '').toUpperCase();
+    ((TABLEAU||{}).chantiers||[]).forEach(function(x){
+      if(String(x.client||'').replace(/\s+[—–-]\s+.*$/, '').toUpperCase() === cle) x.tel = r.tel;
+    });
+    peindreFicheChantier(c, false);
+  }, function(){ libere(btn); erreur(attenteLisible()); });
+}
 function carteChantierAdmin(c){
   var manque = !c.date || !c.prestataire;
   var pris = !!AD_CHOIX[c.id];
@@ -6404,6 +6533,7 @@ function carteChantierAdmin(c){
       (c.prestataire ? ech(quiLisible(c.prestataire)) : 'personne') +
       (c.ville ? ' · ' + ech(c.ville) : '') +
     '</div>' +
+    (c.tel ? '<div class="mini" style="margin-top:4px">' + lienTel(c.tel) + '</div>' : '') +
     (n ? '<span class="chNat">' + ech(n.nom) + '</span>' : '') +
     (manque ? '<div class="mini" style="color:var(--warn)">À planifier</div>' : '') +
     /* Posé avant que le devis soit déclaré signé. Le salarié ne le voit pas :
@@ -6878,6 +7008,7 @@ function peindreFicheChantier(c, neuf){
           'Posé avant que le devis soit déclaré signé. Le salarié le voit comme un ' +
           'chantier ordinaire ; un refus ne l\'enlèvera pas tout seul.</div>' : '') +
       '</div>') +
+    (neuf ? '' : blocTelFiche(c)) +
     (neuf ? '' : blocContratFiche(c)) +
     (neuf ? '' : blocFicheChantier(c)) +
 
@@ -8142,6 +8273,7 @@ function peindrePlanning(){
                  (x.heure ? '<b class="chH">' + ech(x.heure) + '</b>' : '') +
                  ech(x.ville || '') +
                '</div>' +
+               (x.tel ? '<div class="mini" style="margin-top:4px">' + lienTel(x.tel) + '</div>' : '') +
                (n ? '<span class="chNat">' + ech(n.nom) + '</span>' : '') +
                (x.aEnvoyer && Object.keys(x.aEnvoyer).length
                  ? '<div class="mini" style="color:var(--warn);margin-top:6px">' +
@@ -8285,6 +8417,11 @@ function peindreChantier(){
     fz.innerHTML = c.fiche ? '<button class="btn" onclick="voirFicheJointe(\'' + ech(String(c.id)).replace(/'/g,'&#39;') +
       '\', this)">📎 Voir la fiche d\'intervention</button>' +
       '<div class="mini" style="margin-top:4px">' + ech(c.fiche) + ' · les instructions du bureau pour ce chantier</div>' : '';
+  }
+  var tz = $('agTel');
+  if(tz){
+    tz.classList.toggle('hide', !c.tel);
+    tz.innerHTML = c.tel ? '<b>Téléphone du client</b><br><span style="font-size:17px">' + lienTel(c.tel, c.contactTel) + '</span>' : '';
   }
   var acc = $('agAcces');
   if(String(c.acces || '').trim()){

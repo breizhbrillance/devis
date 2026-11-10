@@ -218,6 +218,7 @@ function onOpen() {
     .addItem('30. Brouillons Pennylane : les chantiers terminés', 'menuBrouillonsPonctuels')
     .addItem('31. Activer la préparation automatique des brouillons', 'activerPreparationAuto')
     .addItem('32. Arrêter la préparation automatique', 'arreterPreparationAuto')
+    .addItem('33. Importer les téléphones des clients (Pennylane, Henrri)', 'importerTelephones')
     .addToUi();
 }
 
@@ -1037,7 +1038,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie', 'etatNotifs', 'essaiNotif'];
+                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1096,7 +1097,7 @@ function doPost(e) {
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
          /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
-         'elementsPaie', 'etatNotifs', 'essaiNotif']
+         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire', 'essaiNotif']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1204,6 +1205,8 @@ function doPost(e) {
     if (d.action === 'commissions') return reponse_(commissions_(d, com));
     if (d.action === 'elementsPaie') return reponse_(elementsPaie_(d));
     if (d.action === 'etatNotifs') return reponse_(etatNotifs_());
+    if (d.action === 'telClient') return reponse_(telClientPoser_(d, com));
+    if (d.action === 'disposSalaries') return reponse_(disposSalaries_(d));
     /* v108l — « que je puisse vérifier les notifs sur mon téléphone » : une
        notification d'essai envoyée à soi-même, et la réponse du service. */
     if (d.action === 'essaiNotif') {
@@ -2137,6 +2140,7 @@ function tableauAdmin_() {
      travail. Un chantier « à poser » est un chantier sans date ou sans
      personne — dans les deux cas il n'apparaît sur aucun téléphone. */
   var parDevis = {}, aPoser = {};
+  var TELS = telsClients_();
   objetsDe_(SH.CHANTIERS).forEach(function (o) {
     if (!String(o.ID || '').trim()) return;
     var nd = String(o.NUMERO || '').trim();
@@ -2182,7 +2186,10 @@ function tableauAdmin_() {
                          var n = nomFerieIso_(iso) || motifAbsence_(calT, iso, o.PRESTATAIRE);
                          return n ? { nom: n, date: iso } : ''; })()
         : '',
-      duree: Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || ''
+      duree: Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || '',
+      /* v108n — « le numéro de chaque client sur chaque intervention ». */
+      tel: (telDe_(o, TELS) || {}).tel || '',
+      contactTel: (telDe_(o, TELS) || {}).contact || ''
     });
   });
   chantiers.sort(function (a, b) {
@@ -2788,6 +2795,247 @@ function jourFr_(d) {
   return j[jour.getDay()] + ' ' + Number(p[2]) + ' ' + m[Number(p[1]) - 1];
 }
 
+/* ===================== HEURES ET DISPONIBILITÉS DES SALARIÉS (v108n) =====
+   « Une liste des heures des salariés mensuellement et ce qu'il me reste de
+   temps disponible pour placer une intervention, uniquement pour les
+   prestataires, vue par les admins. Compter les trajets ; un passage en
+   binôme compte pour chacun des deux. »
+   - Contrat : HEURES_SEMAINE réparties sur ses JOURS, moins les fériés, ses
+     congés et les fermetures.
+   - Prévu : la durée prévue de chaque passage où il figure, plus la route
+     entre deux chantiers d'une même journée (Google Maps, sinon le forfait).
+   - Libre = contrat − prévu.                                                */
+function disposSalaries_(d) {
+  var reg = lireReglages_(), cal = calendrier_(reg);
+  var mois = /^\d{4}-\d{2}$/.test(String(d && d.mois || '')) ? String(d.mois)
+    : Utilities.formatDate(new Date(), 'Europe/Paris', 'yyyy-MM');
+  var a = Number(mois.slice(0, 4)), m = Number(mois.slice(5, 7));
+  var nbJours = new Date(a, m, 0).getDate();
+  var gens = prestatairesPlanning_();
+  var charge = { trajet: trajetMinutes_(reg), calcule: trajetCalcule_(reg), routes: {} };
+  var appels = {}, budget = 60;
+  var route = function (x, y) {
+    if (!x || !y) return charge.trajet;
+    var k = cleAdresse_(x) + '>' + cleAdresse_(y);
+    if (!appels[k]) { appels[k] = 1; budget--; }
+    var calc = charge.calcule;
+    if (budget < 0) charge.calcule = false;
+    var r = trajetEntre_(charge, x, y);
+    charge.calcule = calc;
+    return r;
+  };
+  var parJour = {};
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    if (!String(o.ID || '').trim() || !o.DATE) return;
+    if (String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') return;
+    var dt = new Date(o.DATE);
+    if (isNaN(dt.getTime()) || dt.getFullYear() !== a || dt.getMonth() !== m - 1) return;
+    var iso = isoJour_(dt);
+    var min = Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || 60;
+    var adr = adresseComplete_(o.ADRESSE, o.CP, o.VILLE);
+    var h = heureTexte_(o.HEURE) || '99:99';
+    nomsQui_(o.PRESTATAIRE).forEach(function (n) {
+      var k = normNom_(n) + '|' + iso;
+      (parJour[k] = parJour[k] || []).push({ h: h, min: min, adr: adr });
+    });
+  });
+  var auj = isoJour_(new Date());
+  var out = gens.map(function (g) {
+    var parJourMin = g.jours.length ? Math.round(g.capaciteSemaine / g.jours.length) : 0;
+    var tot = { contrat: 0, travail: 0, trajet: 0, n: 0 }, semaines = {}, jours = [];
+    for (var j = 1; j <= nbJours; j++) {
+      var dj = new Date(a, m - 1, j, 12), iso = isoJour_(dj);
+      var ouvre = g.jours.indexOf(dj.getDay()) >= 0;
+      var fer = ouvre && ferie_(cal, dj);
+      var abs = ouvre && !fer && (estAbsent_(cal, g.cle, iso) || estAbsent_(cal, '', iso, true));
+      var cap = ouvre && !fer && !abs ? parJourMin : 0;
+      var l = (parJour[g.cle + '|' + iso] || []).sort(function (x, y) { return x.h < y.h ? -1 : 1; });
+      var trav = 0, traj = 0;
+      l.forEach(function (x, i) { trav += x.min; if (i > 0) traj += route(l[i - 1].adr, x.adr); });
+      tot.contrat += cap; tot.travail += trav; tot.trajet += traj; tot.n += l.length;
+      var sk = cleSemaine_(dj);
+      semaines[sk] = semaines[sk] || { lundi: sk, contrat: 0, prevu: 0 };
+      semaines[sk].contrat += cap; semaines[sk].prevu += trav + traj;
+      if (cap || l.length) jours.push({ iso: iso, cap: cap, prevu: trav + traj, n: l.length,
+                                        motif: fer ? String(fer.nom || fer) : (abs ? 'congé' : ''), passe: iso < auj });
+    }
+    return { nom: g.nom, jours: jours, contrat: tot.contrat, travail: tot.travail, trajet: tot.trajet,
+             prevu: tot.travail + tot.trajet, libre: tot.contrat - tot.travail - tot.trajet, n: tot.n,
+             semaines: Object.keys(semaines).sort().map(function (k) { return semaines[k]; }),
+             joursTravail: g.jours, heuresSemaine: Math.round(g.capaciteSemaine / 6) / 10 };
+  });
+  return { ok: true, mois: mois, salaries: out, trajetForfait: charge.trajet, trajetsEstimes: budget < 0, maj: Date.now() };
+}
+/* ===================== TÉLÉPHONES DES CLIENTS (v108n) =====================
+   « Sur chaque intervention, le numéro de téléphone du client, pour pouvoir
+   l'appeler (modification, annulation, ou pour prévenir). » D'où vient le
+   numéro, dans l'ordre :
+   1. l'onglet TELEPHONES — saisi depuis l'appli (MANUEL) ou importé de
+      Pennylane / Henrri (menu 33) ;
+   2. le devis du chantier (colonne TELEPHONE), puis le devis le plus récent
+      du même client.                                                        */
+var SH_TELS_ = 'TELEPHONES';
+var ENTETES_TELS_ = ['CLIENT', 'TELEPHONE', 'CONTACT', 'SOURCE', 'MAJ'];
+
+function cleTel_(nom) {
+  return sansAccent_(String(nom || '').replace(/\s+[—–-]\s+.*$/, '').replace(/\s*\+\s*.*$/, ''))
+    .replace(/[^A-Z0-9]+/g, ' ').trim();
+}
+function cleTelCourte_(nom) {
+  return cleTel_(nom).replace(/^(M ET MME|MME|MR|M|MONSIEUR|MADAME|STE|SARL|SAS|EURL|SCI)\s+/, '').trim();
+}
+function telLisible_(t) {
+  var d = String(t || '').replace(/[^\d+]/g, '');
+  if (/^\+33\d{9}$/.test(d)) d = '0' + d.slice(3);
+  else if (/^0033\d{9}$/.test(d)) d = '0' + d.slice(4);
+  else if (/^33\d{9}$/.test(d)) d = '0' + d.slice(2);
+  if (/^0\d{9}$/.test(d)) return d.replace(/(\d{2})(?=\d)/g, '$1 ');
+  return String(t || '').trim();
+}
+
+function telsClients_() {
+  var T = { parNom: {}, parCourt: {}, parNumero: {}, parSerie: {} };
+  var poser = function (nom, tel, contact) {
+    tel = telLisible_(tel); if (!tel) return;
+    var k = cleTel_(nom), c = cleTelCourte_(nom), v = { tel: tel, contact: String(contact || '').trim() };
+    if (k && !T.parNom[k]) T.parNom[k] = v;
+    if (c && c.length >= 4 && !T.parCourt[c]) T.parCourt[c] = v;
+  };
+  try {
+    var sh = SpreadsheetApp.getActive().getSheetByName(SH_TELS_);
+    if (sh && sh.getLastRow() > 1) {
+      var rows = objetsDe_(SH_TELS_);
+      rows.filter(function (r) { return String(r.SOURCE || '').toUpperCase() === 'MANUEL'; })
+        .concat(rows.filter(function (r) { return String(r.SOURCE || '').toUpperCase() !== 'MANUEL'; }))
+        .forEach(function (r) { poser(r.CLIENT, r.TELEPHONE, r.CONTACT); });
+    }
+  } catch (e0) {}
+  try {
+    var dv = lireDevis_().slice().sort(function (a, b) {
+      return (b.DATE instanceof Date ? b.DATE.getTime() : 0) - (a.DATE instanceof Date ? a.DATE.getTime() : 0);
+    });
+    dv.forEach(function (d) {
+      var tel = telLisible_(d.TELEPHONE);
+      if (!tel) return;
+      var n = String(d.NUMERO || '').trim();
+      if (n && !T.parNumero[n]) T.parNumero[n] = { tel: tel, contact: String(d.CONTACT || '').trim() };
+      poser(d.CLIENT, tel, d.CONTACT);
+    });
+  } catch (e1) {}
+  try {
+    objetsDe_(SH.RECURRENTS).forEach(function (r) {
+      var id = String(r.ID || '').trim(), dvn = String(r.DEVIS || '').trim();
+      if (id && dvn) T.parSerie[id] = dvn;
+    });
+  } catch (e2) {}
+  return T;
+}
+
+function telDe_(o, T) {
+  if (!T) return null;
+  var man = T.parNom[cleTel_(o.CLIENT)];
+  var n = String(o.NUMERO || '').trim();
+  var serie = String(o.RECURRENT || '').split('|')[0];
+  if (!n && serie && T.parSerie[serie]) n = T.parSerie[serie];
+  return man || (n && T.parNumero[n]) || T.parCourt[cleTelCourte_(o.CLIENT)] || null;
+}
+
+function ongletTels_() {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName(SH_TELS_);
+  if (!sh) {
+    sh = ss.insertSheet(SH_TELS_);
+    sh.getRange(1, 1, 1, ENTETES_TELS_.length).setValues([ENTETES_TELS_]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+/** Depuis l'appli (gérant) : poser ou corriger le numéro d'un client. */
+function telClientPoser_(d, com) {
+  var client = String(d.client || '').trim();
+  var tel = telLisible_(d.tel);
+  if (!client) return { ok: false, erreur: 'client manquant' };
+  var sh = ongletTels_();
+  var v = sh.getDataRange().getValues(), k = cleTel_(client), rang = 0;
+  for (var i = 1; i < v.length; i++) {
+    if (cleTel_(v[i][0]) === k && String(v[i][3]).toUpperCase() === 'MANUEL') { rang = i + 1; break; }
+  }
+  var ligne = [client.replace(/\s+[—–-]\s+.*$/, ''), tel, String(d.contact || '').trim(), 'MANUEL', new Date()];
+  if (rang) sh.getRange(rang, 1, 1, 5).setValues([ligne]); else sh.appendRow(ligne);
+  tracerServeur_(com ? com.nom : '', 'TELEPHONE CLIENT', client + ' · ' + (tel || 'effacé'), '', d.appareil || '');
+  return { ok: true, tel: tel };
+}
+
+/** Menu 33 : les numéros connus de Pennylane et de Henrri. */
+function importerTelephones() {
+  var r = importerTelephones_();
+  try {
+    SpreadsheetApp.getUi().alert('Téléphones des clients',
+      r.ajoutes + ' numéro(s) ajouté(s) à l\'onglet TELEPHONES.\n\nPennylane : ' + r.pennylane +
+      ' client(s) lus, ' + r.pTel + ' avec un numéro' + (r.pErreur ? ' (' + r.pErreur + ')' : '') +
+      '.\nHenrri : ' + r.henrri + ' client(s) lus, ' + r.hTel + ' avec un numéro' + (r.hErreur ? ' (' + r.hErreur + ')' : '') + '.',
+      SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) { Logger.log(JSON.stringify(r)); }
+  return r;
+}
+function telDansObjet_(c) {
+  var cands = [c.phone, c.mobile, c.phone_number, c.phoneNumber, c.mobilePhone, c.mobile_phone, c.telephone, c.tel];
+  (c.contacts || []).forEach(function (x) { if (x) cands.push(x.phone, x.mobile, x.phoneNumber, x.mobilePhone); });
+  for (var i = 0; i < cands.length; i++) if (String(cands[i] || '').replace(/\D/g, '').length >= 9) return String(cands[i]);
+  return '';
+}
+function contactDansObjet_(c) {
+  var x = (c.contacts || [])[0] || {};
+  return String([x.firstName || x.first_name || '', x.lastName || x.last_name || ''].join(' ')).trim();
+}
+function importerTelephones_() {
+  var r = { ajoutes: 0, pennylane: 0, pTel: 0, henrri: 0, hTel: 0, pErreur: '', hErreur: '' };
+  var trouves = [];
+  try {
+    var curseur = '', tours = 0;
+    do {
+      var q = pennylaneAppel_('get', '/customers?limit=100' + (curseur ? '&cursor=' + encodeURIComponent(curseur) : ''));
+      if (!q.ok) { r.pErreur = q.erreur; break; }
+      var items = (q.data && q.data.items) || [];
+      items.forEach(function (c) {
+        r.pennylane++;
+        var nom = String(c.name || [c.first_name, c.last_name].join(' ') || '').trim();
+        var t = telDansObjet_(c);
+        if (nom && t) { r.pTel++; trouves.push([nom, t, contactDansObjet_(c), 'PENNYLANE']); }
+      });
+      curseur = q.data && q.data.has_more ? String(q.data.next_cursor || '') : '';
+    } while (curseur && ++tours < 30);
+  } catch (eP) { r.pErreur = String(eP && eP.message || eP).slice(0, 120); }
+  try {
+    for (var page = 1; page <= 30; page++) {
+      var liste = henrriListe_(henrriAppel_('henrri_list_customers', { limit: 100, page: page }));
+      if (!liste.length) break;
+      var neufs = 0;
+      liste.forEach(function (c) {
+        r.henrri++; neufs++;
+        var nom = String(c.name || c.corporateName || c.tradeName || '').trim();
+        var t = telDansObjet_(c);
+        if (nom && t) { r.hTel++; trouves.push([nom, t, contactDansObjet_(c), 'HENRRI']); }
+      });
+      if (neufs < 100) break;
+    }
+  } catch (eH) { r.hErreur = String(eH && eH.message || eH).slice(0, 120); }
+  var sh = ongletTels_();
+  var v = sh.getDataRange().getValues(), vus = {};
+  for (var i = 1; i < v.length; i++) vus[cleTel_(v[i][0])] = true;
+  var aEcrire = [];
+  trouves.forEach(function (t) {
+    var k = cleTel_(t[0]);
+    if (!k || vus[k]) return;
+    vus[k] = true;
+    aEcrire.push([t[0], telLisible_(t[1]), t[2], t[3], new Date()]);
+  });
+  if (aEcrire.length) sh.getRange(sh.getLastRow() + 1, 1, aEcrire.length, 5).setValues(aEcrire);
+  r.ajoutes = aEcrire.length;
+  tracerServeur_('SYSTEME', 'TELEPHONES IMPORTES', JSON.stringify(r).slice(0, 300), '', '');
+  return r;
+}
  /* ================================================================
    v100 — LE RÉPERTOIRE DES CLIENTS (onglet « Clients » du tableau)
    ================================================================
@@ -4977,6 +5225,7 @@ function planningDe_(nom) {
 
   var parDevis = lignesParDevis_();
   var parNature = naturesParDevis_();
+  var TELS = telsClients_();
   var out = [];
   for (var i = 1; i < v.length; i++) {
     var o = {};
@@ -5018,7 +5267,9 @@ function planningDe_(nom) {
       note: String(o.NOTE || ''),
       nature: natureChantier_(o, parNature),
       taches: taches,
-      fiche: String(o.FICHE || '').trim() ? (String(o.FICHE_NOM || '').trim() || 'Fiche chantier') : ''
+      fiche: String(o.FICHE || '').trim() ? (String(o.FICHE_NOM || '').trim() || 'Fiche chantier') : '',
+      tel: (telDe_(o, TELS) || {}).tel || '',
+      contactTel: (telDe_(o, TELS) || {}).contact || ''
     });
   }
   out.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
