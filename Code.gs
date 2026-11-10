@@ -7828,10 +7828,17 @@ function envoyerMail_(m, reg) {
      le nom affiché, posé plus haut, et l'adresse de réponse ci-dessous.
      « Répondre » part alors chez BREIZH BRILLANCE, pas dans une boîte
      personnelle — et personne n'a à y penser. */
-  if (o.replyTo === undefined) {
-    var maison = String(reg.societe_email || '').trim();
-    if (maison) o.replyTo = maison;
+  /* v108h — « il faut qu'on ne voie nulle part le simon.horras56 ». Les
+     réponses vont toujours à l'adresse de la maison (contact@ par défaut),
+     jamais à celle d'une personne, et les copies internes passent en copie
+     cachée : le client ne voit aucune adresse interne. */
+  var maison = String(reg.email_expediteur || 'contact@breizhbrillance.fr').trim();
+  o.replyTo = maison;
+  if (o.cc) {
+    o.bcc = [o.bcc, o.cc].filter(function (x) { return String(x || '').trim(); }).join(',');
+    delete o.cc;
   }
+  if (o.bcc && String(o.bcc).split(',').every(function (x) { return String(x).trim().toLowerCase() === String(o.to || '').trim().toLowerCase(); })) delete o.bcc;
   MailApp.sendEmail(o);
 }
 

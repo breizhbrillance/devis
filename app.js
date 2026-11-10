@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108g';
+var VERSION_APP = 'v108h';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4803,11 +4803,37 @@ function idNotif(nom){
 
 /* À l'ouverture d'une session : on annonce qui est là, sans rien demander.
    Tant que la personne n'a pas accepté, cela ne fait rien de visible. */
+/* v108g — « aucun téléphone inscrit pour la plupart des gens alors qu'ils ont
+   accepté ». Le téléphone peut avoir dit oui aux notifications sans que son
+   abonnement chez OneSignal soit actif (accepté avant le branchement, jeton
+   perdu, application réinstallée…). À chaque ouverture, si la permission est
+   donnée, on rattache l'abonnement à la personne et on le rallume ; s'il ne
+   s'allume pas, la carte le dit et propose de réinscrire le téléphone. */
+var NOTIF_ABO = null;        // true / false une fois vérifié, null tant qu'on ne sait pas
 function brancherNotifs(){
   var moi = session();
   if(!moi || !moi.nom) return;
   notifSdk(async function(OneSignal){
     try{ await OneSignal.login(idNotif(moi.nom)); }catch(e){}
+    try{
+      if(window.Notification && Notification.permission === 'granted'){
+        var ps = OneSignal.User && OneSignal.User.PushSubscription;
+        if(ps && ps.optedIn !== true && ps.optIn) await ps.optIn();
+        setTimeout(function(){
+          var ok = !!(ps && ps.optedIn && ps.id);
+          NOTIF_ABO = ok;
+          try{ peindreNotifs(); }catch(e){}
+          var cle = 'notifTrace' + isoJour();
+          try{
+            if(!ok || !localStorage.getItem(cle)){
+              localStorage.setItem(cle, '1');
+              tracer('NOTIFICATIONS ETAT', (ok ? 'abonné' : 'PAS abonné') + ' · ' + idNotif(moi.nom) +
+                     (ps && ps.id ? ' · ' + String(ps.id).slice(0, 8) : '') + (ps && ps.token ? ' · jeton' : ' · sans jeton'));
+            }
+          }catch(e){}
+        }, 4000);
+      }
+    }catch(e){ tracer('ERREUR NOTIFICATIONS', String(e && e.message || e)); }
   });
 }
 /* À la déconnexion : ce téléphone ne parle plus pour cette personne. */
@@ -4820,7 +4846,7 @@ function debrancherNotifs(){
 /* Le bouton. C'est le geste qui autorise la demande. */
 function activerNotifs(btn){
   var e = notifCalculer();
-  if(e === 'actif' || e === 'absent' || e === 'ecran' || e === 'refus'){
+  if((e === 'actif' && NOTIF_ABO !== false) || e === 'absent' || e === 'ecran' || e === 'refus'){
     return peindreNotifs();
   }
   var moi = session();
@@ -4839,6 +4865,11 @@ function activerNotifs(btn){
     try{
       await OneSignal.Notifications.requestPermission();
       if(moi && moi.nom) await OneSignal.login(idNotif(moi.nom));
+      try{
+        var ps2 = OneSignal.User && OneSignal.User.PushSubscription;
+        if(ps2 && ps2.optedIn !== true && ps2.optIn) await ps2.optIn();
+        NOTIF_ABO = ps2 ? !!ps2.optedIn : NOTIF_ABO;
+      }catch(e2){}
       tracer('NOTIFICATIONS', Notification.permission);
     }catch(err){
       tracer('ERREUR NOTIFICATIONS', String(err && err.message || err));
@@ -4857,10 +4888,15 @@ function peindreNotifs(){
   /* v99 — le gérant a aussi sa zone (devis signé en ligne, etc.), en haut du
      tableau, qui disparaît une fois les notifications actives. */
   var za = $('notifZoneAd');
+  var perdu = NOTIF_ABO === false;   // permission donnée, mais pas d'abonnement chez OneSignal
   if(za){
     var ea = notifCalculer();
-    za.classList.toggle('hide', ea === 'actif' || ea === 'absent');
-    if(ea !== 'actif' && ea !== 'absent'){
+    za.classList.toggle('hide', (ea === 'actif' && !perdu) || ea === 'absent');
+    if(ea === 'actif' && perdu){
+      za.innerHTML = '<b>Notifications</b><div class="mini" style="margin-top:4px">Ce téléphone a accepté les notifications, ' +
+        'mais il n\'est pas inscrit au service : rien ne lui arrive.</div>' +
+        '<button class="btn sec sm" style="margin-top:10px" onclick="activerNotifs(this)">Réinscrire ce téléphone</button>';
+    } else if(ea !== 'actif' && ea !== 'absent'){
       za.innerHTML = '<b>Notifications</b><div class="mini" style="margin-top:4px">' + ech(notifTexte()) + '</div>' +
         (ea === 'eteint' ? '<button class="btn sec sm" style="margin-top:10px" onclick="activerNotifs(this)">' +
                            'Activer les notifications</button>' : '');
@@ -4872,6 +4908,9 @@ function peindreNotifs(){
   var bouton = (e === 'eteint')
     ? '<button class="btn sec sm" style="margin-top:10px" onclick="activerNotifs(this)">' +
       'Activer les notifications</button>'
+    : (e === 'actif' && perdu)
+    ? '<div class="mini" style="margin-top:6px;color:var(--warn)">Ce téléphone n\'est pas inscrit au service : rien ne lui arrive.</div>' +
+      '<button class="btn sec sm" style="margin-top:8px" onclick="activerNotifs(this)">Réinscrire ce téléphone</button>'
     : '';
   z.innerHTML =
     '<div style="display:flex;gap:10px;align-items:baseline">' +
@@ -5665,7 +5704,9 @@ function peindreTableau(){
   $('bAdDevisNeuf').classList.toggle('hide', AD_ONGLET !== 'devis');
   /* v108f — l'onglet Devis ne montre que la création et la liste ; les
      chiffres sont au Tableau. */
-  try{ $('bAdPli').closest('.card').classList.toggle('hide', AD_ONGLET === 'devis'); }catch(e){}
+  /* v108g — et pas davantage au-dessus du planning ni des factures : la
+     bulle des chiffres ne reste qu'au Tableau. */
+  try{ $('bAdPli').closest('.card').classList.toggle('hide', AD_ONGLET !== 'aujourdhui'); }catch(e){}
   var planning = AD_ONGLET === 'chantiers';
   $('adActions').classList.toggle('hide', !planning);
   $('adVues').classList.toggle('hide', AD_ONGLET !== 'chantiers');
