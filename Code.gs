@@ -1037,7 +1037,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie', 'etatNotifs'];
+                   'elementsPaie', 'etatNotifs', 'essaiNotif'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1096,16 +1096,16 @@ function doPost(e) {
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
          /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
-         'elementsPaie', 'etatNotifs']
+         'elementsPaie', 'etatNotifs', 'essaiNotif']
       : agent
-        ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire']
+        ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire', 'essaiNotif']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
            'prospects', 'appel', 'historique',
            /* Ses devis à lui, relus dans le classeur : l'action filtre sur
               son nom, elle ne sait pas rendre ceux d'un autre. */
            'mesDevis', 'devisArchive', 'lienSignature',
            /* v107 — son chiffre, ses commissions et le total de la société. */
-           'commissions'];
+           'commissions', 'essaiNotif'];
     /* Le commercial qui fait aussi des chantiers lit son planning et pointe.
        On ne lui ouvre que ces deux actions, et seulement s'il figure vraiment
        parmi les prestataires : c'est la liste qui protège, pas l'écran. Et
@@ -1204,6 +1204,13 @@ function doPost(e) {
     if (d.action === 'commissions') return reponse_(commissions_(d, com));
     if (d.action === 'elementsPaie') return reponse_(elementsPaie_(d));
     if (d.action === 'etatNotifs') return reponse_(etatNotifs_());
+    /* v108l — « que je puisse vérifier les notifs sur mon téléphone » : une
+       notification d'essai envoyée à soi-même, et la réponse du service. */
+    if (d.action === 'essaiNotif') {
+      var rE = notifier_(com.nom, 'Essai de notification', 'Si tu lis ceci, ce téléphone reçoit bien les notifications.');
+      tracerServeur_(com.nom, 'NOTIFICATION ESSAI', rE.ok ? 'partie' : String(rE.erreur || 'ratée'), '', d.appareil || '');
+      return reponse_({ ok: true, envoye: !!rE.ok, erreur: rE.ok ? '' : String(rE.erreur || ''), aucun: !!rE.aucun });
+    }
     if (d.action === 'suggestions') return reponse_(suggestionsPlacement_(d));
     if (d.action === 'lienSignature') return reponse_(lienSignatureAppli_(d, com));
     if (d.action === 'devisArchive') return reponse_(devisArchive_(d, com));

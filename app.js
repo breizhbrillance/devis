@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108l';
+var VERSION_APP = 'v108m';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -4851,9 +4851,9 @@ function debrancherNotifs(){
 }
 
 /* Le bouton. C'est le geste qui autorise la demande. */
-function activerNotifs(btn){
+function activerNotifs(btn, force){
   var e = notifCalculer();
-  if((e === 'actif' && NOTIF_ABO !== false) || e === 'absent' || e === 'ecran' || e === 'refus'){
+  if((e === 'actif' && NOTIF_ABO !== false && !force) || e === 'absent' || e === 'ecran' || e === 'refus'){
     return peindreNotifs();
   }
   var moi = session();
@@ -4887,6 +4887,50 @@ function activerNotifs(btn){
     if(btn) libere(btn);
     erreur('');
     peindreNotifs();
+    try{ if(AD_FICHE && AD_FICHE.type === 'notifs') peindreEtatNotifs(); }catch(e3){}
+  });
+}
+
+/* v108l — « fais une vérif de notification, que je puisse ajouter les notifs
+   sur mon téléphone » : l'état de CE téléphone, de quoi le (ré)inscrire, et
+   une notification d'essai envoyée à soi-même. */
+function carteCeTelephone(){
+  var e = notifCalculer();
+  var etat = e === 'actif' ? (NOTIF_ABO === false ? 'ACCEPTÉES MAIS NON INSCRIT' : 'ACTIVES')
+           : e === 'refus' ? 'BLOQUÉES' : e === 'absent' ? 'IMPOSSIBLES ICI' : e === 'ecran' ? 'À INSTALLER' : 'ÉTEINTES';
+  var bon = e === 'actif' && NOTIF_ABO !== false;
+  var b = '';
+  if(e === 'eteint' || e === 'actif'){
+    b += '<button class="btn sec sm" style="margin-top:10px" onclick="activerNotifs(this, true)">' +
+         (e === 'eteint' ? 'Activer les notifications' : 'Réinscrire ce téléphone') + '</button>';
+  }
+  if(e === 'actif'){
+    b += '<button class="btn sec sm" style="margin-top:8px" onclick="essaiNotif(this)">M\'envoyer une notification d\'essai</button>';
+  }
+  return '<div class="card" style="border-color:' + (bon ? 'var(--ok)' : 'var(--warn)') + ';margin-bottom:10px">' +
+    '<div style="display:flex;gap:10px;align-items:baseline"><b style="flex:1">Ce téléphone</b>' +
+    '<span class="mini">' + etat + '</span></div>' +
+    '<div class="mini" style="margin-top:4px">' + ech(e === 'actif' && !bon
+      ? 'Les notifications sont acceptées, mais le téléphone n\'est pas inscrit au service : appuie sur « Réinscrire ce téléphone ».'
+      : e === 'absent'
+      ? 'Ce navigateur ne sait pas recevoir de notifications. Ouvre l\'application dans Chrome (Android) ou depuis son icône sur l\'écran d\'accueil (iPhone).'
+      : notifTexte()) + '</div>' +
+    '<div class="mini" id="essaiNotifRep" style="margin-top:6px"></div>' + b + '</div>';
+}
+function essaiNotif(btn){
+  var moi = session(); if(!moi) return;
+  occuper(btn, 'Envoi…');
+  poster({action:'essaiNotif', nom:moi.nom, code:moi.code, appareil:APPAREIL}, 30000).then(function(r){
+    libere(btn);
+    var z = $('essaiNotifRep'); if(!z) return;
+    z.innerHTML = r && r.envoye
+      ? '<span style="color:var(--ok)">Notification envoyée : elle doit arriver d\'ici quelques secondes.</span>'
+      : '<span style="color:var(--warn)">' + ech(r && r.aucun
+          ? 'Le service ne connaît aucun téléphone inscrit à ton nom : appuie sur « Réinscrire ce téléphone », puis réessaie.'
+          : 'Pas partie : ' + ((r && (r.erreur || '')) || 'réponse vide')) + '</span>';
+  }, function(){
+    libere(btn);
+    var z = $('essaiNotifRep'); if(z) z.textContent = attenteLisible();
   });
 }
 
@@ -4925,7 +4969,9 @@ function peindreNotifs(){
       '<span class="vb ' + (e === 'actif' ? 'vb-s' : e === 'refus' ? 'vb-x' : 'vb-a') + '">' +
         (e === 'actif' ? 'ACTIVES' : e === 'refus' ? 'BLOQUÉES' : 'ÉTEINTES') + '</span>' +
     '</div>' +
-    '<div class="mini" style="margin-top:4px">' + ech(notifTexte()) + '</div>' + bouton;
+    '<div class="mini" style="margin-top:4px">' + ech(notifTexte()) + '</div>' + bouton +
+    (e === 'actif' && !perdu ? '<div class="mini" id="essaiNotifRep" style="margin-top:6px"></div>' +
+      '<button class="btn sec sm" style="margin-top:8px" onclick="essaiNotif(this)">M\'envoyer une notification d\'essai</button>' : '');
   z.classList.toggle('hide', e === 'absent');
 }
 
@@ -5222,7 +5268,7 @@ function accueilHtml(t){
   if(estAdmin()) h += chiffresTableauHtml();
   if(estAdmin()) h += '<button class="btn sec" style="margin-top:8px" onclick="barreAdmin(\'clients\')">Répertoire des clients</button>' +
     '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments de paie du mois</button>' +
-    '<button class="btn sec" style="margin-top:8px" onclick="ficheNotifs()">Notifications de l\'équipe</button>';
+    '<button class="btn sec" style="margin-top:8px" onclick="ficheNotifs()">Notifications : ce téléphone et l\'équipe</button>';
   return h;
 }
 
@@ -7870,6 +7916,7 @@ function peindreEtatNotifs(){
   var r = NOTIFS_ETAT, h = '<div class="card"><h2>Notifications de l\'équipe</h2>' +
     '<div class="mini" style="margin-top:0">Un téléphone reçoit les notifications s\'il s\'est connecté à ' +
     'l\'application sous son nom et a accepté les notifications.</div></div>';
+  h += carteCeTelephone();
   if(!r) h += '<div class="card"><div class="empty">Interrogation du service de notifications…</div></div>';
   else if(!r.ok) h += '<div class="card" style="border-color:var(--warn)"><b>Le bureau n\'a pas pu répondre</b>' +
     '<div class="mini">' + ech(r.erreur || '') + '</div></div>';
