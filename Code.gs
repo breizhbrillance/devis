@@ -2981,12 +2981,14 @@ function importerTelephones() {
 }
 function telDansObjet_(c) {
   var cands = [c.phone, c.mobile, c.phone_number, c.phoneNumber, c.mobilePhone, c.mobile_phone, c.telephone, c.tel];
-  (c.contacts || []).forEach(function (x) { if (x) cands.push(x.phone, x.mobile, x.phoneNumber, x.mobilePhone); });
+  (Object.prototype.toString.call(c.contacts) === '[object Array]' ? c.contacts : []).forEach(function (x) {
+    if (x) cands.push(x.phone, x.mobile, x.phoneNumber, x.mobilePhone);
+  });
   for (var i = 0; i < cands.length; i++) if (String(cands[i] || '').replace(/\D/g, '').length >= 9) return String(cands[i]);
   return '';
 }
 function contactDansObjet_(c) {
-  var x = (c.contacts || [])[0] || {};
+  var x = (Object.prototype.toString.call(c.contacts) === '[object Array]' ? c.contacts[0] : null) || {};
   return String([x.firstName || x.first_name || '', x.lastName || x.last_name || ''].join(' ')).trim();
 }
 function importerTelephones_() {
