@@ -1028,7 +1028,7 @@ function doPost(e) {
                    'recurrentNeuf', 'recurrentModif', 'recurrentStop',
                    'rdvNeuf', 'monChantier',
                    'prospects', 'appel', 'historique',
-                   'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
+                   'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee', 'refaireFacture',
                    'mesDevis', 'devisArchive',
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
@@ -1079,7 +1079,7 @@ function doPost(e) {
          /* Facturer engage l'entreprise : ces trois actions sont au gérant
             seul. Un commercial qui les appelle se voit refusé, et le refus
             part au journal. */
-         'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee',
+         'facturation', 'facturer', 'facturesMois', 'facturerAppli', 'marquerFacturee', 'refaireFacture',
          /* Poser le travail d'un devis que le commercial n'a pas encore
             déclaré signé : c'est un engagement pris sur la parole du client,
             il revient au gérant seul. */
@@ -1183,6 +1183,10 @@ function doPost(e) {
     if (d.action === 'marquerFacturee') {
       lock.waitLock(30000);
       return reponse_(marquerFacturee_(d, com));
+    }
+    if (d.action === 'refaireFacture') {
+      lock.waitLock(30000);
+      return reponse_(refaireFacture_(d, com));
     }
     if (d.action === 'facturer') {
       lock.waitLock(30000);
@@ -6829,6 +6833,14 @@ function facturesContrats_(periode, com, seul) {
     var t = function (k) { for (var i = 0; i < ls.length; i++) if (String(ls[i][k] || '').trim()) return ls[i][k]; return ''; };
     var attendu = 0;
     ls.forEach(function (l) { attendu += Number(l.MENSUEL_HT) || 0; });
+    /* v108g — le détail de ses factures Henrri, quand un modèle a ce montant. */
+    var modC = null;
+    try { modC = modelePour_(String(t('CLIENT_FACTURE') || nom), Math.round(attendu * 100) / 100) || modelePour_(nom, Math.round(attendu * 100) / 100); } catch (eMc) { modC = null; }
+    var lignesC = null;
+    if (modC) {
+      lignesC = lignesDuModele_(modC, modC.tva, mois);
+      if (lignesC.length) lignesC[0].detail = phraseLissage_(ls[0].RYTHME);
+    }
     var res = null, erreur = '';
     try {
       res = pennylaneBrouillon_({
@@ -6838,7 +6850,7 @@ function facturesContrats_(periode, com, seul) {
                   particulier: estParticulier_(t('CLIENT_FACTURE') || nom, t('PARTICULIER')), idConnu: t('ID_PENNYLANE') },
         sujet: 'Facture ' + moisLisible_(mois) + ' — contrat d\'entretien ' + nom,
         description: 'Contrat d\'entretien — ' + moisLisible_(mois) + '.',
-        lignes: ls.map(function (l) {
+        lignes: lignesC || ls.map(function (l) {
           var part = estParticulier_(t('CLIENT_FACTURE') || nom, t('PARTICULIER'));
           return { libelle: String(l.LIGNE || 'Entretien des locaux') + ' — ' + moisLisible_(mois),
                    prix: Number(l.MENSUEL_HT), tva: part ? 10 : (String(l.TVA) === '' ? 20 : Number(l.TVA)), qte: 1,
@@ -6982,6 +6994,8 @@ function facturationAppli_(periode) {
   var faites = facturesFaites_();
 
   /* ---- les contrats ---- */
+  var modelesC = [];
+  try { modelesC = modelesFacture_(); } catch (eMc2) { modelesC = []; }
   var parC = {}, ordre = [];
   lireContrats_().forEach(function (o) {
     if (!estActif_(o.ACTIF)) return;
@@ -6997,7 +7011,10 @@ function facturationAppli_(periode) {
     if (!t('ID_PENNYLANE') && (!t('ADRESSE') || !t('CP') || !t('VILLE'))) manque.push('adresse de facturation');
     if (!(ht > 0)) manque.push('montant');
     var deja = (faites['CONTRAT ' + nom] || {})[mois];
+    var htR = Math.round(ht * 100) / 100;
+    var modC = modelePour_(t('CLIENT_FACTURE') || nom, htR, modelesC) || modelePour_(nom, htR, modelesC);
     return {
+      modele: modC ? { source: modC.source, ht: modC.ht, tva: modC.tva, n: modC.lignes.length } : null,
       contrat: nom, client: t('CLIENT_FACTURE') || nom, ville: t('VILLE'), email: t('EMAIL'),
       ht: Math.round(ht * 100) / 100,
       lignes: ls.map(function (l) {
@@ -7144,6 +7161,9 @@ function importerModelesFacture_() {
   return out.length;
 }
 
+var MOTS_COMMUNS_ = { NETTOYAGE: 1, ENTRETIEN: 1, SERVICES: 1, SERVICE: 1, IMMOBILIER: 1, CONSEIL: 1, INVESTISSEMENT: 1,
+  INVESTISSEMENTS: 1, BREIZH: 1, BRETAGNE: 1, ARCHITECTE: 1, ARCHITECTES: 1, ARCHITECTURE: 1, CONSTRUCTION: 1,
+  MORBIHAN: 1, VANNES: 1, RENOVATION: 1, GROUPE: 1, FRANCE: 1, SOCIETE: 1, COMPAGNIE: 1, AGENCE: 1 };
 function cleClient_(s) {
   return ' ' + sansAccent_(s).replace(/[^A-Z0-9]+/g, ' ')
     .replace(/\b(M|MR|MME|MLLE|MONSIEUR|MADAME|ET|SARL|SAS|SASU|SCI|EURL|STE|SC)\b/g, ' ')
@@ -7189,8 +7209,21 @@ function modelePour_(client, ht, modeles) {
     var cles = [cleClient_(m.client), cleClient_(m.contact)];
     var mots = cleClient_(m.contact).trim().split(' ');
     if (mots.length > 1 && mots[mots.length - 1].length >= 4) cles.push(' ' + mots[mots.length - 1] + ' ');
-    return cles.some(function (k) {
+    if (cles.some(function (k) {
       return k.trim().length >= 3 && (c.indexOf(k) >= 0 || k.indexOf(c) >= 0);
+    })) return true;
+    /* Les fautes de frappe d'un logiciel à l'autre : « POKE COLLECTIF » et
+       « POKECOLLECTIF SAS », « MORBIHANAISE » et « MORBIHANNAISE ». Sans les
+       espaces, ou par un mot distinctif commun (6 lettres et plus, hors mots
+       de métier). Le montant, exigé pour facturer, écarte les rapprochements
+       de hasard. */
+    var cs = c.replace(/ /g, '');
+    return cles.some(function (k) {
+      var ks = k.replace(/ /g, '');
+      if (ks.length >= 6 && cs.length >= 6 && (cs.indexOf(ks) >= 0 || ks.indexOf(cs) >= 0)) return true;
+      return k.trim().split(' ').some(function (w) {
+        return w.length >= 6 && !MOTS_COMMUNS_[w] && c.indexOf(' ' + w + ' ') >= 0;
+      });
     });
   });
   if (ht > 0) bons = bons.filter(function (m) { return Math.abs(m.ht - ht) <= 0.05; });
@@ -7202,12 +7235,21 @@ function modelePour_(client, ht, modeles) {
 /* Les lignes Pennylane d'un modèle. Quantité × prix unitaire quand le
    produit retombe juste ; sinon une quantité de 1 au montant de la ligne,
    pour que la facture fasse exactement le total du modèle. */
-function lignesDuModele_(m, tva) {
+function lignesDuModele_(m, tva, mois) {
+  /* Pour un contrat (mois « 2026-11 »), le mois écrit dans l'ancienne
+     facture (« 09/26 », « juillet ») devient celui qu'on facture. */
+  var NOMS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  var date = function (t) {
+    if (!mois) return t;
+    var mm = mois.slice(5, 7), aa = mois.slice(2, 4), nom = NOMS[Number(mm) - 1];
+    return String(t).replace(/\b(0[1-9]|1[0-2])\/(\d{2})\b/g, mm + '/' + aa)
+      .replace(/\b(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\b/gi, nom);
+  };
   return m.lignes.filter(function (l) { return l.montant !== 0; }).map(function (l) {
     var q = l.qte || 1, pu = l.pu;
     var juste = Math.abs(Math.round(q * pu * 100) / 100 - l.montant) < 0.005;
-    return juste ? { libelle: l.designation, qte: q, prix: pu, tva: tva }
-                 : { libelle: l.designation + (q !== 1 ? ' (× ' + String(q).replace('.', ',') + ')' : ''),
+    return juste ? { libelle: date(l.designation), qte: q, prix: pu, tva: tva }
+                 : { libelle: date(l.designation) + (q !== 1 ? ' (× ' + String(q).replace('.', ',') + ')' : ''),
                      qte: 1, prix: l.montant, tva: tva };
   });
 }
@@ -7265,6 +7307,51 @@ function marquerFacturee_(d, com) {
                    CREE_PAR: com ? com.nom : '', NOTE: 'marquée depuis l\'appli : facturée hors Pennylane' });
   tracerServeur_(com ? com.nom : '', 'MARQUEE FACTUREE', String(d.client || cle) + (periode ? ' · ' + periode : ''), num, d.appareil || '');
   return { ok: true };
+}
+
+/* v108g — « Refaire » une facture déjà préparée : le brouillon Pennylane est
+   supprimé (seulement s'il est encore un brouillon) et la ligne de FACTURES
+   effacée, si bien que l'intervention revient dans la liste. Une facture
+   finalisée ne se défait pas ici : il faut un avoir dans Pennylane. */
+function refaireFacture_(d, com) {
+  var cle = String(d.cle || '').trim();
+  if (!cle) return { ok: false, erreur: 'rien à refaire' };
+  var periode = String(d.periode || '').match(/^\d{4}-\d{2}$/) ? d.periode : '';
+  var num = d.contrat ? 'CONTRAT ' + cle : cle;
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.FACTURES);
+  if (!sh || sh.getLastRow() < 2) return { ok: false, erreur: 'aucune facture préparée pour ' + cle };
+  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var iN = en.indexOf('NUMERO_DEVIS'), iP = en.indexOf('PERIODE'), iId = en.indexOf('ID_PENNYLANE');
+  var lignes = [];
+  for (var i = 1; i < v.length; i++) {
+    if (String(v[i][iN] || '').trim() !== num) continue;
+    var p = iP >= 0 ? v[i][iP] : '';
+    var pTxt = p instanceof Date ? Utilities.formatDate(p, 'Europe/Paris', 'yyyy-MM') : String(p || '').trim();
+    if (pTxt !== periode) continue;
+    lignes.push({ rang: i + 1, id: iId >= 0 ? String(v[i][iId] || '').trim() : '' });
+  }
+  if (!lignes.length) return { ok: false, erreur: 'aucune facture préparée pour ' + cle };
+  var supprimes = 0;
+  for (var k = 0; k < lignes.length; k++) {
+    var id = lignes[k].id;
+    if (!id || !pennylaneJeton_()) continue;
+    var r = pennylaneAppel_('get', '/customer_invoices/' + encodeURIComponent(id));
+    if (r.ok && r.data) {
+      var brouillon = r.data.draft === true || /draft|brouillon/i.test(String(r.data.status || ''));
+      if (!brouillon) return { ok: false, finalisee: true,
+        erreur: 'La facture ' + String(r.data.invoice_number || id) + ' est déjà finalisée dans Pennylane : il faut un avoir, pas une suppression.' };
+      var del = pennylaneAppel_('delete', '/customer_invoices/' + encodeURIComponent(id));
+      if (!del.ok && del.code !== 404) return { ok: false, erreur: 'Pennylane refuse de supprimer le brouillon : ' + del.erreur };
+      supprimes++;
+    } else if (r.code !== 404) {
+      return { ok: false, erreur: 'Pennylane ne répond pas : ' + r.erreur };
+    }
+  }
+  lignes.sort(function (a, b) { return b.rang - a.rang; }).forEach(function (l) { sh.deleteRow(l.rang); });
+  tracerServeur_(com ? com.nom : '', 'FACTURE A REFAIRE', String(d.client || cle) + (periode ? ' · ' + periode : '') +
+                 (supprimes ? ' — brouillon Pennylane supprimé' : ''), num, d.appareil || '');
+  return { ok: true, supprimes: supprimes };
 }
 
 /** Le bouton « préparer » de l'appli, pour un devis ponctuel, un contrat ou une intervention. */

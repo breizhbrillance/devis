@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108f';
+var VERSION_APP = 'v108g';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -9441,6 +9441,26 @@ function marquerFacturee(type, cle, btn){
     });
 }
 
+/* v108g — remettre une facture dans la liste : le brouillon Pennylane est
+   supprimé par le bureau (s'il n'est pas finalisé), et on peut la repréparer. */
+function refaireFacture(type, cle, btn){
+  var moi = session();
+  if(!moi) return;
+  demander('Refaire cette facture ?',
+    'Le brouillon Pennylane est supprimé (s\'il est encore en brouillon) et l\'intervention revient dans la liste, ' +
+    'prête à être préparée de nouveau.', 'Oui, refaire').then(function(oui){
+      if(!oui) return;
+      occuper(btn, '…');
+      poster({action:'refaireFacture', cle:cle, contrat: type === 'contrat', periode: type === 'contrat' ? FACT_MOIS : '',
+              nom:moi.nom, code:moi.code, appareil:APPAREIL}, 45000).then(function(d){
+        libere(btn);
+        if(!d || !d.ok) return erreur((d && d.erreur) || attenteLisible());
+        erreur('');
+        chargerFacturation();
+      }, function(){ libere(btn); erreur(attenteLisible()); });
+    });
+}
+
 function listeFacturesAdmin(){
   var h = '';
   if(FACT_NOTE){
@@ -9519,9 +9539,11 @@ function dejaFaitesHtml(l){
   if(l.length){
     h += '<h3 class="factTitre">Déjà faites</h3><div class="card">' +
       l.map(function(x){
-        return '<div class="row" style="justify-content:space-between;padding:4px 0">' +
-          '<span>' + ech(x.contrat || x.client) + '</span><span class="mini">' +
-          (x.etat === 'DEJA FACTUREE' ? 'facturée ailleurs' : 'brouillon Pennylane') + '</span></div>';
+        var t = x.contrat ? 'contrat' : x.type, c = ech(x.contrat || factCle(x)).replace(/'/g,'&#39;');
+        return '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;padding:4px 0">' +
+          '<span style="flex:1">' + ech(x.contrat || x.client) + '</span><span class="mini">' +
+          (x.etat === 'DEJA FACTUREE' ? 'facturée ailleurs' : 'brouillon Pennylane') + '</span>' +
+          '<button class="btn sec sm" style="flex:0 0 auto" onclick="refaireFacture(\'' + t + '\',\'' + c + '\', this)">Refaire</button></div>';
       }).join('') + '</div>';
   }
   return h;
@@ -9579,6 +9601,10 @@ function carteContratCt(x){
           '<div class="mini">' + x.lignes.map(function(l){
             return ech(l.ligne) + ' · ' + eur(l.ht) + (l.rythme ? ' · ' + ech(l.rythme) : '');
           }).join('<br>') + '</div>';
+  /* v108g — le détail repris de la facture Henrri du même montant. */
+  h += x.modele ? '<div class="mini" style="margin-top:4px">Détail repris de la facture Henrri <b>' + ech(x.modele.source) + '</b> (' +
+         x.modele.n + ' ligne' + (x.modele.n > 1 ? 's' : '') + ', TVA ' + String(x.modele.tva).replace('.', ',') + ' %), mois mis à jour.</div>'
+       : '<div class="mini" style="margin-top:4px">Pas de facture Henrri au même montant : lignes de l\'onglet CONTRATS.</div>';
   if(x.manque.length){
     h += '<div class="mini" style="color:var(--att,#b45309)">Manque : ' + ech(x.manque.join(', ')) +
          ' — à compléter dans l\'onglet CONTRATS du classeur.</div>';
