@@ -7890,6 +7890,9 @@ function texteDuHtml_(h) {
 /** À lancer une fois depuis l'éditeur : accorde l'accès Gmail au script et
     envoie un mail d'essai de contact@ à contact@. */
 function autoriserEnvoiContact() {
+  /* Avec l'écran d'accord « à cocher » de Google, l'accès Gmail a pu rester
+     décoché : cette ligne redemande tout ce qui manque. */
+  try { ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL); } catch (eS) {}
   var a = String(lireReglages_().email_expediteur || 'contact@breizhbrillance.fr').trim();
   try { CacheService.getScriptCache().remove('alias:' + a.toLowerCase()); } catch (e) {}
   var dispo = expediteurDispo_(a);

@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108h';
+var VERSION_APP = 'v108j';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -6909,14 +6909,28 @@ function choisirPresta(nom){
   });
 }
 
-function enregistrerPlanif(btn){
+function enregistrerPlanif(btn, portee){
   var f = AD_FICHE;
   if(!f || f.type !== 'chantier') return;
   if(!navigator.onLine) return erreur('Hors connexion : la planification a besoin du réseau.');
   var moi = session();
   erreur('');
-  if(btn) occuper(btn, 'Enregistrement…');
   var c = champsFicheChantier();
+  /* v108j — « pour le récurrent, quand je modifie une intervention, je veux
+     choisir si je décale toutes les prochaines au même jour de la semaine ou
+     juste exceptionnellement ». Un passage de contrat dont le jour, l'heure ou
+     la personne change : on demande. */
+  var x0 = chantierDuTableau(f.cle);
+  if(!portee && x0 && x0.recurrent && (c.date !== x0.date || c.heure !== x0.heure || c.prestataire !== x0.prestataire)){
+    var idS = String(x0.recurrent).split('|')[0];
+    if(contratDe(x0.recurrent)){
+      return demanderPortee().then(function(p){
+        if(p === 'ce') return enregistrerPlanif(btn, 'ce');
+        if(p === 'suivants') return decalerSuivants(idS, x0, c);
+      });
+    }
+  }
+  if(btn) occuper(btn, 'Enregistrement…');
   if(!String(c.client || '').trim()) { if(btn) libere(btn); return erreur('Il faut au moins un nom de client.'); }
   var env = {action:'planifier', nom:moi.nom, code:moi.code, appareil:APPAREIL, id:f.cle};
   for(var k in c) if(c.hasOwnProperty(k)) env[k] = c[k];
@@ -7358,12 +7372,12 @@ function peindreContrat(){
 
     '<div class="ctLigne">' +
       '<div><label for="ct_date">De</label>' +
-        '<input id="ct_date" type="date" value="' + ech(c.date) + '" onchange="ctDate()"></div>' +
+        '<input id="ct_date" type="date" value="' + ech(c.date) + '" onblur="ctDate()"></div>' +
       (c.journee ? '' :
       '<div style="width:110px"><label for="ct_heure">&nbsp;</label>' +
-        '<input id="ct_heure" type="time" value="' + ech(c.heure) + '" onchange="ctHeure()"></div>' +
+        '<input id="ct_heure" type="time" value="' + ech(c.heure) + '" onblur="ctHeure()"></div>' +
       '<div style="width:110px"><label for="ct_fin">À</label>' +
-        '<input id="ct_fin" type="time" value="' + ech(c.fin) + '" onchange="lireContrat();peindreContrat()"></div>') +
+        '<input id="ct_fin" type="time" value="' + ech(c.fin) + '" onblur="lireContrat();peindreContrat()"></div>') +
     '</div>' +
     (dureeMn !== null && !c.journee
       ? '<div class="mini">' + (dureeMn > 0 ? dureeLisible(dureeMn) : '<span style="color:var(--danger)">La fin tombe avant le début.</span>') + '</div>' : '') +
@@ -7612,6 +7626,46 @@ function arreterContrat(id, depuis, btn){
 /* ---- la carte « contrat » sur la fiche d'un passage ----
    Comme FamilyWall quand on touche une occurrence : on corrige ce passage-ci
    avec la fiche habituelle, ou on agit sur le contrat entier à partir d'ici. */
+/* La question, en deux boutons. Résout 'ce', 'suivants' ou '' (annulé). */
+function demanderPortee(){
+  return new Promise(function(res){
+    var o = document.createElement('div');
+    o.id = 'porteeBox';
+    o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    o.innerHTML = '<div class="card" style="max-width:420px;width:100%;margin:0">' +
+      '<h2 style="margin-top:0">Ce passage fait partie d\'un contrat</h2>' +
+      '<div class="mini">Le changement vaut pour :</div>' +
+      '<button class="btn" style="margin-top:12px" data-p="ce">Seulement ce passage (exceptionnel)</button>' +
+      '<button class="btn sec" style="margin-top:8px" data-p="suivants">Ce passage et tous les suivants</button>' +
+      '<button class="btn sec" style="margin-top:8px" data-p="">Annuler</button></div>';
+    o.addEventListener('click', function(e){
+      var b = e.target.closest('[data-p]');
+      if(!b && e.target !== o) return;
+      var p = b ? b.getAttribute('data-p') : '';
+      o.remove(); res(p);
+    });
+    document.body.appendChild(o);
+  });
+}
+/* « Tous les suivants » : le contrat repart de la nouvelle date, au jour de
+   la semaine de cette date, avec l'heure et la personne de la fiche. Même
+   chemin que « Modifier les suivants », déjà rempli : on enregistre d'un
+   appui sur l'écran du contrat. */
+function decalerSuivants(idS, x0, c){
+  modifierContrat(idS, x0.date);
+  if(!CT || CT.mode !== 'modif') return;
+  var d = c.date || x0.date;
+  CT.date = d;
+  if(['SEMAINE','QUINZAINE','PERSO'].indexOf(CT.rec) >= 0 || CT.jours.length <= 1) CT.jours = [jourDe(d).getDay()];
+  if(c.heure){
+    var dur = (minutesDe(CT.fin) !== null && minutesDe(CT.heure) !== null) ? minutesDe(CT.fin) - minutesDe(CT.heure) : 60;
+    CT.heure = c.heure; CT.fin = heureDe(minutesDe(c.heure) + (dur > 0 ? dur : 60)); CT.journee = false;
+  }
+  if(c.prestataire !== undefined) CT.prestataire = c.prestataire;
+  peindreContrat();
+  erreur('Vérifie le contrat ci-dessous puis appuie sur « Enregistrer » : tous les passages à partir du ' + jjmmaa(d) + ' suivront.');
+}
+
 function blocContratFiche(c){
   if(!c || !c.recurrent) return '';
   var s = contratDe(c.recurrent);
@@ -7622,7 +7676,7 @@ function blocContratFiche(c){
     '<div class="mini">' + (s ? ech(libelleRythme(s)) : 'Rythme inconnu — actualise le tableau.') +
       (s && s.debut ? ' · depuis le ' + ech(jjmmaa(s.debut)) : '') +
       (s && s.fin ? ' · jusqu\'au ' + ech(jjmmaa(s.fin)) : '') + '</div>' +
-    '<div class="mini">La fiche ci-dessous ne change que <b>ce passage</b>.</div>' +
+    '<div class="mini">En changeant le jour, l\'heure ou la personne ci-dessous, tu choisiras : ce passage seulement, ou tous les suivants.</div>' +
     (s ? '<div class="row" style="gap:8px;margin-top:10px">' +
       '<button class="btn sec sm" style="flex:1" onclick="modifierContrat(\'' + ech(id) + '\',\'' +
         ech(c.date||'') + '\')">Modifier les suivants</button>' +
