@@ -220,6 +220,7 @@ function onOpen() {
     .addItem('32. Arrêter la préparation automatique', 'arreterPreparationAuto')
     .addItem('33. Importer les téléphones des clients (Pennylane, Henrri)', 'importerTelephones')
     .addItem('34. Reprendre les contrats en place comme devis signés', 'reprendreContratsEnDevis')
+    .addItem('35. Autoriser l\'envoi des mails par Gmail', 'autoriserEnvoiGmail')
     .addToUi();
 }
 
@@ -8316,6 +8317,25 @@ function envoyerMail_(m, reg) {
      déclarée dans le Gmail du compte du script, le 10 novembre). GmailApp
      sait choisir l'expéditeur, MailApp non. Si l'adresse n'est pas (ou plus)
      déclarée, on retombe sur MailApp plutôt que de perdre le mail. */
+  /* v108r — le 11 novembre, le journal des e-mails de la console Google le
+     dit : les mails de l'appli partis par MailApp sont « Message rejected »
+     par Gmail (support.google.com/mail/answer/69585), alors que le même mail
+     (PDF, bandeau, lien de signature) transféré depuis Gmail arrive. Quand le
+     script tourne sous l'adresse de la maison, on envoie donc par GmailApp,
+     le chemin des mails écrits à la main. MailApp ne sert plus que de secours. */
+  var moi = '';
+  try { moi = String(Session.getEffectiveUser().getEmail() || '').toLowerCase(); } catch (eM) {}
+  if (moi && moi === maison.toLowerCase()) {
+    try {
+      var optM = { htmlBody: o.htmlBody, name: o.name, replyTo: o.replyTo };
+      if (o.bcc) optM.bcc = o.bcc;
+      if (o.attachments && o.attachments.length) optM.attachments = o.attachments;
+      GmailApp.sendEmail(o.to, o.subject, texteDuHtml_(o.htmlBody), optM);
+      return;
+    } catch (eGm) {
+      tracerServeur_('SYSTEME', 'ENVOI GMAIL IMPOSSIBLE', 'repli MailApp — ' + String(eGm && eGm.message || eGm).slice(0, 200), '', '');
+    }
+  }
   if (expediteurDispo_(maison)) {
     try {
       var opt = { htmlBody: o.htmlBody, from: maison, name: o.name, replyTo: o.replyTo };
@@ -8328,6 +8348,18 @@ function envoyerMail_(m, reg) {
     }
   }
   MailApp.sendEmail(o);
+}
+
+/* Menu 35 — v108r. Lancé une fois depuis le classeur par le gérant : Google
+   demande l'autorisation d'envoyer par Gmail (GmailApp). Sans elle, les mails
+   de l'appli repartent par MailApp, que Gmail rejette pour ce domaine. */
+function autoriserEnvoiGmail() {
+  var moi = '';
+  try { moi = Session.getEffectiveUser().getEmail(); } catch (e) {}
+  var n = GmailApp.getInboxUnreadCount();
+  tracerServeur_('SYSTEME', 'ENVOI GMAIL AUTORISE', moi + ' (' + n + ' non lus)', '', '');
+  try { SpreadsheetApp.getUi().alert('C\'est bon : les mails de l\'appli partiront par Gmail depuis ' + moi + '.'); } catch (e2) {}
+  return moi;
 }
 
 /* L'adresse est-elle déclarée comme expéditeur dans le Gmail du script ?
