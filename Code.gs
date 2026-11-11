@@ -219,6 +219,7 @@ function onOpen() {
     .addItem('31. Activer la préparation automatique des brouillons', 'activerPreparationAuto')
     .addItem('32. Arrêter la préparation automatique', 'arreterPreparationAuto')
     .addItem('33. Importer les téléphones des clients (Pennylane, Henrri)', 'importerTelephones')
+    .addItem('34. Reprendre les contrats en place comme devis signés', 'reprendreContratsEnDevis')
     .addToUi();
 }
 
@@ -1038,7 +1039,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries'];
+                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1097,7 +1098,7 @@ function doPost(e) {
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
          /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
-         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries']
+         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire', 'essaiNotif']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1207,6 +1208,7 @@ function doPost(e) {
     if (d.action === 'etatNotifs') return reponse_(etatNotifs_());
     if (d.action === 'telClient') return reponse_(telClientPoser_(d, com));
     if (d.action === 'disposSalaries') return reponse_(disposSalaries_(d));
+    if (d.action === 'statsSociete') return reponse_(statsSociete_(d));
     /* v108l — « que je puisse vérifier les notifs sur mon téléphone » : une
        notification d'essai envoyée à soi-même, et la réponse du service. */
     if (d.action === 'essaiNotif') {
@@ -8622,10 +8624,15 @@ function lireDevis_() {
     if (!String(v[i][en.indexOf('NUMERO')] || '').trim()) continue;
     var o = { _ligne: i + 1 };
     en.forEach(function (h, c) { if (h) o[h] = v[i][c]; });
+    /* v108p — les contrats repris en « devis signés » pour les chiffres
+       (ORIGINE = HISTORIQUE) ne sont pas de vrais devis : ni facturation,
+       ni rappel de preuve, ni « À facturer ». Seuls les chiffres les lisent. */
+    if (devisHistorique_(o)) continue;
     out.push(o);
   }
   return out;
 }
+function devisHistorique_(o) { return String(o && o.ORIGINE || '').toUpperCase().trim() === 'HISTORIQUE'; }
 
 /** Les lignes de prestation, regroupées par numéro de devis. */
 function lignesParDevis_() {
@@ -11718,6 +11725,7 @@ function commissions_(d, com) {
     var c = commissionLigne_(o, t);
     var s = societe[m] || (societe[m] = { ca: 0, n: 0 });
     s.ca = Math.round((s.ca + c.base) * 100) / 100; s.n++;
+    if (devisHistorique_(o)) { delete parDevis[num]; return; }   // v108p : aucun commercial n'est commissionné sur un contrat repris
     ajouter(o, { mois: m, type: 'signature', numero: num, client: String(o.CLIENT || ''), nature: c.nature,
                  part: c.part, contrat: c.contrat, mensuel: c.mensuel || 0, base: c.base, taux: c.taux, com: c.com });
   });
@@ -11767,6 +11775,418 @@ function commissions_(d, com) {
     out.commerciaux = Object.keys(par).sort().map(function (n) { return { nom: n, mois: resume(par[n]), lignes: par[n] }; });
   }
   return out;
+}
+
+
+/* ====================== LES CHIFFRES DE LA SOCIÉTÉ (v108p) ======================
+   Simon, 11 novembre 2026 : « dans chiffres de la société, quand on clique
+   dessus, affiche un menu où on voit les statistiques importantes : le
+   rendement de tous les contrats récurrents, une courbe avec le CA évolutif,
+   un max de données liées aux chiffres de la société — là c'est trop peu,
+   surtout qu'il en manque plein depuis janvier car l'application est récente ».
+
+   Trois sources, de la plus sûre à la plus partielle :
+   — CONTRATS + RECURRENTS : ce que chaque contrat rapporte par mois (facturé
+     lissé sur 52 semaines), depuis quand, jusqu'à quand, et le temps passé
+     sur place (passages × durée × nombre d'intervenants) ;
+   — les factures : l'onglet HISTO_FACTURES (export complet de Henrri, quand il
+     est rempli), les factures Pennylane de l'appli (FACTURES) et, à défaut, les
+     factures Henrri connues par MODELES_FACTURE (la dernière de chaque modèle) ;
+   — les devis de l'appli (taux de signature, panier, commerciaux, origine).
+   Un mois dont l'export complet des factures est connu est « facturé » ; les
+   autres sont « estimés » : contrats actifs ce mois-là + ponctuels facturés
+   connus. La fiche le dit, mois par mois. */
+var SH_HISTO_FACT_ = 'HISTO_FACTURES';
+var ENTETES_HISTO_FACT_ = ['DATE', 'NUMERO', 'CLIENT', 'TOTAL_HT', 'TOTAL_TTC', 'TYPE', 'SOURCE'];
+
+function moisPlus_(m, k) {
+  var a = Number(m.slice(0, 4)), b = Number(m.slice(5, 7)) - 1 + k;
+  a += Math.floor(b / 12); b = ((b % 12) + 12) % 12;
+  return a + '-' + ('0' + (b + 1)).slice(-2);
+}
+function arr2_(x) { return Math.round((Number(x) || 0) * 100) / 100; }
+
+/* Passages par mois d'une série. */
+function passagesMoisSerie_(r) {
+  var f = String(r.FREQUENCE || '').toUpperCase().trim();
+  var iv = Math.max(1, Math.round(Number(r.INTERVALLE) || 1));
+  if (f === 'HEBDO') return 52 / 12 / iv;
+  if (f === 'QUINZAINE') return 26 / 12;
+  if (f === 'MENSUEL') return 1 / iv;
+  if (f === 'JOURS') return 52 / 12 * 5;
+  return 0;
+}
+
+/* Les contrats tels que la société les vit : une entrée par nom de CONTRAT,
+   avec ses séries (référencées dans SERIES, ou du même client). */
+function contratsVivants_() {
+  var auj = isoJour_(new Date());
+  var series = {}, toutes = [];
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    var id = String(r.ID || '').trim();
+    if (!id) return;
+    var s = { id: id, client: String(r.CLIENT || ''), debut: jourDe_(r.DEBUT), fin: jourDe_(r.FIN),
+              actifCol: estActif_(r.ACTIF), freq: String(r.FREQUENCE || '').toUpperCase().trim(),
+              duree: Math.round(Number(r.DUREE_MIN) || 60), qui: nomsQui_(r.PRESTATAIRE),
+              pm: passagesMoisSerie_(r), nature: natureDevis_(r.NATURE),
+              tacite: /^TACITE/i.test(String(r.RECONDUCTION || '').trim()),
+              engagement: Math.round(Number(r.ENGAGEMENT_MOIS) || 0) };
+    s.vivante = s.actifCol && (!s.fin || s.fin >= auj);
+    series[id] = s; toutes.push(s);
+  });
+  var par = {}, ordre = [];
+  lireContrats_().forEach(function (o) {
+    if (!estActif_(o.ACTIF)) return;
+    var nom = String(o.CONTRAT || '').trim();
+    var c = par[nom];
+    if (!c) {
+      c = par[nom] = { nom: nom, client: '', mensuel: 0, lignes: [], ids: {}, part: false, tva: 20,
+                       siren: '', email: '', adresse: '', cp: '', ville: '' };
+      ordre.push(nom);
+    }
+    c.mensuel += num_(o.MENSUEL_HT);
+    c.lignes.push(String(o.LIGNE || '').trim());
+    if (!c.client && String(o.CLIENT_FACTURE || '').trim()) c.client = String(o.CLIENT_FACTURE).trim();
+    if (/^O/i.test(String(o.PARTICULIER || '').trim())) c.part = true;
+    if (num_(o.TVA)) c.tva = num_(o.TVA);
+    ['SIREN', 'EMAIL', 'ADRESSE', 'CP', 'VILLE'].forEach(function (k) {
+      var kk = k.toLowerCase();
+      if (!c[kk] && String(o[k] || '').trim()) c[kk] = String(o[k]).trim();
+    });
+    String(o.SERIES || '').split(/[\s,;]+/).forEach(function (id) { if (id && series[id]) c.ids[id] = true; });
+  });
+  return ordre.map(function (nom) {
+    var c = par[nom], cle = normNom_(nom);
+    /* Les séries du même client que SERIES ne cite pas (une série refaite
+       garde le nom du client, pas toujours sa place dans CONTRATS). */
+    toutes.forEach(function (s) {
+      if (c.ids[s.id] || !s.vivante) return;
+      var n = normNom_(s.client);
+      if (n === cle || n.indexOf(cle + ' ') === 0 || n.indexOf(cle + ' —') === 0) c.ids[s.id] = true;
+    });
+    var ss = Object.keys(c.ids).map(function (id) { return series[id]; });
+    var vivantes = ss.filter(function (s) { return s.vivante; });
+    var debut = '', fin = '', ouvert = false, tacite = false, eng = 0, vitre = ss.length > 0;
+    ss.forEach(function (s) {
+      if (s.debut && (!debut || s.debut < debut)) debut = s.debut;
+      if (s.tacite) tacite = true;
+      if (s.engagement) eng = Math.max(eng, s.engagement);
+      if (s.nature !== 'VITRERIE') vitre = false;
+    });
+    (vivantes.length ? vivantes : ss).forEach(function (s) {
+      if (!s.fin) ouvert = true; else if (!fin || s.fin > fin) fin = s.fin;
+    });
+    if (ouvert) fin = '';
+    var pm = 0, heures = 0, maxQui = 1;
+    /* Une série qui n'a pas commencé ne compte pas encore dans le temps passé
+       (sauf si tout le contrat démarre plus tard). */
+    var lancees = vivantes.filter(function (s) { return !s.debut || s.debut <= auj; });
+    (lancees.length ? lancees : vivantes).forEach(function (s) {
+      var n = Math.max(1, s.qui.length);
+      maxQui = Math.max(maxQui, n);
+      pm += s.pm;
+      heures += s.pm * s.duree / 60 * n;
+    });
+    var mensuel = arr2_(c.mensuel);
+    return {
+      nom: nom, client: c.client || nom, mensuel: mensuel, lignes: c.lignes, part: c.part, tva: c.tva,
+      siren: c.siren, email: c.email, adresse: c.adresse, cp: c.cp, ville: c.ville,
+      series: ss.map(function (s) { return s.id; }), debut: debut, fin: fin, tacite: tacite, engagement: eng || 12,
+      actif: vivantes.length > 0 || (!ss.length && mensuel > 0),
+      demarre: !!(debut && debut > auj),
+      passagesMois: Math.round(pm * 10) / 10, heuresMois: Math.round(heures * 10) / 10,
+      binome: maxQui > 1, nature: vitre ? 'VITRERIE' : 'ENTRETIEN',
+      parHeure: heures > 0 ? arr2_(mensuel / heures) : 0,
+      parPassage: pm > 0 ? arr2_(mensuel / pm) : 0
+    };
+  });
+}
+
+/* Premier mois facturé d'un contrat : celui du début s'il commence avant le
+   16, sinon le suivant. */
+function moisDebutContrat_(debut) {
+  if (!debut) return '';
+  var m = debut.slice(0, 7);
+  return Number(debut.slice(8, 10)) > 15 ? moisPlus_(m, 1) : m;
+}
+function contratCourtEn_(c, m) {
+  var d = moisDebutContrat_(c.debut);
+  if (!d || m < d) return false;
+  if (c.fin && m > c.fin.slice(0, 7)) return false;
+  return true;
+}
+
+/* Toutes les factures connues, sans doublon (le numéro fait foi). */
+function facturesConnues_() {
+  var vus = {}, out = [], complets = {};
+  /* Les mois d'avant le passage à Pennylane sont entiers dans l'export Henrri ;
+     à partir de là, les factures de contrat partent le 3 du mois suivant : le
+     mois se lit en « estimé » (contrats du mois + ponctuels facturés). */
+  var avant = String(lireReglages_().histo_factures_complet_avant || '2026-11').trim().slice(0, 7);
+  var pousser = function (f, complet) {
+    var num = String(f.numero || '').trim().replace(/^[^0-9]+/, '');
+    var k = num ? 'N' + num : 'X' + f.date + '|' + cleClient_(f.client) + '|' + f.ht;
+    if (!f.date || vus[k]) return;
+    vus[k] = true; out.push(f);
+    if (complet && f.date.slice(0, 7) < avant) complets[f.date.slice(0, 7)] = true;
+  };
+  var ss = SpreadsheetApp.getActive();
+  if (ss.getSheetByName(SH_HISTO_FACT_)) objetsDe_(SH_HISTO_FACT_).forEach(function (o) {
+    var ht = num_(o.TOTAL_HT);
+    if (!ht) return;
+    pousser({ date: jourDe_(o.DATE), numero: String(o.NUMERO || ''), client: String(o.CLIENT || ''), ht: ht,
+              type: String(o.TYPE || ''), source: String(o.SOURCE || 'HENRRI') }, true);
+  });
+  objetsDe_(SH.FACTURES).forEach(function (o) {
+    var etat = String(o.ETAT || '').toUpperCase();
+    if (!/ENVOYEE|FINALISEE|DEFINITIVE/.test(etat)) return;      // un brouillon n'est pas une facture
+    pousser({ date: jourDe_(o.CREE_LE), numero: String(o.NUMERO_FACTURE || ''), client: String(o.CLIENT || ''),
+              ht: num_(o.TOTAL_HT), type: String(o.TYPE || ''), source: 'PENNYLANE' }, false);
+  });
+  if (ss.getSheetByName(SH_MODELES_)) {
+    var parSrc = {};
+    objetsDe_(SH_MODELES_).forEach(function (o) {
+      var src = String(o.SOURCE || '').trim();
+      if (!src || parSrc[src]) return;
+      parSrc[src] = true;
+      pousser({ date: jourDe_(o.DATE), numero: src, client: String(o.CLIENT || ''), ht: num_(o.TOTAL_HT),
+                type: '', source: 'HENRRI' }, false);
+    });
+  }
+  return { liste: out, complets: complets };
+}
+
+function statsSociete_(d) {
+  var auj = new Date(), aujIso = isoJour_(auj), moisAuj = aujIso.slice(0, 7), an = aujIso.slice(0, 4);
+  var contrats = contratsVivants_();
+  var actifs = contrats.filter(function (c) { return c.actif; });
+
+  /* ---- les factures, rangées contrat / ponctuel ---- */
+  var cles = [];
+  contrats.forEach(function (c) { cles.push(cleClient_(c.nom)); if (c.client) cles.push(cleClient_(c.client)); });
+  var contratDe = function (client) {
+    var k = cleClient_(client);
+    if (k.trim().length < 3) return null;
+    for (var i = 0; i < contrats.length; i++) {
+      var cs = [cleClient_(contrats[i].nom), cleClient_(contrats[i].client)];
+      for (var j = 0; j < cs.length; j++) {
+        var x = cs[j];
+        if (x.trim().length >= 3 && (k.indexOf(x) >= 0 || x.indexOf(k) >= 0)) return contrats[i];
+      }
+    }
+    return null;
+  };
+  var estContrat = function (client) { return !!contratDe(client); };
+  var F = facturesConnues_();
+  var fact = {};
+  F.liste.forEach(function (f) {
+    var m = f.date.slice(0, 7);
+    var x = fact[m] || (fact[m] = { total: 0, contrats: 0, ponctuels: 0, n: 0 });
+    var ctr = /CONTRAT/i.test(f.type) || (!/PONCT/i.test(f.type) && estContrat(f.client));
+    f.contrat = ctr;
+    x.total = arr2_(x.total + f.ht); x.n++;
+    if (ctr) x.contrats = arr2_(x.contrats + f.ht); else x.ponctuels = arr2_(x.ponctuels + f.ht);
+  });
+
+  /* ---- 12 mois glissants + l'année en cours ---- */
+  var debutSerie = moisPlus_(moisAuj, -11);
+  if (an + '-01' < debutSerie) debutSerie = an + '-01';
+  var mois = [];
+  for (var m = debutSerie; m <= moisAuj; m = moisPlus_(m, 1)) mois.push(m);
+  var courbe = mois.map(function (m) {
+    var rec = 0, n = 0;
+    contrats.forEach(function (c) { if (contratCourtEn_(c, m)) { rec += c.mensuel; n++; } });
+    rec = arr2_(rec);
+    var f = fact[m] || { total: 0, contrats: 0, ponctuels: 0, n: 0 };
+    var complet = !!F.complets[m];
+    var ca = complet ? f.total : arr2_(rec + f.ponctuels);
+    return { mois: m, ca: ca, recurrent: rec, ponctuels: f.ponctuels, facture: f.total, nFactures: f.n,
+             contrats: n, mode: complet ? 'facture' : 'estime', enCours: m === moisAuj };
+  });
+  var somme = function (l) { return arr2_(l.reduce(function (s, x) { return s + x.ca; }, 0)); };
+  var annee = courbe.filter(function (x) { return x.mois.slice(0, 4) === an; });
+  var clos = annee.filter(function (x) { return !x.enCours; });
+  var meilleur = clos.reduce(function (b, x) { return !b || x.ca > b.ca ? x : b; }, null);
+  var ceMois = courbe[courbe.length - 1], moisPrec = courbe[courbe.length - 2] || null;
+
+  /* ---- les contrats : rendement ---- */
+  var mrr = arr2_(actifs.reduce(function (s, c) { return s + c.mensuel; }, 0));
+  var heures = Math.round(actifs.reduce(function (s, c) { return s + c.heuresMois; }, 0) * 10) / 10;
+  var passages = Math.round(actifs.reduce(function (s, c) { return s + c.passagesMois; }, 0) * 10) / 10;
+  var dans90 = new Date(auj.getTime() + 90 * 86400000), lim90 = isoJour_(dans90);
+  var listeC = actifs.map(function (c) {
+    var dm = moisDebutContrat_(c.debut), moisFaits = 0;
+    if (dm && dm <= moisAuj) {
+      for (var mm = dm; mm < moisAuj; mm = moisPlus_(mm, 1)) moisFaits++;
+    }
+    var restant = 0;
+    if (c.fin) for (var mr = moisAuj; mr <= c.fin.slice(0, 7); mr = moisPlus_(mr, 1)) restant++;
+    return {
+      nom: c.nom, client: c.client, mensuel: c.mensuel, annuel: arr2_(c.mensuel * 12), part: c.part,
+      nature: c.nature, lignes: c.lignes, series: c.series, debut: c.debut, fin: c.fin, tacite: c.tacite,
+      demarre: c.demarre, passagesMois: c.passagesMois, heuresMois: c.heuresMois, binome: c.binome,
+      parHeure: c.parHeure, parPassage: c.parPassage, moisFaits: moisFaits,
+      genere: arr2_(c.mensuel * moisFaits), resteEngage: arr2_(c.mensuel * restant), moisRestants: restant,
+      echeance: !!(c.fin && c.fin <= lim90),
+      partCA: mrr > 0 ? Math.round(c.mensuel / mrr * 1000) / 10 : 0
+    };
+  }).sort(function (a, b) { return b.mensuel - a.mensuel; });
+  var avecH = listeC.filter(function (c) { return c.heuresMois > 0; });
+  var prevision = [];
+  for (var k = 1; k <= 12; k++) {
+    var mp = moisPlus_(moisAuj, k), sur = 0, tac = 0;
+    actifs.forEach(function (c) {
+      var dd = moisDebutContrat_(c.debut);
+      if (dd && mp < dd) return;
+      if (!c.fin || mp <= c.fin.slice(0, 7)) sur += c.mensuel;
+      else if (c.tacite) tac += c.mensuel;
+    });
+    prevision.push({ mois: mp, engage: arr2_(sur), reconduit: arr2_(tac) });
+  }
+
+  /* ---- les devis de l'appli ---- */
+  var t = tauxCommissions_();
+  var dv = { nb: 0, signes: 0, refuses: 0, attente: 0, htPonctuelSigne: 0, nbPonctuelSigne: 0, mensuelSigne: 0,
+             nbContratsSignes: 0, pipeHt: 0, pipeMensuel: 0, nbMois: 0, htMois: 0, signesMois: 0 };
+  var parCom = {}, parOrig = {}, parNat = {}, parMoisSigne = {};
+  objetsDe_(SH.DEVIS).forEach(function (o) {
+    if (!String(o.NUMERO || '').trim() || devisEssai_(o)) return;
+    var hist = devisHistorique_(o);
+    var dt = jourDe_(o.DATE), st = String(o.STATUT || '').toUpperCase().trim();
+    var ds = jourDe_(o.DATE_STATUT) || dt;
+    var c = commissionLigne_(o, t);
+    if (st === 'SIGNE' && ds) {
+      var ms = ds.slice(0, 7);
+      var y = parMoisSigne[ms] || (parMoisSigne[ms] = { ponctuel: 0, contrats: 0, mensuel: 0, n: 0, repris: 0 });
+      if (c.contrat) { y.mensuel = arr2_(y.mensuel + (c.mensuel || 0)); y.contrats++; } else y.ponctuel = arr2_(y.ponctuel + c.base);
+      y.n++; if (hist) y.repris++;
+    }
+    if (hist || !dt || dt.slice(0, 4) !== an) return;
+    dv.nb++;
+    var com = String(o.COMMERCIAL || '').trim() || '—';
+    var pc = parCom[com] || (parCom[com] = { nom: com, nb: 0, signes: 0, ca: 0 });
+    var orig = String(o.ORIGINE || '').trim().toUpperCase() || 'NON PRÉCISÉE';
+    var po = parOrig[orig] || (parOrig[orig] = { nom: orig, nb: 0, signes: 0 });
+    var nat = c.contrat ? 'CONTRAT ' + (c.nature || '') : (c.nature || 'AUTRE');
+    var pn = parNat[nat] || (parNat[nat] = { nom: nat, nb: 0, signes: 0, ca: 0 });
+    pc.nb++; po.nb++; pn.nb++;
+    if (dt.slice(0, 7) === moisAuj) { dv.nbMois++; dv.htMois = arr2_(dv.htMois + c.base); }
+    if (st === 'SIGNE') {
+      dv.signes++; pc.signes++; po.signes++; pn.signes++;
+      pc.ca = arr2_(pc.ca + c.base); pn.ca = arr2_(pn.ca + c.base);
+      if (ds.slice(0, 7) === moisAuj) dv.signesMois++;
+      if (c.contrat) { dv.mensuelSigne = arr2_(dv.mensuelSigne + (c.mensuel || 0)); dv.nbContratsSignes++; }
+      else { dv.htPonctuelSigne = arr2_(dv.htPonctuelSigne + c.base); dv.nbPonctuelSigne++; }
+    } else if (st === 'REFUSE' || st === 'EXPIRE') dv.refuses++;
+    else {
+      dv.attente++;
+      if (c.contrat) dv.pipeMensuel = arr2_(dv.pipeMensuel + (c.mensuel || 0)); else dv.pipeHt = arr2_(dv.pipeHt + c.base);
+    }
+  });
+  dv.taux = dv.nb ? Math.round(dv.signes / dv.nb * 1000) / 10 : 0;
+  dv.tauxTranche = (dv.signes + dv.refuses) ? Math.round(dv.signes / (dv.signes + dv.refuses) * 1000) / 10 : 0;
+  dv.panier = dv.nbPonctuelSigne ? arr2_(dv.htPonctuelSigne / dv.nbPonctuelSigne) : 0;
+  var tri = function (o, k) { return Object.keys(o).map(function (x) { return o[x]; }).sort(function (a, b) { return (b[k] || 0) - (a[k] || 0); }); };
+
+  /* ---- les clients qui pèsent (depuis janvier) ---- */
+  var parCli = {};
+  contrats.forEach(function (c) {
+    var tot = 0;
+    annee.forEach(function (x) { if (contratCourtEn_(c, x.mois) && !F.complets[x.mois]) tot += c.mensuel; });
+    if (tot > 0) parCli[cleClient_(c.nom)] = { nom: c.nom, ca: arr2_(tot), contrat: true };
+  });
+  F.liste.forEach(function (f) {
+    if (f.date.slice(0, 4) !== an) return;
+    if (f.contrat && !F.complets[f.date.slice(0, 7)]) return;      // déjà compté par le contrat
+    var cc = contratDe(f.client);                                   // la facture d'un client sous contrat va sur son contrat
+    var k = cc ? cleClient_(cc.nom) : cleClient_(f.client);
+    var x = parCli[k] || (parCli[k] = { nom: cc ? cc.nom : f.client, ca: 0, contrat: !!cc });
+    x.ca = arr2_(x.ca + f.ht);
+  });
+  var clients = tri(parCli, 'ca').slice(0, 10);
+
+  return {
+    ok: true, maj: Date.now(), an: an, mois: moisAuj,
+    societe: String(lireReglages_().societe_nom || 'BREIZH BRILLANCE'),
+    ca: { ceMois: ceMois, moisPrec: moisPrec, depuisJanvier: somme(annee), clos: somme(clos),
+          moyenne: clos.length ? arr2_(somme(clos) / clos.length) : 0, meilleur: meilleur,
+          douzeMois: somme(courbe.slice(-12)) },
+    courbe: courbe,
+    recurrent: { mensuel: mrr, annuel: arr2_(mrr * 12), nb: actifs.length, heuresMois: heures, passagesMois: passages,
+                 parHeure: heures > 0 ? arr2_(mrr / heures) : 0,
+                 parHeureMin: avecH.length ? avecH.reduce(function (m, c) { return Math.min(m, c.parHeure); }, 1e9) : 0,
+                 parHeureMax: avecH.reduce(function (m, c) { return Math.max(m, c.parHeure); }, 0),
+                 resteEngage: arr2_(listeC.reduce(function (s, c) { return s + c.resteEngage; }, 0)),
+                 echeances: listeC.filter(function (c) { return c.echeance; }).length,
+                 pros: listeC.filter(function (c) { return !c.part; }).length },
+    contrats: listeC, prevision: prevision,
+    devis: dv, parCommercial: tri(parCom, 'ca'), parOrigine: tri(parOrig, 'nb'), parNature: tri(parNat, 'ca'),
+    signesParMois: mois.map(function (m) { return { mois: m, v: parMoisSigne[m] || { ponctuel: 0, contrats: 0, mensuel: 0, n: 0, repris: 0 } }; }),
+    clients: clients,
+    sources: { factures: F.liste.length, moisComplets: Object.keys(F.complets).sort(),
+               histo: !!SpreadsheetApp.getActive().getSheetByName(SH_HISTO_FACT_) }
+  };
+}
+
+/* Menu 34 — « rajoute en tant que devis signés les contrats récurrents déjà
+   en place ». Une ligne DEVIS par contrat de CONTRATS qui n'a pas de devis
+   signé dans l'appli : numéro CTR-…, ORIGINE = HISTORIQUE, date = début du
+   contrat. Ces lignes comptent dans les chiffres, et nulle part ailleurs
+   (lireDevis_ les ignore : pas de facture, pas de rappel, pas de commission).
+   Relancer ne crée pas de doublon. */
+function reprendreContratsEnDevis() {
+  var r = reprendreContratsEnDevis_();
+  try {
+    SpreadsheetApp.getUi().alert(r.crees + ' contrat(s) ajouté(s) comme devis signés, ' + r.deja + ' déjà présent(s).' +
+      (r.noms.length ? '\n\n' + r.noms.join('\n') : ''));
+  } catch (e) {}
+  return r;
+}
+function reprendreContratsEnDevis_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.DEVIS);
+  ['ORIGINE', 'DATE_STATUT', 'PASSAGES_MOIS', 'NATURE', 'ENGAGEMENT_MOIS', 'RECONDUCTION'].forEach(function (h) { colonneAssuree_(SH.DEVIS, h); });
+  var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim(); });
+  var pris = numerosPris_();
+  var devisDeSerie = {};
+  objetsDe_(SH.RECURRENTS).forEach(function (s) {
+    if (String(s.DEVIS || '').trim()) devisDeSerie[String(s.ID || '').trim()] = true;
+  });
+  var lignes = [], noms = [], deja = 0, auj = new Date();
+  contratsVivants_().forEach(function (c) {
+    if (!(c.mensuel > 0)) return;
+    var num = 'CTR-' + sansAccent_(c.nom).replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+    if (pris[num] || c.series.some(function (id) { return devisDeSerie[id]; })) { deja++; return; }
+    var debut = c.debut ? new Date(c.debut + 'T12:00:00') : auj;
+    var tva = arr2_(c.mensuel * c.tva / 100);
+    var v = {
+      NUMERO: num, DATE: debut, COMMERCIAL: '', CLIENT: c.client || c.nom,
+      TYPE_CLIENT: c.part ? 'PARTICULIER' : 'PROFESSIONNEL', SIRET_CLIENT: c.siren, EMAIL: c.email,
+      ADRESSE: c.adresse, CP: c.cp, VILLE: c.ville,
+      TOTAL_HT_PONCTUEL: 0, TOTAL_HT_MENSUEL: c.mensuel, TOTAL_HT: c.mensuel, TOTAL_TVA: tva,
+      TOTAL_TTC: arr2_(c.mensuel + tva), REMISE_PCT: 0, STATUT: 'SIGNE', SIGNE: 'OUI',
+      NOTES: 'Contrat en place avant l\'application, repris pour les chiffres le ' +
+             Utilities.formatDate(auj, 'Europe/Paris', 'dd/MM/yyyy') + ' (contrat « ' + c.nom + ' », séries ' +
+             (c.series.join(', ') || '—') + '). Pas de devis papier dans l\'appli.',
+      OBJET: c.lignes.join(' + '), DATE_STATUT: debut, PASSAGES_MOIS: Math.round(c.passagesMois) || '',
+      NATURE: c.nature, ORIGINE: 'HISTORIQUE', ENGAGEMENT_MOIS: c.engagement || 12,
+      RECONDUCTION: c.tacite ? 'TACITE' : 'NON'
+    };
+    lignes.push(en.map(function (h) { return v.hasOwnProperty(h) ? v[h] : ''; }));
+    noms.push(num + ' — ' + c.nom + ' — ' + c.mensuel + ' € HT/mois');
+    pris[num] = true;
+  });
+  if (lignes.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, lignes.length, en.length).setValues(lignes);
+    tracerServeur_('SYSTEME', 'CONTRATS REPRIS EN DEVIS', lignes.length + ' contrat(s) : ' + noms.join(' ; ').slice(0, 400), '', '');
+  }
+  return { ok: true, crees: lignes.length, deja: deja, noms: noms };
+}
+
+/* L'historique complet des factures (export Henrri), collé ou importé dans
+   HISTO_FACTURES. Rend l'onglet, créé au besoin avec ses en-têtes. */
+function ongletHistoFactures_() {
+  var ss = SpreadsheetApp.getActive();
+  return ss.getSheetByName(SH_HISTO_FACT_) || creerOnglet_(ss, SH_HISTO_FACT_, ENTETES_HISTO_FACT_);
 }
 
 

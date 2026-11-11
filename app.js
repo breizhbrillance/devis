@@ -7214,6 +7214,7 @@ function rouvrirFiche(){
   if(f.type === 'admin'){ peindreAdministratif(); return; }
   if(f.type === 'feries'){ peindreFeries(); return; }
   if(f.type === 'notifs'){ peindreEtatNotifs(); return; }
+  if(f.type === 'stats'){ peindreStats(); return; }
   if(f.type === 'contrats') return;
   if(f.type === 'devis'){
     var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === f.cle; })[0];
@@ -10442,6 +10443,7 @@ function enteteDevisAdmin(){
    devis signés, au Tableau, sous « À faire » : là où il restait du vide. */
 function chiffresTableauHtml(){
   chargerCommissions(false);
+  chargerStats(false);
   var h = chiffresHtml();
   var t = TABLEAU || {}, ch = t.chiffres || {};
   var signes = (t.devis || []).filter(function(d){ return String(d.statut || '').toUpperCase() === 'SIGNE'; })
@@ -10455,7 +10457,12 @@ function chiffresTableauHtml(){
         '<span>' + ech(d.client || '—') + ' <span class="mini">' + ech(jjmmaa(d.date)) + ' · ' + ech(d.commercial || '') + '</span></span>' +
         '<b>' + eur(d.ht) + '</b></div>';
     }).join('') : '<div class="mini">Aucun devis signé sur la période.</div>') + '</div>';
-  return '<div style="margin-top:18px">' + (h ? '<div class="card">' + h + '</div>' : '') + commissionsAdminHtml() + sig + '</div>';
+  /* v108p — la carte s'ouvre sur la fiche des chiffres de la société. */
+  var carte = '<div class="card" style="cursor:pointer" onclick="ficheStats()">' +
+    (h || '<h2 style="margin:0">Chiffre de la société</h2>') +
+    (STATS && STATS.ca ? '<div class="mini" style="margin-top:8px">CA HT depuis janvier : <b>' + eurE(STATS.ca.depuisJanvier) + '</b> · récurrent <b>' + eurE((STATS.recurrent || {}).mensuel) + '/mois</b></div>' : '') +
+    '<div style="margin-top:8px;color:var(--acc);font-weight:600">Voir toutes les statistiques ›</div></div>';
+  return '<div style="margin-top:18px">' + carte + commissionsAdminHtml() + sig + '</div>';
 }
 var DEVIS_A_ENVOYER = 0;
 function compterDevisAEnvoyer(){
@@ -10540,7 +10547,7 @@ function chiffresHtml(){
   }).join('');
   /* Le gérant ne se commissionne pas : chez lui, le chiffre de la société. */
   if(c.commerciaux) return '<div style="display:flex;gap:10px;align-items:baseline"><h2 style="flex:1;margin:0">Chiffre de la société</h2>' +
-      '<button class="btn sec sm" onclick="chargerCommissions(true)">Actualiser</button></div>' +
+      '<button class="btn sec sm" onclick="event.stopPropagation();chargerCommissions(true)">Actualiser</button></div>' +
     '<div class="mini" style="margin-top:4px">' + ech(c.societe || '') + ' · devis signés, contrats comptés sur leur 1re année</div>' +
     '<div class="row" style="gap:8px;margin-top:8px">' + tuile('Ce mois-ci', sm.ca, null, sm.n) + tuile('Depuis janvier', sa.ca, null, sa.n) + '</div>';
   return '<div style="display:flex;gap:10px;align-items:baseline"><h2 style="flex:1;margin:0">Mon chiffre</h2>' +
@@ -10784,3 +10791,195 @@ function retirerConge(rang, du, qui, btn){
     chargerTableau();
   }, function(){ libere(btn); erreur(attenteLisible()); });
 }
+
+/* ====================== v108p — LES CHIFFRES DE LA SOCIÉTÉ ======================
+   « Dans chiffres de la société, quand on clique dessus, affiche un menu où on
+   voit les statistiques importantes : le rendement de tous les contrats
+   récurrents, une courbe avec le CA évolutif, un max de données. »
+   Tout est calculé au bureau (statsSociete_) ; le téléphone garde la dernière
+   réponse pour s'afficher hors connexion. */
+var STATS = null, STATS_DEMANDE = 0, STATS_TRI = 'mensuel', STATS_SEL = -1;
+try{ STATS = JSON.parse(localStorage.getItem('bb_stats') || 'null'); }catch(e){ STATS = null; }
+function eurE(n){ return eur(Math.round(Number(n) || 0)).replace(',00', ''); }
+function moisCourt(m){ var p = String(m || '').split('-'); return p.length === 2 ? MOIS_NOM[Number(p[1]) - 1].slice(0, 4).replace(/\.$/, '') + '.' : m; }
+function ficheStats(){
+  AD_FICHE = {type:'stats', cle:''};
+  montrer('eAd2');
+  $('hTitre').textContent = 'Chiffres de la société';
+  erreur(''); window.scrollTo(0,0);
+  STATS_SEL = -1;
+  chargerStats(false);
+  peindreStats();
+}
+function chargerStats(force, btn){
+  var moi = session();
+  if(!moi || !navigator.onLine) return;
+  if(!force && STATS && Date.now() - STATS_DEMANDE < 600000) return;
+  STATS_DEMANDE = Date.now();
+  if(btn){ btn.disabled = true; btn.textContent = 'Calcul…'; }
+  poster({action:'statsSociete', nom:moi.nom, code:moi.code, appareil:APPAREIL}, 60000).then(function(r){
+    if(r && r.ok){
+      var neuf = !STATS || !STATS.ca;
+      STATS = r; try{ localStorage.setItem('bb_stats', JSON.stringify(r)); }catch(e){}
+      if(neuf && ECRAN_VU === 'eAd1' && (AD_ONGLET === 'aujourdhui' || AD_ONGLET === 'devis')) peindreTableau();
+    }
+    else if(r && r.erreur && !STATS) STATS = { erreur: r.erreur };
+    if(AD_FICHE && AD_FICHE.type === 'stats') peindreStats();
+  }, function(){
+    if(!STATS) STATS = { erreur: 'Le bureau n\'a pas répondu.' };
+    if(AD_FICHE && AD_FICHE.type === 'stats') peindreStats();
+  });
+}
+function tuileStat(titre, valeur, sous, large){
+  return '<div class="card stTuile"' + (large ? ' style="flex-basis:100%"' : '') + '><div class="mini">' + titre + '</div>' +
+    '<b class="stVal">' + valeur + '</b>' + (sous ? '<div class="mini">' + sous + '</div>' : '') + '</div>';
+}
+function evolution(a, b){
+  if(!(b > 0)) return '';
+  var p = Math.round((a - b) / b * 1000) / 10;
+  return (p >= 0 ? '▲ +' : '▼ ') + String(p).replace('.', ',') + ' % vs ' ;
+}
+/* La courbe du CA : une barre par mois, pleine quand le mois est facturé,
+   hachurée quand il est estimé. Un appui sur une barre en donne le détail. */
+function courbeCA(c){
+  var W = 340, H = 170, g = 34, b = 22, haut = 8;
+  var max = Math.max.apply(null, c.map(function(x){ return x.ca; }).concat([1]));
+  var pas = [500, 1000, 2000, 2500, 5000, 10000, 20000, 25000, 50000].filter(function(p){ return max / p <= 4; })[0] || 100000;
+  var top = Math.ceil(max / pas) * pas;
+  var y = function(v){ return haut + (H - b - haut) * (1 - v / top); };
+  var n = c.length, l = (W - g) / n, lb = Math.max(6, l - 6);
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="stSvg" role="img" aria-label="Chiffre d\'affaires HT par mois">' +
+    '<defs><pattern id="stHach" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
+    '<rect width="5" height="5" fill="var(--acc-f, rgba(0,0,0,.06))"/><line x1="0" y1="0" x2="0" y2="5" stroke="var(--acc)" stroke-width="2"/></pattern></defs>';
+  for(var v = 0; v <= top; v += pas){
+    s += '<line x1="' + g + '" x2="' + W + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--line)" stroke-width="1"/>' +
+      '<text x="' + (g - 4) + '" y="' + (y(v) + 3) + '" text-anchor="end" class="stAx">' + (v >= 1000 ? (v / 1000) + ' k' : v) + '</text>';
+  }
+  c.forEach(function(x, i){
+    var x0 = g + i * l + (l - lb) / 2, h = Math.max(0, y(0) - y(Math.max(0, x.ca)));
+    var plein = x.mode === 'facture';
+    var r = Math.min(4, lb / 2);
+    var yy = y(0) - h;
+    var d = h > r ? 'M' + x0 + ',' + y(0) + ' V' + (yy + r) + ' Q' + x0 + ',' + yy + ' ' + (x0 + r) + ',' + yy +
+      ' H' + (x0 + lb - r) + ' Q' + (x0 + lb) + ',' + yy + ' ' + (x0 + lb) + ',' + (yy + r) + ' V' + y(0) + ' Z'
+      : 'M' + x0 + ',' + y(0) + ' h' + lb + ' v-' + h + ' h-' + lb + ' Z';
+    s += '<path d="' + d + '" fill="' + (plein ? 'var(--acc)' : 'url(#stHach)') + '"' +
+      (plein ? '' : ' stroke="var(--acc)" stroke-width="1.5"') + (STATS_SEL === i ? ' opacity="1"' : (STATS_SEL >= 0 ? ' opacity=".45"' : '')) + '/>';
+    s += '<rect x="' + (g + i * l) + '" y="0" width="' + l + '" height="' + H + '" fill="transparent" style="cursor:pointer" onclick="choisirMoisStat(' + i + ')"/>';
+    if(n <= 12 || i % 2 === 0) s += '<text x="' + (x0 + lb / 2) + '" y="' + (H - 6) + '" text-anchor="middle" class="stAx">' + moisCourt(x.mois).slice(0, 3) + '</text>';
+  });
+  return s + '</svg>';
+}
+function choisirMoisStat(i){ STATS_SEL = STATS_SEL === i ? -1 : i; peindreStats(); }
+function detailMoisStat(c){
+  var x = c[STATS_SEL];
+  if(!x) return '<div class="mini stDet">Appuie sur une barre pour le détail du mois.</div>';
+  return '<div class="stDet"><b>' + ech(nomMois(x.mois)) + '</b>' + (x.enCours ? ' <span class="mini">(en cours)</span>' : '') +
+    ' : <b>' + eurE(x.ca) + ' HT</b> ' + (x.mode === 'facture' ? '<span class="mini">facturé (' + x.nFactures + ' factures)</span>' : '<span class="mini">estimé</span>') +
+    '<div class="mini">' + (x.mode === 'facture'
+      ? 'dont contrats ' + eurE(x.facture - x.ponctuels) + ' · ponctuels ' + eurE(x.ponctuels)
+      : 'contrats actifs ' + eurE(x.recurrent) + ' (' + x.contrats + ') + ponctuels facturés ' + eurE(x.ponctuels)) + '</div></div>';
+}
+function barresPrevision(p){
+  var max = Math.max.apply(null, p.map(function(x){ return x.engage + x.reconduit; }).concat([1]));
+  return '<div class="stPrev">' + p.map(function(x){
+    var he = Math.round(x.engage / max * 100), hr = Math.round(x.reconduit / max * 100);
+    return '<div class="stPb" title="' + ech(nomMois(x.mois)) + '"><div class="stPbz"><i class="stPr" style="height:' + hr + '%"></i>' +
+      '<i class="stPe" style="height:' + he + '%"></i></div><span>' + moisCourt(x.mois).slice(0, 3) + '</span></div>';
+  }).join('') + '</div>';
+}
+function triStats(k){ STATS_TRI = k; peindreStats(); }
+function contratStatHtml(c, moy, maxH){
+  var larg = maxH > 0 ? Math.round(c.parHeure / maxH * 100) : 0;
+  var etat = c.demarre ? 'démarre le ' + jjmmaa(c.debut)
+    : (c.fin ? (c.echeance && !c.tacite ? '<b style="color:var(--warn)">échéance le ' + jjmmaa(c.fin) + '</b>' : 'jusqu\'au ' + jjmmaa(c.fin) + (c.tacite ? ' · tacite' : ''))
+             : 'sans échéance');
+  return '<details class="stC"><summary><div class="stCl"><b>' + ech(c.nom) + '</b><span class="mini">' + eurE(c.mensuel) + '/mois · ' +
+      (c.parHeure ? '<b>' + eur(c.parHeure) + '/h</b>' : 'heures inconnues') + '</span></div>' +
+      '<div class="stBar"><i style="width:' + larg + '%"></i></div></summary>' +
+    '<div class="mini" style="padding:2px 0 8px">' +
+      c.passagesMois.toString().replace('.', ',') + ' passages/mois · ' + c.heuresMois.toString().replace('.', ',') + ' h sur place/mois' +
+      (c.binome ? ' (binôme compté pour deux)' : '') + '<br>' +
+      (c.parPassage ? eur(c.parPassage) + ' par passage · ' : '') + c.partCA.toString().replace('.', ',') + ' % du récurrent · ' + eurE(c.annuel) + '/an<br>' +
+      'Depuis le ' + jjmmaa(c.debut) + ' : ' + c.moisFaits + ' mois, ≈ ' + eurE(c.genere) + ' générés · ' + etat +
+      (c.resteEngage ? '<br>Reste engagé : ' + eurE(c.resteEngage) + ' (' + c.moisRestants + ' mois)' : '') +
+      (moy && c.parHeure ? '<br>' + (c.parHeure >= moy ? 'Au-dessus' : 'En dessous') + ' de la moyenne (' + eur(moy) + '/h)' : '') +
+    '</div></details>';
+}
+function listeRepartition(titre, l, champ){
+  if(!l || !l.length) return '';
+  return '<div style="margin-top:10px"><b>' + titre + '</b>' + l.map(function(x){
+    var nom = x.nom === '—' ? 'sans commercial' : String(x.nom).charAt(0) + String(x.nom).slice(1).toLowerCase();
+    return '<div class="ch"><span>' + ech(nom) + ' <span class="mini">' + x.nb + ' devis · ' + x.signes + ' signé' + (x.signes > 1 ? 's' : '') + '</span></span>' +
+      '<b>' + (champ === 'ca' ? eurE(x.ca) : (x.nb ? Math.round(x.signes / x.nb * 100) + ' %' : '—')) + '</b></div>';
+  }).join('') + '</div>';
+}
+function peindreStats(){
+  var z = $('adFiche'), s = STATS;
+  var h = '<div class="row" style="gap:8px;align-items:center;margin-bottom:10px"><div class="mini" style="flex:1">' +
+      (s && s.maj ? 'Calculé le ' + jjmmaa(isoJour(new Date(s.maj))) + ' à ' + new Date(s.maj).toTimeString().slice(0, 5) : '') + '</div>' +
+    '<button class="btn sec sm" style="width:auto" onclick="chargerStats(true, this)">Actualiser</button></div>';
+  if(!s){ z.innerHTML = h + '<div class="empty">' + (navigator.onLine ? 'Calcul des chiffres…' : 'Hors connexion : les chiffres se calculent au bureau.') + '</div>' + boutonsRetourStats(); return; }
+  if(s.erreur){ z.innerHTML = h + '<div class="card" style="color:var(--danger)">' + ech(s.erreur) + '</div>' + boutonsRetourStats(); return; }
+  var ca = s.ca || {}, c = s.courbe || [], R = s.recurrent || {}, D = s.devis || {};
+  var cm = ca.ceMois || {}, mp = ca.moisPrec || {};
+  var avant = c.length > 2 ? c[c.length - 3] : null;
+
+  /* 1. Le chiffre d'affaires. */
+  h += '<div class="card"><h2 style="margin:0 0 8px">Chiffre d\'affaires HT</h2><div class="stGrille">' +
+    tuileStat('Depuis janvier ' + ech(s.an), eurE(ca.depuisJanvier), (ca.clos ? 'mois clos : ' + eurE(ca.clos) : '')) +
+    tuileStat('Ce mois-ci', eurE(cm.ca), 'en cours · ' + (cm.mode === 'facture' ? 'facturé' : 'estimé')) +
+    tuileStat(mp.mois ? ech(nomMois(mp.mois)) : 'Mois dernier', eurE(mp.ca), avant && evolution(mp.ca, avant.ca) ? evolution(mp.ca, avant.ca) + moisCourt(avant.mois) : (mp.mode === 'facture' ? 'facturé' : 'estimé')) +
+    tuileStat('Moyenne par mois', eurE(ca.moyenne), ca.meilleur ? 'record : ' + ech(nomMois(ca.meilleur.mois)) + ' (' + eurE(ca.meilleur.ca) + ')' : '') +
+    tuileStat('12 derniers mois', eurE(ca.douzeMois), '', true) +
+    '</div>' +
+    '<div style="margin-top:12px">' + courbeCA(c) + '</div>' +
+    '<div class="stLeg"><span><i class="stLp"></i>facturé</span><span><i class="stLh"></i>estimé (contrats + ponctuels facturés)</span></div>' +
+    detailMoisStat(c) + '</div>';
+
+  /* 2. Les contrats récurrents. */
+  var liste = (s.contrats || []).slice();
+  if(STATS_TRI === 'heure') liste.sort(function(a, b){ return (b.parHeure || 0) - (a.parHeure || 0); });
+  if(STATS_TRI === 'fin') liste.sort(function(a, b){ return (a.fin || '9999') < (b.fin || '9999') ? -1 : 1; });
+  var maxH = liste.reduce(function(m, x){ return Math.max(m, x.parHeure || 0); }, 0);
+  h += '<div class="card"><h2 style="margin:0 0 8px">Contrats récurrents</h2><div class="stGrille">' +
+    tuileStat('Récurrent par mois', eurE(R.mensuel), R.nb + ' contrats actifs') +
+    tuileStat('Sur un an', eurE(R.annuel), R.pros + ' pros · ' + (R.nb - R.pros) + ' particuliers') +
+    tuileStat('Rendement moyen', R.parHeure ? eur(R.parHeure) + '/h' : '—', R.parHeureMin ? 'de ' + eurE(R.parHeureMin) + ' à ' + eurE(R.parHeureMax) + '/h' : '') +
+    tuileStat('Temps sur place', String(R.heuresMois).replace('.', ',') + ' h/mois', String(R.passagesMois).replace('.', ',') + ' passages/mois') +
+    tuileStat('Reste engagé', eurE(R.resteEngage), 'jusqu\'aux échéances') +
+    tuileStat('Échéances < 90 j', String(R.echeances || 0), 'à renouveler ou reconduits') +
+    '</div>' +
+    '<div class="mini" style="margin:10px 0 4px">Rendement = montant mensuel HT ÷ heures sur place (passages × durée × intervenants), hors trajets.</div>' +
+    '<div class="prOng" style="margin:6px 0"><button class="' + (STATS_TRI === 'mensuel' ? 'on' : '') + '" onclick="triStats(\'mensuel\')">Montant</button>' +
+      '<button class="' + (STATS_TRI === 'heure' ? 'on' : '') + '" onclick="triStats(\'heure\')">€/heure</button>' +
+      '<button class="' + (STATS_TRI === 'fin' ? 'on' : '') + '" onclick="triStats(\'fin\')">Échéance</button></div>' +
+    liste.map(function(x){ return contratStatHtml(x, R.parHeure, maxH); }).join('') +
+    '<div style="margin-top:12px"><b>Récurrent prévu sur 12 mois</b><div class="mini">plein : engagé · clair : reconduction tacite</div>' +
+      barresPrevision(s.prevision || []) + '</div></div>';
+
+  /* 3. Les devis de l'année. */
+  h += '<div class="card"><h2 style="margin:0 0 8px">Devis ' + ech(s.an) + '</h2><div class="stGrille">' +
+    tuileStat('Taux de signature', String(D.taux || 0).replace('.', ',') + ' %', D.signes + ' signés sur ' + D.nb + ' · ' + String(D.tauxTranche || 0).replace('.', ',') + ' % des devis tranchés') +
+    tuileStat('Panier moyen ponctuel', eurE(D.panier), D.nbPonctuelSigne + ' ponctuels signés · ' + eurE(D.htPonctuelSigne)) +
+    tuileStat('Nouveaux contrats', eurE(D.mensuelSigne) + '/mois', D.nbContratsSignes + ' signés dans l\'appli') +
+    tuileStat('En attente de réponse', String(D.attente || 0), (D.pipeHt ? eurE(D.pipeHt) + ' ponctuels' : '') + (D.pipeMensuel ? (D.pipeHt ? ' + ' : '') + eurE(D.pipeMensuel) + '/mois' : '')) +
+    '</div>' +
+    listeRepartition('Par commercial', s.parCommercial, 'ca') +
+    listeRepartition('Par origine', s.parOrigine, 'taux') +
+    listeRepartition('Par type de prestation', s.parNature, 'ca') +
+    '<div class="mini" style="margin-top:8px">Devis faits dans l\'appli depuis janvier (essais exclus). Les contrats repris d\'avant l\'appli comptent dans le chiffre, pas dans le taux.</div></div>';
+
+  /* 4. Les clients qui pèsent. */
+  if((s.clients || []).length) h += '<div class="card"><h2 style="margin:0 0 8px">Clients qui pèsent le plus (' + ech(s.an) + ')</h2>' +
+    s.clients.map(function(x, i){
+      return '<div class="ch"><span>' + (i + 1) + '. ' + ech(x.nom) + (x.contrat ? ' <span class="mini">contrat</span>' : '') + '</span><b>' + eurE(x.ca) + '</b></div>';
+    }).join('') + '</div>';
+
+  var src = s.sources || {};
+  h += '<div class="mini" style="margin:4px 2px 12px">Sources : ' + (src.factures || 0) + ' factures (Henrri jusqu\'en octobre, Pennylane ensuite), ' +
+    'onglets CONTRATS et RECURRENTS, devis de l\'appli. Mois « facturés » : ' + ((src.moisComplets || []).length ? ech(nomMois(src.moisComplets[0])) + ' → ' + ech(nomMois(src.moisComplets[src.moisComplets.length - 1])) : 'aucun') +
+    ' ; les autres sont estimés (factures de contrat envoyées le 3 du mois suivant).</div>';
+  z.innerHTML = h + boutonsRetourStats();
+}
+function boutonsRetourStats(){ return '<button class="btn sec" style="margin-top:8px" onclick="retourTableau()">Retour au tableau</button>'; }
