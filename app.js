@@ -865,7 +865,7 @@ function peindreBlocSignature(){
     /* v108f — pour tous les devis, particulier comme professionnel. */
     (DERNIER.envoyerClient && ((DERNIER.mail || {}).a)
       ? '<div class="mini" style="margin-top:10px">Envoyé pour signature à distance à ' + ech(DERNIER.mail.a) + '.</div>'
-      : '<button class="btn sec" style="margin-top:10px" onclick="signatureDistanceFin(this)">Envoyer le lien de signature par e-mail</button>') +
+      : '<button class="btn sec" style="margin-top:10px" onclick="signatureDistanceFin(this)">Envoyer le devis par e-mail</button>') +
     '<div id="lienSigFin" class="mini" style="word-break:break-all"></div>';
 }
 
@@ -1591,7 +1591,8 @@ function mailClient(){
   if(!$('fEnvoi') || !$('fEnvoi').checked) return null;
   return { a: String(val('fMailA') || val('cEmail') || '').trim(),
            sujet: String(val('fMailObjet') || '').trim(),
-           texte: String(($('fMailTexte') || {}).value || '').trim() };
+           texte: String(($('fMailTexte') || {}).value || '').trim(),
+           ton: MAIL_TOUCHE ? 'perso' : MAIL_TON };
 }
 
 /* Le nom que le devis et le classeur donnent à la nature. */
@@ -4562,22 +4563,24 @@ function peindreFicheArchive(d){
    SMS, WhatsApp ou mail) vers une page où il lit le devis et signe au doigt.
    Le devis passe alors à SIGNE tout seul, sans que personne ne coche rien.
    Le même lien est déjà dans le mail du devis quand on l'envoie au client. */
+var DEVIS_VUS = {};
 function blocSignatureDistance(d, ou){
+  if(d && d.numero) DEVIS_VUS[d.numero] = d;
   var st = String(d.statut || '').toUpperCase();
   if(st === 'SIGNE' || st === 'REFUSE') return '';
   var n = ech(d.numero).replace(/'/g,'&#39;');
   return '<div class="card"><h2>Faire signer à distance</h2>' +
     '<div class="mini" style="margin-top:0">Le client reçoit le devis par e-mail avec le bouton « Signer le devis en ligne ». ' +
     'Il signe au doigt ou à la souris, le devis passe à « signé » tout seul et tu es prévenu.</div>' +
-    '<button class="btn" style="margin-top:10px" onclick="envoyerLienSignature(\'' + n + '\', this)">' +
-      'Envoyer le lien de signature par e-mail</button>' +
+    '<button class="btn" style="margin-top:10px" onclick="composerDevisMail(\'' + n + '\', this)">' +
+      'Envoyer le devis par e-mail</button>' +
     '<div id="lienSig" class="mini" style="word-break:break-all"></div></div>';
 }
 
 /* v108f — le bureau envoie lui-même le mail (texte de Simon, PDF joint,
    bouton de signature) : plus de page mail à ouvrir. S'il manque l'adresse,
    on la demande ici et on renvoie. Le SMS et la copie restent en secours. */
-function envoyerLienSignature(numero, btn, email, zid){
+function envoyerLienSignature(numero, btn, email, zid, mail){
   zid = zid || ((btn && btn.closest && btn.closest('#blocSignature')) ? 'lienSigFin' : 'lienSig');
   var moi = session();
   if(!moi) return;
@@ -4585,6 +4588,7 @@ function envoyerLienSignature(numero, btn, email, zid){
   occuper(btn, 'Envoi…');
   var env = {action:'lienSignature', numero:numero, envoyer:1, nom:moi.nom, code:moi.code, appareil:APPAREIL};
   if(email) env.email = email;
+  if(mail && mail.texte){ env.mail = mail; if(!email && mail.a) env.email = mail.a; }
   poster(env).then(function(r){
     libere(btn);
     var zone = $(zid);
@@ -4593,7 +4597,7 @@ function envoyerLienSignature(numero, btn, email, zid){
       if(zone) zone.innerHTML = '<label style="margin-top:10px">E-mail du client</label>' +
         '<input id="sigMail" type="email" inputmode="email" autocomplete="off" placeholder="client@exemple.fr">' +
         '<button class="btn sm" style="margin-top:8px" onclick="envoyerLienSignature(\'' +
-          ech(numero).replace(/'/g,'&#39;') + '\', this, (document.getElementById(\'sigMail\')||{}).value, \'' + zid + '\')">Envoyer</button>';
+          ech(numero).replace(/'/g,'&#39;') + '\', this, (document.getElementById(\'sigMail\')||{}).value, \'' + zid + '\', MAIL_DERNIER)">Envoyer</button>';
       var i = $('sigMail'); if(i) i.focus();
       return;
     }
@@ -4618,6 +4622,23 @@ function envoyerLienSignature(numero, btn, email, zid){
 function signatureDistanceFin(btn){
   var e = DERNIER;
   if(!e) return;
+  /* v108s — d'abord le texte : vous, tu ou personnalisé. */
+  var cli = (e.devis || {}).client || {};
+  ouvrirComposeur({
+    type: 'devis', titre: 'Envoyer le devis par e-mail',
+    a: String(((e.mail || {}).a) || cli.email || '').trim(),
+    sujet: ((e.mail || {}).sujet) || sujetDevisPour((e.devis || {}).nature),
+    ton: (e.mail || {}).ton || 'vous',
+    signe: !!((e.devis || {}).signature)
+  }, function(m){
+    if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, m.a, 'lienSigFin', m);
+    e.mail = { a: m.a, sujet: m.sujet, texte: m.texte, ton: m.ton };
+    signatureDistanceFinMail(btn, m.a);
+  });
+}
+function signatureDistanceFinAncien(btn){
+  var e = DERNIER;
+  if(!e) return;
   if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, '', 'lienSigFin');
   var a = String(((e.mail || {}).a) || ((e.devis || {}).client || {}).email || '').trim();
   if(!a){
@@ -4637,6 +4658,7 @@ function signatureDistanceFinMail(btn, a){
   e.envoyerClient = true;
   e.mail = e.mail && typeof e.mail === 'object' ? e.mail : {};
   e.mail.a = a;
+  if(e.devis && e.mail.texte) e.devis.mail = e.mail;
   DB.put(e).then(function(){
     var z = $('lienSigFin');
     if(z) z.innerHTML = '<div class="ok" style="text-align:left;margin-top:10px"><b>Le devis part à ' + ech(a) +
@@ -9881,8 +9903,10 @@ function dejaFaitesHtml(l){
         var t = x.contrat ? 'contrat' : x.type, c = ech(x.contrat || factCle(x)).replace(/'/g,'&#39;');
         return '<div class="row" style="justify-content:space-between;align-items:center;gap:8px;padding:4px 0">' +
           '<span style="flex:1">' + ech(x.contrat || x.client) + '</span><span class="mini">' +
-          (x.etat === 'DEJA FACTUREE' ? 'facturée ailleurs' : 'brouillon Pennylane') + '</span>' +
-          '<button class="btn sec sm" style="flex:0 0 auto" onclick="refaireFacture(\'' + t + '\',\'' + c + '\', this)">Refaire</button></div>';
+          (x.etat === 'DEJA FACTUREE' ? 'facturée ailleurs' : (/ENVOYEE/.test(x.etat || '') ? 'envoyée' : 'brouillon Pennylane')) + '</span>' +
+          (/BROUILLON/.test(x.etat || '') && x.idPennylane
+            ? '<button class="btn sm" style="flex:0 0 auto;width:auto" onclick="composerFactureMail(\'' + ech(x.idPennylane).replace(/'/g,'&#39;') + '\', this)">Envoyer par mail</button>' : '') +
+          (/ENVOYEE/.test(x.etat || '') ? '' : '<button class="btn sec sm" style="flex:0 0 auto" onclick="refaireFacture(\'' + t + '\',\'' + c + '\', this)">Refaire</button>') + '</div>';
       }).join('') + '</div>';
   }
   return h;
@@ -11112,5 +11136,127 @@ function relierSeriesDevis(numero, btn){
     RELIER_OUVERT = '';
     AD_MOT_T = 0; AD_MOT = plN(ids.length, 'créneau relié', 'créneaux reliés') + ' au devis ' + numero;
     rouvrirFiche();
+  });
+}
+
+
+/* ====================== v108s — CHOISIR SON TEXTE AVANT CHAQUE ENVOI ======================
+   « Quand je clique sur envoi par mail ça envoie direct sans me proposer
+   vouvoiement, tutoiement ou personnalisé : pour tous les endroits où j'envoie
+   par mail un devis ou une facture, que je puisse choisir. »
+   Une fenêtre unique : À, Objet, Vous / Tu / Personnalisé, le texte (modifiable,
+   le toucher passe en « personnalisé »), Envoyer. La signature et le bandeau
+   sont ajoutés par le bureau, comme toujours. */
+var MAIL_DERNIER = null, COMPO = null;
+function sujetDevisPour(nature){
+  var n = String(nature || '').toUpperCase();
+  var quoi = n === 'ENTRETIEN' ? 'entretien des locaux' : n === 'VITRERIE' ? 'nettoyage des vitrages'
+           : n === 'FACADE' ? 'nettoyage de façade' : n === 'REMISE' ? 'remise en état'
+           : n === 'CHANTIER' ? 'nettoyage de fin de chantier' : 'prestation de nettoyage';
+  return 'Devis ' + quoi + ' — BREIZH BRILLANCE';
+}
+function texteComposeur(type, ton, contrat){
+  var tu = ton === 'tu';
+  var bonjour = 'Bonjour,\n\n' + (tu ? 'J\u2019espère que tu vas bien !' : 'J\u2019espère que vous allez bien !') + '\n\n';
+  if(type === 'facture'){
+    return bonjour + (contrat ? 'Suite à nos passages ce mois-ci,' : 'Suite à notre prestation,') + '\n\n' +
+      (tu ? 'Je te transmets' : 'Je vous transmets') + ' ci-dessous la facture correspondant à ' +
+      (contrat ? 'nos prestations.' : 'cette dernière.') + '\n\nBelle journée,';
+  }
+  return bonjour + 'Suite à notre contact,\n\n' +
+    (tu ? 'Je te transmets ci-dessous le devis correspondant à ta demande.'
+        : 'Je vous transmets ci-dessous le devis correspondant à votre demande.') + '\n\nBelle journée,';
+}
+function ouvrirComposeur(o, quandEnvoyer){
+  COMPO = { o: o, cb: quandEnvoyer, ton: (o.ton === 'tu' || o.ton === 'perso') ? o.ton : 'vous' };
+  var b = $('compoBox');
+  if(!b){
+    b = document.createElement('div');
+    b.id = 'compoBox';
+    b.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:61;display:flex;align-items:flex-start;justify-content:center;padding:40px 12px 12px;overflow:auto';
+    b.onclick = function(ev){ if(ev.target === b) fermerComposeur(); };
+    document.body.appendChild(b);
+  }
+  var texte = o.texte || texteComposeur(o.type, COMPO.ton === 'perso' ? 'vous' : COMPO.ton, o.contrat);
+  b.innerHTML = '<div class="card" style="width:100%;max-width:460px;margin:0">' +
+    '<h2 style="margin-top:0">' + ech(o.titre || 'Envoyer par e-mail') + '</h2>' +
+    '<label for="compoA">À</label><input id="compoA" type="email" inputmode="email" autocomplete="off" placeholder="client@exemple.fr" value="' + ech(o.a || '') + '">' +
+    '<label for="compoSujet">Objet</label><input id="compoSujet" type="text" value="' + ech(o.sujet || '') + '">' +
+    '<label>Ton du message</label><div class="prOng" style="margin:4px 0 8px">' +
+      '<button type="button" id="compoVous" onclick="tonComposeur(\'vous\')">Vouvoiement</button>' +
+      '<button type="button" id="compoTu" onclick="tonComposeur(\'tu\')">Tutoiement</button>' +
+      '<button type="button" id="compoPerso" onclick="tonComposeur(\'perso\')">Personnalisé</button></div>' +
+    '<textarea id="compoTexte" rows="9" oninput="if(COMPO && COMPO.ton !== \'perso\'){COMPO.ton=\'perso\';marquerTonComposeur();}">' + ech(texte) + '</textarea>' +
+    '<div class="mini">' + (o.type === 'facture' ? 'La facture Pennylane est validée puis jointe en PDF.'
+      : (o.signe ? 'Le devis signé est joint en PDF.' : 'Le PDF est joint, et le bouton « Signer le devis en ligne » est ajouté sous ton message.')) +
+      ' Ta signature (' + ech(signatureCourte()) + ') et le bandeau sont ajoutés automatiquement : ne les écris pas.</div>' +
+    '<button class="btn" id="compoEnv" style="margin-top:12px" onclick="envoyerComposeur(this)">Envoyer</button>' +
+    '<button class="btn sec" style="margin-top:8px" onclick="fermerComposeur()">Annuler</button></div>';
+  b.classList.remove('hide');
+  marquerTonComposeur();
+  var a = $('compoA'); if(a && !a.value) a.focus();
+}
+function marquerTonComposeur(){
+  if(!COMPO) return;
+  ['Vous','Tu','Perso'].forEach(function(k){ var e = $('compo' + k); if(e) e.classList.toggle('on', COMPO.ton === k.toLowerCase()); });
+}
+function tonComposeur(t){
+  if(!COMPO) return;
+  COMPO.ton = t;
+  if(t !== 'perso'){ var z = $('compoTexte'); if(z) z.value = texteComposeur(COMPO.o.type, t, COMPO.o.contrat); }
+  else { var z2 = $('compoTexte'); if(z2){ z2.focus(); } }
+  marquerTonComposeur();
+}
+function fermerComposeur(){ var b = $('compoBox'); if(b) b.classList.add('hide'); }
+function envoyerComposeur(btn){
+  if(!COMPO) return;
+  var m = { a: String(val('compoA') || '').trim(), sujet: String(val('compoSujet') || '').trim(),
+            texte: String(($('compoTexte') || {}).value || '').trim(), ton: COMPO.ton };
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.a)) return erreurComposeur('Adresse e-mail invalide.');
+  if(!m.texte) return erreurComposeur('Le message est vide.');
+  MAIL_DERNIER = m;
+  var cb = COMPO.cb;
+  fermerComposeur();
+  if(cb) cb(m, btn);
+}
+function erreurComposeur(t){
+  var e = $('compoErr');
+  if(!e){ e = document.createElement('div'); e.id = 'compoErr'; e.className = 'err'; e.style.marginTop = '8px'; var x = $('compoEnv'); if(x) x.parentNode.insertBefore(e, x); }
+  e.textContent = t;
+}
+/* Fiche d'un devis (gérant ou commercial) : « Envoyer le devis par e-mail ». */
+function composerDevisMail(numero, btn){
+  var t = TABLEAU || {};
+  var d = DEVIS_VUS[numero] || (t.devis || []).filter(function(x){ return x.numero === numero; })[0] ||
+          (ARCH || []).filter(function(x){ return x.numero === numero; })[0] || {};
+  var cli = d.client && typeof d.client === 'object' ? d.client : {};
+  ouvrirComposeur({
+    type: 'devis', titre: 'Envoyer le devis ' + numero,
+    a: String(cli.email || d.email || '').trim(),
+    sujet: sujetDevisPour(d.nature), ton: 'vous', signe: String(d.statut || '').toUpperCase() === 'SIGNE'
+  }, function(m){ envoyerLienSignature(numero, btn, m.a, null, m); });
+}
+/* Onglet Factures : un brouillon Pennylane part au client avec le texte choisi. */
+function composerFactureMail(idP, btn){
+  var x = null;
+  ((FACT && FACT.contrats) || []).concat((FACT && FACT.interventions) || []).forEach(function(y){ if(y.idPennylane === idP) x = y; });
+  x = x || {};
+  ouvrirComposeur({
+    type: 'facture', contrat: !!(x.contrat && FACT && (FACT.contrats || []).indexOf(x) >= 0),
+    titre: 'Envoyer la facture' + (x.contrat || x.client ? ' — ' + (x.contrat || x.client) : ''),
+    a: String(x.email || '').trim(), sujet: 'Votre facture — BREIZH BRILLANCE', ton: 'vous'
+  }, function(m){
+    var moi = session();
+    if(!moi || !navigator.onLine) return erreur('Envoyer une facture a besoin du réseau.');
+    if(btn) occuper(btn, 'Envoi…');
+    poster({action:'envoyerFacture', nom:moi.nom, code:moi.code, appareil:APPAREIL, idPennylane:idP,
+            a:m.a, sujet:m.sujet, texte:m.texte, ton:m.ton}, 90000).then(function(r){
+      if(btn) libere(btn);
+      if(!r || !r.ok) return erreur((r && r.erreur) ? 'Facture : ' + r.erreur : attenteLisible());
+      erreur('');
+      x.etat = 'ENVOYEE';
+      FACT_NOTE = 'Facture ' + (r.numero ? 'n° ' + r.numero + ' ' : '') + 'envoyée à ' + r.a + '.';
+      peindreTableau();
+    }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
   });
 }

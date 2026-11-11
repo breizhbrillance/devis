@@ -1040,7 +1040,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis'];
+                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1099,7 +1099,7 @@ function doPost(e) {
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
          /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
-         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis']
+         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire', 'essaiNotif']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1171,6 +1171,7 @@ function doPost(e) {
       lock.waitLock(30000); return reponse_(creerChantier_(d, com));
     }
     if (d.action === 'lierDevis') { lock.waitLock(30000); return reponse_(lierDevis_(d, com)); }
+    if (d.action === 'envoyerFacture') { lock.waitLock(30000); return reponse_(envoyerFactureMain_(d, com)); }
     if (d.action === 'lotChantiers') return reponse_(lotChantiers_(d, com));
     if (d.action === 'recurrentNeuf' || d.action === 'recurrentModif' || d.action === 'recurrentStop') {
       /* Le verrou : deux créations en même temps prendraient le même numéro
@@ -1558,6 +1559,7 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
         htmlBody: mpR.texte ? corpsMailPerso_(devis, mpR.texte, reg) : corpsMail_(devis, reg, com, true),
         attachments: pj
       }, reg);
+      noterTonDevis_(numero, mpR.ton);
       /* v108o — « je n'ai rien reçu » : le mail était parti, mais rien ne le
          disait au journal. Désormais si. */
       tracerServeur_(devis.commercial || com.nom, 'DEVIS ENVOYE AU CLIENT', 'révisé — ' + mpR.a + (pj.length ? '' : ' (sans PDF)'), numero, d.appareil || '');
@@ -1849,6 +1851,7 @@ function enregistrer_(d, com) {
         htmlBody: mp.texte ? corpsMailPerso_(devis, mp.texte, reg) : corpsMail_(devis, reg, com),
         attachments: pj
       }, reg);
+      noterTonDevis_(devis.numero, mp.ton);
       tracerServeur_(devis.commercial || com.nom, 'DEVIS ENVOYE AU CLIENT',
                      mp.a + (mp.texte ? ' — message personnalisé' : '') + (devis.signature ? '' : ' — lien de signature'),
                      devis.numero, d.appareil || '');
@@ -7048,6 +7051,15 @@ function envoiAutoFacture_(r, numDevis, ctx) {
     tracerServeur_('SYSTEME', 'FACTURE LAISSEE EN BROUILLON', client + ' · ' + motif, numDevis || '', '');
     return { envoye: false, motif: motif };
   }
+  return envoyerFactureFinale_(r, email, client, numDevis, ctx, devis, null, reg);
+}
+
+/* Finalise le brouillon Pennylane, récupère le PDF et l'envoie au client.
+   mail = { sujet, texte, ton } quand le gérant a choisi son texte (envoi à la
+   main depuis l'onglet Factures) ; sinon le texte de Simon, au tu si le devis
+   a été envoyé au tu. */
+function envoyerFactureFinale_(r, email, client, numDevis, ctx, devis, mail, reg) {
+  reg = reg || lireReglages_();
   var id = encodeURIComponent(String(r.idPennylane));
   var fin = pennylaneAppel_('put', '/customer_invoices/' + id + '/finalize');
   if (!fin.ok) {
@@ -7076,22 +7088,43 @@ function envoiAutoFacture_(r, numDevis, ctx) {
     tracerServeur_('SYSTEME', 'FACTURE FINALISEE SANS ENVOI', client + ' · ' + numero + ' · PDF introuvable', numDevis || '', '');
     return { envoye: false, finalisee: true, motif: 'PDF introuvable' };
   }
-  var objet = ctx && ctx.mois ? 'votre contrat d\'entretien, ' + moisLisible_(ctx.mois)
-    : 'la prestation réalisée' + (devis && devis.OBJET ? ' (' + String(devis.OBJET).slice(0, 80) + ')' : '');
-  var delai = Number(reg.delai_paiement_jours) || 30;
-  var texte = 'Bonjour,\n\nVeuillez trouver ci-joint la facture n° ' + (numero || '') +
-    (ttc ? ' d\'un montant de ' + eur_(ttc) + ' TTC' : '') + ', correspondant à ' + objet + '.\n\n' +
-    'Elle est payable sous ' + delai + ' jours.\n\nMerci pour votre confiance,';
+  var contrat = !!(ctx && (ctx.mois || ctx.contrat));
+  var tu = mail && mail.ton ? /^tu$/i.test(mail.ton) : String(devis && devis.TON_MAIL || '').toUpperCase() === 'TU';
+  var texte = (mail && String(mail.texte || '').trim()) || texteFacture_(contrat, tu, reg);
+  var sujet = (mail && String(mail.sujet || '').trim()) ||
+    ('Votre facture ' + (numero ? 'n° ' + numero + ' ' : '') + '— ' + String(reg.societe_nom || 'BREIZH BRILLANCE'));
   envoyerMail_({
     to: email,
-    subject: 'Votre facture ' + (numero ? 'n° ' + numero + ' ' : '') + '— ' + String(reg.societe_nom || 'BREIZH BRILLANCE'),
+    subject: sujet,
     name: String(reg.societe_nom || 'BREIZH BRILLANCE'),
     htmlBody: corpsMailPerso_(null, texte, reg),
     attachments: pieces
   }, reg);
-  majEtatFacture_(r.idPennylane, 'ENVOYEE', numero, 'envoyée à ' + email + ' le ' + Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm'));
-  tracerServeur_('SYSTEME', 'FACTURE ENVOYEE', client + ' · ' + numero + ' · ' + (ttc ? eur_(ttc) + ' TTC · ' : '') + email, numDevis || '', '');
+  majEtatFacture_(r.idPennylane, 'ENVOYEE', numero, 'envoyée à ' + email + ' le ' + Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm') +
+    (mail && mail.texte ? ' (texte choisi)' : ''));
+  tracerServeur_(mail ? 'GERANT' : 'SYSTEME', 'FACTURE ENVOYEE', client + ' · ' + numero + ' · ' + (ttc ? eur_(ttc) + ' TTC · ' : '') + email, numDevis || '', '');
   return { envoye: true, numero: numero, a: email };
+}
+
+/* v108s — l'onglet Factures : « Envoyer par mail » sur un brouillon Pennylane,
+   avec le texte choisi (vous / tu / personnalisé). */
+function envoyerFactureMain_(d, com) {
+  var idP = String(d.idPennylane || '').trim();
+  if (!idP) return { ok: false, erreur: 'facture Pennylane inconnue' };
+  var a = String(d.a || '').trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) return { ok: false, sansEmail: true, erreur: 'adresse e-mail du client manquante ou invalide' };
+  var ligne = null;
+  objetsDe_(SH.FACTURES).forEach(function (o) { if (String(o.ID_PENNYLANE || '').trim() === idP) ligne = o; });
+  if (!ligne) return { ok: false, erreur: 'cette facture n\'est pas dans l\'onglet FACTURES' };
+  if (/ENVOYEE/i.test(String(ligne.ETAT || ''))) return { ok: false, erreur: 'cette facture est déjà envoyée' };
+  var numDevis = String(ligne.NUMERO_DEVIS || '').trim();
+  var devis = numDevis ? devisParNumero_(numDevis) : null;
+  var contrat = /CONTRAT/i.test(String(ligne.TYPE || ''));
+  var r = { idPennylane: idP, ttc: num_(ligne.TOTAL_TTC) };
+  var out = envoyerFactureFinale_(r, a, String(ligne.CLIENT || ''), numDevis, contrat ? { contrat: String(ligne.CLIENT || ''), mois: String(ligne.PERIODE || '') } : null,
+                                  devis, { sujet: d.sujet, texte: d.texte, ton: d.ton });
+  if (out.envoye && devis) noterTonDevis_(String(devis.NUMERO).trim(), /^tu$/i.test(String(d.ton || '')) ? 'TU' : (/^vous$/i.test(String(d.ton || '')) ? 'VOUS' : 'PERSO'));
+  return { ok: !!out.envoye, envoye: !!out.envoye, numero: out.numero || '', a: a, erreur: out.envoye ? '' : (out.motif || 'envoi impossible'), finalisee: !!out.finalisee };
 }
 
 function majEtatFacture_(idPennylane, etat, numero, note) {
@@ -7560,7 +7593,7 @@ function facturationAppli_(periode) {
       qui: String(chs[0].PRESTATAIRE || ''),
       pointe: chs.every(function (c) { return String(c.STATUT || '').toUpperCase() === 'FAIT'; }),
       jamaisPlace: false, contrat: '', signe: String(dv.STATUT || '').toUpperCase() === 'SIGNE',
-      facturee: !!deja, etat: deja ? String(deja.ETAT || '') : '',
+      email: String(dv.EMAIL || ''), facturee: !!deja, etat: deja ? String(deja.ETAT || '') : '',
       idPennylane: deja ? String(deja.ID_PENNYLANE || '') : ''
     });
   });
@@ -7982,14 +8015,19 @@ function lienSignatureAppli_(d, com) {
     var copie = [];
     if (com && com.email) copie.push(com.email);
     if (reg.email_copie) copie.push(String(reg.email_copie));
+    /* v108s — « quand je clique sur envoi par mail ça part direct sans me
+       proposer vouvoiement, tutoiement ou personnalisé » : l'appli envoie
+       maintenant le texte choisi (mail.texte), le bouton de signature suit. */
+    var mpS = mailPerso_({ mail: d.mail }, { email: a });
     envoyerMail_({
       to: a, cc: copie.join(','),
-      subject: 'Devis ' + vrai + ' — ' + (reg.societe_nom || 'BREIZH BRILLANCE'),
+      subject: mpS.sujet || ('Devis ' + vrai + ' — ' + (reg.societe_nom || 'BREIZH BRILLANCE')),
       name: String(reg.societe_nom || 'Devis'),
       replyTo: (com && com.email) || String(reg.societe_email || ''),
-      htmlBody: corpsMail_({ numero: vrai }, reg, com),
+      htmlBody: mpS.texte ? corpsMailPerso_({ numero: vrai }, mpS.texte, reg) : corpsMail_({ numero: vrai }, reg, com),
       attachments: pj
     }, reg);
+    noterTonDevis_(vrai, mpS.ton);
     if (d.email && String(d.email).trim() !== String(cible.EMAIL || '').trim()) {
       try { majDevis_(vrai, { EMAIL: a }); } catch (eE) {}
     }
@@ -8586,7 +8624,26 @@ function mailPerso_(d, c) {
   var m = (d && d.mail && typeof d.mail === 'object') ? d.mail : {};
   var a = String(m.a || (c && c.email) || '').trim();
   if (a && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) a = String((c && c.email) || '').trim();
-  return { a: a, sujet: String(m.sujet || '').trim().slice(0, 200), texte: String(m.texte || '').trim().slice(0, 6000) };
+  return { a: a, sujet: String(m.sujet || '').trim().slice(0, 200), texte: String(m.texte || '').trim().slice(0, 6000),
+           ton: /^tu$/i.test(String(m.ton || '')) ? 'TU' : (/^vous$/i.test(String(m.ton || '')) ? 'VOUS' : (m.texte ? 'PERSO' : '')) };
+}
+/* v108s — le ton choisi au premier envoi du devis (TU / VOUS / PERSO) reste
+   sur le devis : les factures automatiques le reprennent. */
+function noterTonDevis_(numero, ton) {
+  if (!numero || !ton) return;
+  try { colonneAssuree_(SH.DEVIS, 'TON_MAIL'); majDevis_(numero, { TON_MAIL: ton }); } catch (e) {}
+}
+/* Les textes de facture donnés par Simon (7 novembre), au vous ou au tu ;
+   les réglages mail_facture_contrat / mail_facture_ponctuel (au vous) les
+   remplacent s'ils sont remplis. Signature et bandeau sont ajoutés ensuite. */
+function texteFacture_(contrat, tu, reg) {
+  reg = reg || lireReglages_();
+  var regle = String((contrat ? reg.mail_facture_contrat : reg.mail_facture_ponctuel) || '').trim();
+  if (regle && !tu) return regle;
+  return 'Bonjour,\n\n' + (tu ? 'J\u2019espère que tu vas bien !' : 'J\u2019espère que vous allez bien !') + '\n\n' +
+    (contrat ? 'Suite à nos passages ce mois-ci,' : 'Suite à notre prestation,') + '\n\n' +
+    (tu ? 'Je te transmets' : 'Je vous transmets') + ' ci-dessous la facture correspondant à ' +
+    (contrat ? 'nos prestations.' : 'cette dernière.') + '\n\nBelle journée,';
 }
 /* Son texte tel quel (paragraphes et retours à la ligne gardés, rien
    d'interprété comme du HTML), puis le bouton de signature en ligne si le
