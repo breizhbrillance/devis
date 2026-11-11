@@ -11964,9 +11964,20 @@ function statsSociete_(d) {
   /* ---- les factures, rangées contrat / ponctuel ---- */
   var cles = [];
   contrats.forEach(function (c) { cles.push(cleClient_(c.nom)); if (c.client) cles.push(cleClient_(c.client)); });
+  /* Réglage `stats_alias_clients` : « NOM FACTURÉ=CONTRAT;… » — pour un
+     contrat facturé sous d'autres noms (QUAI OUEST → SCI LE TROMBONE…). Ne
+     touche pas CLIENT_FACTURE, qui sert à la facturation Pennylane. */
+  var alias = {};
+  String(lireReglages_().stats_alias_clients || '').split(/[;\n]+/).forEach(function (p) {
+    var i = p.indexOf('=');
+    if (i > 0) alias[cleClient_(p.slice(0, i))] = normNom_(p.slice(i + 1));
+  });
   var contratDe = function (client) {
     var k = cleClient_(client);
     if (k.trim().length < 3) return null;
+    if (alias[k]) {
+      for (var a = 0; a < contrats.length; a++) if (normNom_(contrats[a].nom) === alias[k]) return contrats[a];
+    }
     for (var i = 0; i < contrats.length; i++) {
       var cs = [cleClient_(contrats[i].nom), cleClient_(contrats[i].client)];
       for (var j = 0; j < cs.length; j++) {
