@@ -1040,7 +1040,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture'];
+                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1099,7 +1099,7 @@ function doPost(e) {
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
          /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
-         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture']
+         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire', 'essaiNotif']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1172,6 +1172,7 @@ function doPost(e) {
     }
     if (d.action === 'lierDevis') { lock.waitLock(30000); return reponse_(lierDevis_(d, com)); }
     if (d.action === 'envoyerFacture') { lock.waitLock(30000); return reponse_(envoyerFactureMain_(d, com)); }
+    if (d.action === 'contratsMaj') { lock.waitLock(30000); return reponse_(contratsMaj_(d, com)); }
     if (d.action === 'lotChantiers') return reponse_(lotChantiers_(d, com));
     if (d.action === 'recurrentNeuf' || d.action === 'recurrentModif' || d.action === 'recurrentStop') {
       /* Le verrou : deux créations en même temps prendraient le même numéro
@@ -7275,6 +7276,15 @@ function lireContrats_() {
   }
   return out;
 }
+/* v108u — le montant d'une ligne de contrat pour un mois donné. Colonne
+   MONTANTS_MOIS : « 2026-11=150;2027-01=0 » (mois partiel, mois sans
+   passage…). Sinon MENSUEL_HT. Un 0 veut dire : rien à facturer ce mois-là. */
+function montantLigneMois_(l, mois) {
+  var txt = String(l && l.MONTANTS_MOIS || '');
+  var m = txt.match(new RegExp('(?:^|[;\\s,])' + String(mois).replace('-', '\\-') + '\\s*=\\s*([0-9]+(?:[.,][0-9]+)?)'));
+  if (m) return Number(m[1].replace(',', '.'));
+  return Number(l && l.MENSUEL_HT) || 0;
+}
 
 /** Ce que la note d'une série dit du contrat : nom, prestation, montant. */
 function contratDeNote_(note, client) {
@@ -7377,6 +7387,8 @@ function facturesContrats_(periode, com, seul) {
     var nom = String(o.CONTRAT).trim();
     if (seul && sansAccent_(nom) !== sansAccent_(seul)) return;
     if (!(Number(o.MENSUEL_HT) > 0)) { sautes.push({ client: nom, motif: 'pas de montant' }); return; }
+    o._montant = montantLigneMois_(o, mois);
+    if (!(o._montant > 0)) return;                       // v108u : rien ce mois-là (début plus tard, mois sauté)
     if (!parContrat[nom]) { parContrat[nom] = []; ordre.push(nom); }
     parContrat[nom].push(o);
   });
@@ -7387,7 +7399,7 @@ function facturesContrats_(periode, com, seul) {
     var ls = parContrat[nom];
     var t = function (k) { for (var i = 0; i < ls.length; i++) if (String(ls[i][k] || '').trim()) return ls[i][k]; return ''; };
     var attendu = 0;
-    ls.forEach(function (l) { attendu += Number(l.MENSUEL_HT) || 0; });
+    ls.forEach(function (l) { attendu += l._montant; });
     /* v108g — le détail de ses factures Henrri, quand un modèle a ce montant. */
     var modC = null;
     try { modC = modelePour_(String(t('CLIENT_FACTURE') || nom), Math.round(attendu * 100) / 100) || modelePour_(nom, Math.round(attendu * 100) / 100); } catch (eMc) { modC = null; }
@@ -7408,7 +7420,7 @@ function facturesContrats_(periode, com, seul) {
         lignes: lignesC || ls.map(function (l) {
           var part = estParticulier_(t('CLIENT_FACTURE') || nom, t('PARTICULIER'));
           return { libelle: String(l.LIGNE || 'Entretien des locaux') + ' — ' + moisLisible_(mois),
-                   prix: Number(l.MENSUEL_HT), tva: part ? 10 : (String(l.TVA) === '' ? 20 : Number(l.TVA)), qte: 1,
+                   prix: l._montant, tva: part ? 10 : (String(l.TVA) === '' ? 20 : Number(l.TVA)), qte: 1,
                    detail: phraseLissage_(l.RYTHME) };
         })
       });
@@ -7573,10 +7585,10 @@ function facturationAppli_(periode) {
   var contrats = ordre.map(function (nom) {
     var ls = parC[nom];
     var t = function (k) { for (var i = 0; i < ls.length; i++) if (String(ls[i][k] || '').trim()) return String(ls[i][k]); return ''; };
-    var ht = 0; ls.forEach(function (l) { ht += Number(l.MENSUEL_HT) || 0; });
+    var ht = 0; ls.forEach(function (l) { ht += montantLigneMois_(l, mois); });
     var manque = [];
     if (!t('ID_PENNYLANE') && (!t('ADRESSE') || !t('CP') || !t('VILLE'))) manque.push('adresse de facturation');
-    if (!(ht > 0)) manque.push('montant');
+    if (!(ht > 0) && !ls.some(function (l) { return Number(l.MENSUEL_HT) > 0; })) manque.push('montant');
     var deja = (faites['CONTRAT ' + nom] || {})[mois];
     var htR = Math.round(ht * 100) / 100;
     var modC = modelePour_(t('CLIENT_FACTURE') || nom, htR, modelesC) || modelePour_(nom, htR, modelesC);
@@ -7585,7 +7597,7 @@ function facturationAppli_(periode) {
       contrat: nom, client: t('CLIENT_FACTURE') || nom, ville: t('VILLE'), email: t('EMAIL'),
       ht: Math.round(ht * 100) / 100,
       lignes: ls.map(function (l) {
-        return { ligne: String(l.LIGNE || 'Entretien des locaux'), ht: Number(l.MENSUEL_HT) || 0,
+        return { ligne: String(l.LIGNE || 'Entretien des locaux'), ht: montantLigneMois_(l, mois),
                  rythme: String(l.RYTHME || '') };
       }),
       manque: manque, facturee: !!deja,
@@ -12021,11 +12033,12 @@ function contratsVivants_() {
     var c = par[nom];
     if (!c) {
       c = par[nom] = { nom: nom, client: '', mensuel: 0, lignes: [], ids: {}, part: false, tva: 20,
-                       siren: '', email: '', adresse: '', cp: '', ville: '' };
+                       siren: '', email: '', adresse: '', cp: '', ville: '', brut: [] };
       ordre.push(nom);
     }
     c.mensuel += num_(o.MENSUEL_HT);
     c.lignes.push(String(o.LIGNE || '').trim());
+    c.brut.push({ MENSUEL_HT: num_(o.MENSUEL_HT), MONTANTS_MOIS: String(o.MONTANTS_MOIS || '') });
     if (!c.client && String(o.CLIENT_FACTURE || '').trim()) c.client = String(o.CLIENT_FACTURE).trim();
     if (/^O/i.test(String(o.PARTICULIER || '').trim())) c.part = true;
     if (num_(o.TVA)) c.tva = num_(o.TVA);
@@ -12077,7 +12090,8 @@ function contratsVivants_() {
       passagesMois: Math.round(pm * 10) / 10, heuresMois: Math.round(heures * 10) / 10,
       binome: maxQui > 1, nature: vitre ? 'VITRERIE' : 'ENTRETIEN',
       parHeure: heures > 0 ? arr2_(mensuel / heures) : 0,
-      parPassage: pm > 0 ? arr2_(mensuel / pm) : 0
+      parPassage: pm > 0 ? arr2_(mensuel / pm) : 0,
+      brut: c.brut
     };
   });
 }
@@ -12088,6 +12102,11 @@ function moisDebutContrat_(debut) {
   if (!debut) return '';
   var m = debut.slice(0, 7);
   return Number(debut.slice(8, 10)) > 15 ? moisPlus_(m, 1) : m;
+}
+/* Ce que rapporte un contrat un mois donné (mois partiel compris). */
+function montantContratMois_(c, m) {
+  if (!c.brut || !c.brut.length) return c.mensuel;
+  return arr2_(c.brut.reduce(function (s, l) { return s + montantLigneMois_(l, m); }, 0));
 }
 function contratCourtEn_(c, m) {
   var d = moisDebutContrat_(c.debut);
@@ -12186,7 +12205,7 @@ function statsSociete_(d) {
   for (var m = debutSerie; m <= moisAuj; m = moisPlus_(m, 1)) mois.push(m);
   var courbe = mois.map(function (m) {
     var rec = 0, n = 0;
-    contrats.forEach(function (c) { if (contratCourtEn_(c, m)) { rec += c.mensuel; n++; } });
+    contrats.forEach(function (c) { if (contratCourtEn_(c, m)) { var mm = montantContratMois_(c, m); if (mm > 0) { rec += mm; n++; } } });
     rec = arr2_(rec);
     var f = fact[m] || { total: 0, contrats: 0, ponctuels: 0, n: 0 };
     var complet = !!F.complets[m];
@@ -12283,7 +12302,7 @@ function statsSociete_(d) {
   var parCli = {};
   contrats.forEach(function (c) {
     var tot = 0;
-    annee.forEach(function (x) { if (contratCourtEn_(c, x.mois) && !F.complets[x.mois]) tot += c.mensuel; });
+    annee.forEach(function (x) { if (contratCourtEn_(c, x.mois) && !F.complets[x.mois]) tot += montantContratMois_(c, x.mois); });
     if (tot > 0) parCli[cleClient_(c.nom)] = { nom: c.nom, ca: arr2_(tot), contrat: true };
   });
   F.liste.forEach(function (f) {
@@ -12365,6 +12384,41 @@ function lierDevis_(d, com) {
                  (num || '—') + ' · séries ' + (d.series || []).join(', ') + ' · interventions ' + (d.chantiers || []).join(', ') +
                  (out.refus.length ? ' · refusé : ' + out.refus.join(', ') : ''), num, d.appareil || '');
   return out;
+}
+
+/* v108u — mettre à jour CONTRATS depuis l'appli (gérant) : une ligne par
+   CONTRAT + LIGNE, créée si elle n'existe pas. Champs : mensuel, series, tva,
+   client (CLIENT_FACTURE), email, particulier, actif, montantsMois, rythme. */
+function contratsMaj_(d, com) {
+  var lignes = d.lignes || [];
+  if (!lignes.length) return { ok: false, erreur: 'rien à mettre à jour' };
+  colonneAssuree_(SH_CONTRATS_, 'MONTANTS_MOIS');
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH_CONTRATS_);
+  var v = sh.getDataRange().getValues(), en = v[0].map(function (x) { return String(x).trim(); });
+  var col = function (h) { return en.indexOf(h); };
+  var cle = function (a, b) { return normNom_(a) + '|' + normNom_(b); };
+  var rang = {};
+  for (var i = 1; i < v.length; i++) if (String(v[i][col('CONTRAT')] || '').trim()) rang[cle(v[i][col('CONTRAT')], v[i][col('LIGNE')])] = i + 1;
+  var map = { mensuel: 'MENSUEL_HT', series: 'SERIES', tva: 'TVA', client: 'CLIENT_FACTURE', email: 'EMAIL', particulier: 'PARTICULIER',
+              actif: 'ACTIF', montantsMois: 'MONTANTS_MOIS', rythme: 'RYTHME', note: 'NOTE', siren: 'SIREN', adresse: 'ADRESSE', cp: 'CP', ville: 'VILLE' };
+  var crees = 0, modifies = 0, faits = [];
+  lignes.forEach(function (l) {
+    var c = String(l.contrat || '').trim(), li = String(l.ligne || 'Entretien des locaux').trim();
+    if (!c) return;
+    var r = rang[cle(c, li)];
+    if (!r) {
+      var neuve = en.map(function (h) { return h === 'CONTRAT' ? c : h === 'LIGNE' ? li : h === 'ACTIF' ? 'OUI' : h === 'TVA' ? 20 : h === 'PARTICULIER' ? 'NON' : ''; });
+      sh.appendRow(neuve); r = sh.getLastRow(); rang[cle(c, li)] = r; crees++;
+    } else modifies++;
+    Object.keys(map).forEach(function (k) {
+      if (l[k] === undefined) return;
+      var ci = col(map[k]);
+      if (ci >= 0) sh.getRange(r, ci + 1).setValue(l[k]);
+    });
+    faits.push(c + ' / ' + li);
+  });
+  tracerServeur_(com ? com.nom : '', 'CONTRATS MIS A JOUR', crees + ' créée(s), ' + modifies + ' modifiée(s) : ' + faits.join(' ; ').slice(0, 400), '', d.appareil || '');
+  return { ok: true, crees: crees, modifies: modifies };
 }
 
 /* Menu 34 — « rajoute en tant que devis signés les contrats récurrents déjà
