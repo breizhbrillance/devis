@@ -745,6 +745,14 @@
     </div>
     <button class="lien" id="bHist" onclick="ouvrirHistorique()">Mes devis</button>
     <!-- v108k — « un bouton de déconnexion tout en haut de chaque onglet ». -->
+    <!-- v108o — « l'onglet notifications à côté de Déconnexion, juste avec la
+         cloche » : prestataires, commerciaux et admins. Un point rouge quand
+         ce téléphone ne reçoit pas les notifications. -->
+    <button class="lien hide" id="bNotif" onclick="ouvrirCloche()" aria-label="Notifications"
+            style="margin-left:6px;position:relative;padding:4px 6px">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      <span id="bNotifPoint" class="hide" style="position:absolute;top:2px;right:2px;width:9px;height:9px;border-radius:50%;background:#ff3b30"></span>
+    </button>
     <button class="lien hide" id="bDeco" onclick="deconnexion()" aria-label="Se déconnecter"
             style="margin-left:6px">Déconnexion</button>
   </div>
@@ -1459,7 +1467,6 @@
          ne concernent que l'onglet des chantiers. -->
     <div class="row hide" id="adActions" style="margin-top:10px;gap:8px">
       <button class="btn sm" style="flex:1" onclick="nouveauChantier()">+ Intervention</button>
-      <button class="btn sec sm" style="flex:1" onclick="listeConges()">Congés</button>
       <button class="btn sec sm" style="flex:1" id="bAdSel" onclick="basculerSelection()">Sélectionner</button>
       <button class="btn sec sm" style="flex:1" id="bAdSem"
               onclick="basculerSemaine('admin')">Voir la semaine</button>
@@ -1665,11 +1672,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=108n"></script>
-<script src="jspdf.umd.min.js?v=108n"></script>
-<script src="police.js?v=108n"></script>
-<script src="logo.js?v=108n"></script>
-<script src="pdf.js?v=108n"></script>
-<script src="app.js?v=108n"></script>
+<script src="config.js?v=108o"></script>
+<script src="jspdf.umd.min.js?v=108o"></script>
+<script src="police.js?v=108o"></script>
+<script src="logo.js?v=108o"></script>
+<script src="pdf.js?v=108o"></script>
+<script src="app.js?v=108o"></script>
 </body>
 </html>

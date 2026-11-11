@@ -1548,6 +1548,9 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
         htmlBody: mpR.texte ? corpsMailPerso_(devis, mpR.texte, reg) : corpsMail_(devis, reg, com, true),
         attachments: pj
       }, reg);
+      /* v108o — « je n'ai rien reçu » : le mail était parti, mais rien ne le
+         disait au journal. Désormais si. */
+      tracerServeur_(devis.commercial || com.nom, 'DEVIS ENVOYE AU CLIENT', 'révisé — ' + mpR.a + (pj.length ? '' : ' (sans PDF)'), numero, d.appareil || '');
     } else if (copie.length) {
       envoyerMail_({
         to: copie.join(','),
@@ -6930,6 +6933,161 @@ function preparerFacturePennylane_(d, com) {
   });
 }
 
+/* ====================== v108o — LES ÉLÉMENTS DE PAIE PARTENT TOUT SEULS ======================
+   Simon, 11 novembre 2026 : « pour la paie oui » — chaque début de mois, les
+   éléments variables du mois écoulé (jours d'absence des salariés, commission
+   brute des commerciaux, pas le détail des heures) partent par mail au
+   cabinet comptable, depuis contact@. Le 1er à partir de 9 h ; les 2 et 3
+   rattrapent un envoi raté. Destinataire : réglage paie_email (Lexia) ; tant
+   qu'il est vide, le mail va à contact@ pour être transféré. Réglage
+   paie_envoi_auto = NON pour couper. */
+function envoyerPaieAuto_(maintenant) {
+  var now = maintenant || new Date();
+  var j = now.getDate();
+  if (j > 3 || (j === 1 && now.getHours() < 9)) return { envoye: false };
+  var reg = lireReglages_();
+  if (/^(non|no|0|off)$/i.test(String(reg.paie_envoi_auto || '').trim())) return { envoye: false, motif: 'coupé' };
+  var prec = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+  var mois = Utilities.formatDate(prec, 'Europe/Paris', 'yyyy-MM');
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('PAIE_ENVOYEE_' + mois)) return { envoye: false, motif: 'déjà fait' };
+  var p = elementsPaie_({ mois: mois });
+  var maison = String(reg.email_expediteur || 'contact@breizhbrillance.fr').trim();
+  var dest = String(reg.paie_email || '').trim();
+  var verifie = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(dest);
+  var lisible = function (iso) { var x = String(iso || '').split('-'); return x.length === 3 ? x[2] + '/' + x[1] : iso; };
+  var per = function (q) { return q.du === q.au ? 'le ' + lisible(q.du) : 'du ' + lisible(q.du) + ' au ' + lisible(q.au); };
+  var t = 'Bonjour,\n\nVoici les éléments variables de paie de BREIZH BRILLANCE pour ' + moisLisible_(mois) + '.\n\n' +
+    'Salariés — jours d\'absence (jours ouvrables) :\n';
+  (p.salaries || []).forEach(function (x) {
+    t += '- ' + x.nom + ' : ' + x.jours + ' jour' + (x.jours > 1 ? 's' : '') +
+      ((x.periodes || []).length ? ' (' + x.periodes.map(per).join(', ') + ')' : '') + '\n';
+  });
+  if ((p.fermetures || []).length) t += '- Fermeture de l\'entreprise : ' + p.fermetures.map(per).join(', ') + ' (comptée pour chacun)\n';
+  t += '\nCommerciaux — commission brute du mois :\n';
+  t += (p.commerciaux || []).length
+    ? p.commerciaux.map(function (c) { return '- ' + c.nom + ' : ' + eur_(Number(c.commission) || 0); }).join('\n')
+    : '- aucune commission';
+  t += '\n\nBonne journée,';
+  envoyerMail_({
+    to: verifie ? dest : maison,
+    bcc: verifie ? maison : '',
+    subject: (verifie ? '' : '[À transmettre au comptable] ') + 'Éléments de paie — ' + moisLisible_(mois) + ' — BREIZH BRILLANCE',
+    name: String(reg.societe_nom || 'BREIZH BRILLANCE'),
+    htmlBody: corpsMailPerso_(null, t, reg)
+  }, reg);
+  props.setProperty('PAIE_ENVOYEE_' + mois, new Date().toISOString());
+  tracerServeur_('SYSTEME', 'ELEMENTS DE PAIE ENVOYES', moisLisible_(mois) + ' · à ' + (verifie ? dest : maison + ' (réglage paie_email vide)'), '', '');
+  return { envoye: true, a: verifie ? dest : maison, mois: mois };
+}
+/* ====================== v108o — LES FACTURES PARTENT TOUTES SEULES ======================
+   Simon, 11 novembre 2026 : « factures envoyées seules, je suis d'accord » —
+   et : « beaucoup de devis n'ont pas été signés via l'appli ; à partir
+   d'aujourd'hui on fait tout avec l'appli ». Donc :
+   - seuls les devis SIGNÉS DANS L'APPLI à partir du réglage
+     factures_auto_depuis (11/11/2026 par défaut) partent tout seuls ; tout le
+     reste (anciens devis, prix lu dans une note, contrats venus de Henrri)
+     reste en brouillon, comme avant, à vérifier à la main ;
+   - il faut une adresse e-mail et aucun écart entre Pennylane et le devis ;
+   - la facture est FINALISÉE dans Pennylane (numéro définitif), puis le PDF
+     part par mail depuis contact@, au texte habituel ;
+   - réglage factures_envoi_auto = NON pour tout couper.
+   Une facture finalisée ne s'efface plus : elle ne se corrige que par un
+   avoir. C'est pourquoi chaque condition qui manque laisse le brouillon et
+   l'écrit au journal (FACTURE LAISSEE EN BROUILLON) plutôt que d'envoyer. */
+function devisDuContrat_(lignesContrat) {
+  var ids = [];
+  (lignesContrat || []).forEach(function (l) {
+    String(l.SERIES || '').split(/[\s,;]+/).forEach(function (x) { x = x.trim(); if (x) ids.push(x); });
+  });
+  if (!ids.length) return '';
+  var trouve = '';
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    if (!trouve && ids.indexOf(String(r.ID || '').trim()) >= 0 && String(r.DEVIS || '').trim()) trouve = String(r.DEVIS).trim();
+  });
+  return trouve;
+}
+
+function envoiAutoFacture_(r, numDevis, ctx) {
+  var reg = lireReglages_();
+  if (/^(non|no|0|off)$/i.test(String(reg.factures_envoi_auto || '').trim())) return { envoye: false, motif: 'coupé' };
+  var motif = '';
+  var devis = null;
+  if (numDevis) lireDevis_().forEach(function (x) { if (String(x.NUMERO || '').trim() === String(numDevis).trim()) devis = x; });
+  var depuis = new Date(String(reg.factures_auto_depuis || '2026-11-11') + 'T00:00:00');
+  if (isNaN(depuis.getTime())) depuis = new Date(2026, 10, 11);
+  if (!devis) motif = 'pas de devis signé dans l\'appli';
+  else if (String(devis.STATUT || '').toUpperCase() !== 'SIGNE') motif = 'devis non signé';
+  else if (!(devis.DATE instanceof Date) || devis.DATE < depuis) motif = 'devis antérieur au ' + Utilities.formatDate(depuis, 'Europe/Paris', 'dd/MM/yyyy');
+  var email = String((ctx && ctx.email) || (devis && devis.EMAIL) || '').trim();
+  if (!motif && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) motif = 'pas d\'adresse e-mail';
+  if (!motif && r.ecart) motif = 'écart de montant : ' + r.ecart;
+  if (!motif && !r.idPennylane) motif = 'identifiant Pennylane manquant';
+  var client = String((ctx && ctx.contrat) || (devis && devis.CLIENT) || '');
+  if (motif) {
+    tracerServeur_('SYSTEME', 'FACTURE LAISSEE EN BROUILLON', client + ' · ' + motif, numDevis || '', '');
+    return { envoye: false, motif: motif };
+  }
+  var id = encodeURIComponent(String(r.idPennylane));
+  var fin = pennylaneAppel_('put', '/customer_invoices/' + id + '/finalize');
+  if (!fin.ok) {
+    tracerServeur_('SYSTEME', 'FACTURE LAISSEE EN BROUILLON', client + ' · finalisation refusée : ' + fin.erreur, numDevis || '', '');
+    return { envoye: false, motif: fin.erreur };
+  }
+  var f = fin.data || {}, url = '';
+  for (var essai = 0; essai < 5; essai++) {
+    url = String(f.public_file_url || f.file_url || f.pdf_url || '');
+    if (url && f.invoice_number) break;
+    Utilities.sleep(3000);
+    var g = pennylaneAppel_('get', '/customer_invoices/' + id);
+    if (g.ok && g.data) f = g.data;
+  }
+  var numero = String(f.invoice_number || '');
+  var ttc = Number(f.currency_amount || f.amount || r.ttc || 0);
+  var pieces = [];
+  if (url) {
+    try {
+      var rep = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+      if (rep.getResponseCode() === 200) pieces.push(rep.getBlob().setName('Facture-' + (numero || r.idPennylane) + '.pdf'));
+    } catch (eP) {}
+  }
+  if (!pieces.length) {
+    majEtatFacture_(r.idPennylane, 'FINALISEE — PDF À ENVOYER', numero, 'PDF introuvable chez Pennylane : à envoyer à la main.');
+    tracerServeur_('SYSTEME', 'FACTURE FINALISEE SANS ENVOI', client + ' · ' + numero + ' · PDF introuvable', numDevis || '', '');
+    return { envoye: false, finalisee: true, motif: 'PDF introuvable' };
+  }
+  var objet = ctx && ctx.mois ? 'votre contrat d\'entretien, ' + moisLisible_(ctx.mois)
+    : 'la prestation réalisée' + (devis && devis.OBJET ? ' (' + String(devis.OBJET).slice(0, 80) + ')' : '');
+  var delai = Number(reg.delai_paiement_jours) || 30;
+  var texte = 'Bonjour,\n\nVeuillez trouver ci-joint la facture n° ' + (numero || '') +
+    (ttc ? ' d\'un montant de ' + eur_(ttc) + ' TTC' : '') + ', correspondant à ' + objet + '.\n\n' +
+    'Elle est payable sous ' + delai + ' jours.\n\nMerci pour votre confiance,';
+  envoyerMail_({
+    to: email,
+    subject: 'Votre facture ' + (numero ? 'n° ' + numero + ' ' : '') + '— ' + String(reg.societe_nom || 'BREIZH BRILLANCE'),
+    name: String(reg.societe_nom || 'BREIZH BRILLANCE'),
+    htmlBody: corpsMailPerso_(null, texte, reg),
+    attachments: pieces
+  }, reg);
+  majEtatFacture_(r.idPennylane, 'ENVOYEE', numero, 'envoyée à ' + email + ' le ' + Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm'));
+  tracerServeur_('SYSTEME', 'FACTURE ENVOYEE', client + ' · ' + numero + ' · ' + (ttc ? eur_(ttc) + ' TTC · ' : '') + email, numDevis || '', '');
+  return { envoye: true, numero: numero, a: email };
+}
+
+function majEtatFacture_(idPennylane, etat, numero, note) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.FACTURES);
+  if (!sh || sh.getLastRow() < 2) return;
+  var v = sh.getDataRange().getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var iId = en.indexOf('ID_PENNYLANE'), iE = en.indexOf('ETAT'), iN = en.indexOf('NUMERO_FACTURE'), iNo = en.indexOf('NOTE');
+  for (var i = v.length - 1; i >= 1; i--) {
+    if (String(v[i][iId] || '').trim() !== String(idPennylane)) continue;
+    if (iE >= 0) sh.getRange(i + 1, iE + 1).setValue(etat);
+    if (iN >= 0 && numero) sh.getRange(i + 1, iN + 1).setValue(numero);
+    if (iNo >= 0 && note) sh.getRange(i + 1, iNo + 1).setValue(note);
+    return;
+  }
+}
 /** Écrit la ligne de FACTURES et le journal, et rend la réponse. */
 function finirFacturePennylane_(res, erreur, x) {
   var f = res && res.facture || {}, tot = res ? totauxPennylane_(f) : { ht: 0, tva: 0, ttc: 0 };
@@ -7149,7 +7307,14 @@ function facturesContrats_(periode, com, seul) {
     }
     var r = finirFacturePennylane_(res, erreur, { num: cle, client: nom, type: 'CONTRAT', periode: mois,
                                                     passages: '', attendu: Math.round(attendu * 100) / 100, com: com });
-    if (r.ok) faits.push({ client: nom, ht: r.ht, idPennylane: r.idPennylane, ecart: r.ecart });
+    if (r.ok) {
+      faits.push({ client: nom, ht: r.ht, idPennylane: r.idPennylane, ecart: r.ecart });
+      if (!com) {
+        try { envoiAutoFacture_(r, devisDuContrat_(ls), { email: t('EMAIL'), mois: mois, contrat: nom }); } catch (eA) {
+          tracerServeur_('SYSTEME', 'FACTURE LAISSEE EN BROUILLON', nom + ' · ' + String(eA && eA.message || eA).slice(0, 160), cle, '');
+        }
+      }
+    }
     else if (r.deja) sautes.push({ client: nom, motif: 'brouillon déjà dans Pennylane' });
     else echecs.push({ client: nom, erreur: r.erreur });
   });
@@ -7196,7 +7361,12 @@ function facturesPonctuels_(com) {
   });
   ponctuelsAPreparer_().forEach(function (p) {
     var r = preparerFacturePennylane_({ numero: p.numero }, com);
-    if (r.ok) faits.push({ client: p.client, ht: r.ht, idPennylane: r.idPennylane });
+    if (r.ok) {
+      faits.push({ client: p.client, ht: r.ht, idPennylane: r.idPennylane });
+      try { envoiAutoFacture_(r, p.numero, null); } catch (eA) {
+        tracerServeur_('SYSTEME', 'FACTURE LAISSEE EN BROUILLON', p.client + ' · ' + String(eA && eA.message || eA).slice(0, 160), p.numero, '');
+      }
+    }
     else if (r.deja) sautes.push({ client: p.client, motif: 'déjà préparée' });
     else echecs.push({ client: p.client, erreur: r.erreur });
   });
@@ -7671,6 +7841,9 @@ function preparationAutomatique() {
     if (pennylaneJeton_() && jm >= 3 && jm <= 5) facturesContrats_(moisEcoule_(), null);
   } catch (e2) {
     tracerServeur_('SYSTEME', 'PREPARATION AUTO EN ECHEC', String(e2 && e2.message || e2).slice(0, 200), '', '');
+  }
+  try { envoyerPaieAuto_(new Date()); } catch (e5) {
+    tracerServeur_('SYSTEME', 'PAIE AUTO EN ECHEC', String(e5 && e5.message || e5).slice(0, 200), '', '');
   }
   try { relancerPointages_(new Date()); } catch (e3) {
     tracerServeur_('SYSTEME', 'RELANCE POINTAGE EN ECHEC', String(e3 && e3.message || e3).slice(0, 200), '', '');

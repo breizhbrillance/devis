@@ -361,7 +361,7 @@ function demarrer(){
    application posée sur l'écran d'accueil garde sa propre copie du site : elle
    peut rester sur une ancienne version alors que Safari a la nouvelle. Sans ce
    repère, impossible de savoir laquelle tourne. */
-var VERSION_APP = 'v108n';
+var VERSION_APP = 'v108o';
 
 /* v93 — le mode sombre. La classe est posée dans le <head> avant le premier
    dessin ; ici on ne fait que basculer, garder le choix, et dire sur chaque
@@ -576,7 +576,32 @@ function majBoutonDeco(){
   var b = $('bDeco'); if(!b) return;
   var cache = ECRAN_VU === 'eCo' || ECRAN_VU === 'eAccord' || !session();
   b.classList.toggle('hide', !!cache);
+  var n = $('bNotif');
+  if(n){
+    n.classList.toggle('hide', !!cache);
+    var e = 'eteint'; try{ e = notifCalculer(); }catch(eN){}
+    var pt = $('bNotifPoint');
+    if(pt) pt.classList.toggle('hide', e === 'absent' || (e === 'actif' && NOTIF_ABO !== false));
+  }
 }
+/* v108o — la cloche : pour l'admin sur son tableau, la fiche complète (ce
+   téléphone + l'équipe) ; ailleurs, l'état de ce téléphone dans une fenêtre. */
+function ouvrirCloche(){
+  if(estAdmin() && ECRAN_VU === 'eAd1'){ ficheNotifs(); return; }
+  var o = $('clocheBox');
+  if(!o){
+    o = document.createElement('div');
+    o.id = 'clocheBox';
+    o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding:70px 14px 14px';
+    o.onclick = function(ev){ if(ev.target === o) fermerCloche(); };
+    o.innerHTML = '<div style="width:100%;max-width:440px"><div id="clocheCorps"></div>' +
+      '<button class="btn sec" style="margin-top:4px" onclick="fermerCloche()">Fermer</button></div>';
+    document.body.appendChild(o);
+  }
+  $('clocheCorps').innerHTML = carteCeTelephone();
+  o.classList.remove('hide');
+}
+function fermerCloche(){ var b = $('clocheBox'); if(b) b.classList.add('hide'); }
 
 /* La barre n'a de sens que pour le commercial qui prospecte : sans la
    prospection il ne reste que deux lieux, déjà atteignables par l'en-tête.
@@ -4889,6 +4914,8 @@ function activerNotifs(btn, force){
     erreur('');
     peindreNotifs();
     try{ if(AD_FICHE && AD_FICHE.type === 'notifs') peindreEtatNotifs(); }catch(e3){}
+    try{ var cb = $('clocheBox'); if(cb && !cb.classList.contains('hide')) $('clocheCorps').innerHTML = carteCeTelephone(); }catch(e4){}
+    try{ majBoutonDeco(); }catch(e5){}
   });
 }
 
@@ -4953,6 +4980,7 @@ function peindreNotifs(){
         (ea === 'eteint' ? '<button class="btn sec sm" style="margin-top:10px" onclick="activerNotifs(this)">' +
                            'Activer les notifications</button>' : '');
     }
+    za.classList.add('hide');   /* v108o — remplacé par la cloche en haut */
   }
   var z = $('notifZone');
   if(!z) return;
@@ -4973,7 +5001,8 @@ function peindreNotifs(){
     '<div class="mini" style="margin-top:4px">' + ech(notifTexte()) + '</div>' + bouton +
     (e === 'actif' && !perdu ? '<div class="mini" id="essaiNotifRep" style="margin-top:6px"></div>' +
       '<button class="btn sec sm" style="margin-top:8px" onclick="essaiNotif(this)">M\'envoyer une notification d\'essai</button>' : '');
-  z.classList.toggle('hide', e === 'absent');
+  z.classList.add('hide');   /* v108o — remplacé par la cloche en haut */
+  try{ majBoutonDeco(); }catch(eB){}
 }
 
 /* ====================== LA SEMAINE ======================
@@ -5268,8 +5297,7 @@ function accueilHtml(t){
      des clients reste à un appui d'ici. */
   if(estAdmin()) h += chiffresTableauHtml();
   if(estAdmin()) h += '<button class="btn sec" style="margin-top:8px" onclick="barreAdmin(\'clients\')">Répertoire des clients</button>' +
-    '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments de paie du mois</button>' +
-    '<button class="btn sec" style="margin-top:8px" onclick="ficheNotifs()">Notifications : ce téléphone et l\'équipe</button>';
+    '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments de paie du mois</button>';
   return h;
 }
 
@@ -6476,8 +6504,7 @@ function salariesHtml(){
       (r.trajetsEstimes ? ' (certains trajets au forfait de ' + r.trajetForfait + ' min, affinés au prochain calcul)' : '') + '.</div>';
   }
   h += '<button class="btn sec" style="margin-top:4px" onclick="listeConges()">Congés et absences</button>' +
-       '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments variables de paie</button>' +
-       '<button class="btn sec" style="margin-top:8px" onclick="ficheNotifs()">Notifications : ce téléphone et l\'équipe</button>';
+       '<button class="btn sec" style="margin-top:8px" onclick="ficheAdministratif()">Éléments variables de paie</button>';
   return h;
 }
 /* v108n — le numéro du client sur chaque intervention. Un appui appelle ;
