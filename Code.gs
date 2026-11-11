@@ -12205,7 +12205,12 @@ function statsSociete_(d) {
   for (var m = debutSerie; m <= moisAuj; m = moisPlus_(m, 1)) mois.push(m);
   var courbe = mois.map(function (m) {
     var rec = 0, n = 0;
-    contrats.forEach(function (c) { if (contratCourtEn_(c, m)) { var mm = montantContratMois_(c, m); if (mm > 0) { rec += mm; n++; } } });
+    contrats.forEach(function (c) {
+      /* Un montant écrit pour ce mois-là (MONTANTS_MOIS) compte même si le
+         contrat a démarré après le 15 (BBG : 1 passage en novembre). */
+      var explicite = (c.brut || []).some(function (l) { return String(l.MONTANTS_MOIS || '').indexOf(m + '=') >= 0; });
+      if (contratCourtEn_(c, m) || explicite) { var mm = montantContratMois_(c, m); if (mm > 0) { rec += mm; n++; } }
+    });
     rec = arr2_(rec);
     var f = fact[m] || { total: 0, contrats: 0, ponctuels: 0, n: 0 };
     var complet = !!F.complets[m];
