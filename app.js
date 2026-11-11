@@ -5214,12 +5214,12 @@ function taches(t){
      du devis, Simon confirme. */
   /* Un devis au nom de la maison (« BREIZH BRILLANCE ») est un essai : il ne
      se met jamais au calendrier, il n'a rien à faire ici. */
-  dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat &&
+  dv.filter(function(d){ return d.recurrent && d.statut === 'SIGNE' && !d.contrat && !d.ancien && !d.historique &&
                                 !/^BREIZH\s*BRILLANCE$/i.test(String(d.client||'').trim()); }).forEach(function(d){
     ajout('contrat', [d], function(x){ return x.numero; }, 'contrat signé à mettre au calendrier : ' + (d.client || d.numero),
       'ficheDevis(\'' + String(d.numero).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\')', 'warn');
   });
-  ajout('aposer', dv.filter(function(d){ return d.statut === 'SIGNE' && !d.recurrent && Number(d.aPoser||0) > 0; }),
+  ajout('aposer', dv.filter(function(d){ return d.statut === 'SIGNE' && !d.recurrent && !d.ancien && Number(d.aPoser||0) > 0; }),
     function(d){ return d.numero; },
     function(n){ return pl(n,'devis signé','devis signés') + ' dont le travail n\'est pas planifié'; }, 'allerDevis()', 'warn');
   /* Un devis à relancer : envoyé il y a 10 à 30 jours, sans réponse. */
@@ -6766,9 +6766,12 @@ function blocPoserTravail(d){
      rythme du devis. */
   if(d.recurrent && st !== 'REFUSE'){
     if(d.contrat){
+      var ser = d.series || [];
       return '<div class="card"><h2>Le contrat</h2>' +
-        '<div class="mini" style="margin-top:0">Ce devis est au calendrier : contrat <b>' + ech(d.contrat) +
-        '</b>. Ses passages se posent tout seuls, semaine après semaine.</div>' +
+        '<div class="mini" style="margin-top:0">' + (d.historique ? 'Contrat en place avant l\'appli, repris pour les chiffres. ' : '') +
+        (ser.length ? 'Au calendrier : ' + plN(ser.length, 'série', 'séries') + ' <b>' + ech(ser.join(', ')) + '</b>. Ses passages se posent tout seuls, semaine après semaine.'
+                    : 'Aucune série du planning n\'est encore reliée à ce contrat.') + '</div>' +
+        relierSeriesHtml(d) +
         '<button class="btn sec" style="margin-top:12px" onclick="listeContrats()">Voir les contrats</button></div>';
     }
     return '<div class="card" style="border-color:var(--warn)"><h2>Mettre au calendrier</h2>' +
@@ -6779,6 +6782,7 @@ function blocPoserTravail(d){
       (st === 'SIGNE' ? '' : '<div class="mini">Il n\'est pas encore déclaré signé : le contrat peut ' +
         'quand même être posé, le devis garde son statut.</div>') +
       '<button class="btn" style="margin-top:12px" onclick="contratDepuisFiche()">Mettre au calendrier comme contrat</button>' +
+      relierSeriesHtml(d) +
     '</div>';
   }
   if(st === 'SIGNE'){
@@ -7037,6 +7041,7 @@ function peindreFicheChantier(c, neuf){
       '</div>') +
     (neuf ? '' : blocTelFiche(c)) +
     (neuf ? '' : blocContratFiche(c)) +
+    (neuf || c.recurrent ? '' : '<div class="card">' + blocLienDevis('chantier', c.id, c.numero, c.client) + '</div>') +
     (neuf ? '' : blocFicheChantier(c)) +
 
     '<div class="card">' +
@@ -7337,7 +7342,8 @@ function modifierContrat(id, aPartirDe){
          heure:s.heure||'', fin: (hDeb !== null && s.duree) ? heureDe(hDeb + Number(s.duree)) : '',
          journee: !s.heure, rec:rec, jours: jw >= 0 ? [jw] : [jourDe(debut).getDay()],
          mensuel: (f === 'MENSUEL' && jw >= 0) ? 'RANG' : 'JOUR',
-         jourMois: s.jourMois || '', jusquA: s.fin || '' };
+         jourMois: s.jourMois || '', jusquA: s.fin || '',
+         devisLie: s.devis || '', devisInit: s.devis || '' };
   ouvrirContrat('Modifier le contrat');
 }
 
@@ -7650,12 +7656,14 @@ function peindreContrat(){
       : '') +
   '</div>' +
 
-  (c.mode === 'neuf' && !c.devis
-    ? '<div class="card"><label for="ct_devisQ">Devis lié</label>' + blocDevisLie(c) +
+  ((c.mode === 'neuf' && !c.devis) || c.mode === 'modif'
+    ? '<div class="card"><label for="ct_devisQ">Devis lié' + (devisObligatoire() && c.mode === 'neuf' ? ' (obligatoire)' : '') + '</label>' + blocDevisLie(c) +
       '<div class="mini">' + (c.devisLie
-        ? 'L\'intervention sera facturée au prix de ce devis.'
-        : '<span style="color:var(--warn)">Sans devis, la facture reprendra le prix écrit dans la description ' +
-          '(par exemple « 235 € HT »).</span>') + '</div></div>'
+        ? (c.mode === 'modif' ? 'Le contrat est relié à ce devis.' : 'L\'intervention sera rattachée à ce devis (prix, facture).')
+        : (devisObligatoire()
+            ? '<span style="color:var(--warn)">Choisis le devis (ou le contrat CTR-…) de ce client : sans devis, l\'intervention ne peut pas être créée.</span>'
+            : '<span style="color:var(--warn)">Sans devis, la facture reprendra le prix écrit dans la description ' +
+              '(par exemple « 235 € HT »).</span>')) + '</div></div>'
     : '') +
   '<div class="card">' +
     ch('adresse', 'Où ?', c.adresse, 'type="text" placeholder="Adresse"') +
@@ -7696,7 +7704,7 @@ function envoiContrat(){
     intervalle: c.rec === 'MOIS2' ? 2 : 1,
     debut:c.date, fin:c.jusquA || '',
     heure: c.journee ? '' : c.heure, duree: duree > 0 ? duree : '',
-    devis: c.devis || c.devisLie || ''
+    devis: c.mode === 'modif' ? '' : (c.devis || c.devisLie || '')
   };
 }
 
@@ -7709,6 +7717,9 @@ function enregistrerContrat(btn){
   if(!c.journee && minutesDe(c.fin) !== null && minutesDe(c.heure) !== null &&
      minutesDe(c.fin) <= minutesDe(c.heure)) return erreur('La fin tombe avant le début.');
   if(c.jusquA && c.jusquA < c.date) return erreur('« Jusqu\'au » tombe avant le premier passage.');
+  /* v108q — « je ne dois pouvoir mettre une intervention que si je la relie à un devis ». */
+  if(c.mode === 'neuf' && !c.devis && !c.devisLie && devisObligatoire())
+    return erreur('Relie d\'abord cette intervention à son devis (champ « Devis lié » : tape le nom du client).');
 
   /* Jamais : c'est un chantier ponctuel, le chemin de toujours. */
   if(c.mode === 'neuf' && c.rec === 'JAMAIS'){
@@ -7727,9 +7738,22 @@ function enregistrerContrat(btn){
   if(c.mode === 'modif'){ env.id = c.id; env.aPartirDe = c.depuis; }
   erreur('');
   if(btn) occuper(btn, 'Enregistrement…');
-  poster(env, 40000).then(function(r){
+  poster(env, 40000).then(function repCt(r){
     if(btn) libere(btn);
+    /* v108q — le devis a déjà un contrat : ce créneau s'y ajoute (lundi + jeudi). */
+    if(r && !r.ok && r.existe && !env.ajoutContrat &&
+       confirm('Ce devis a déjà un contrat (' + r.existe + '). Ajouter ce créneau au même contrat ?')){
+      env.ajoutContrat = 1;
+      if(btn) occuper(btn, 'Enregistrement…');
+      return poster(env, 40000).then(repCt);
+    }
     if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    if(c.mode === 'modif' && (c.devisLie || '') !== (c.devisInit || '')){
+      var ids = (r.ids && r.ids.length) ? r.ids : [c.id];
+      if(ids.indexOf(c.id) < 0) ids.push(c.id);
+      poster({action:'lierDevis', nom:moi.nom, code:moi.code, appareil:APPAREIL, numero:c.devisLie || '', series:ids, forcer:1}, 40000);
+      ((TABLEAU||{}).recurrents||[]).forEach(function(x){ if(ids.indexOf(x.id) >= 0) x.devis = c.devisLie || ''; });
+    }
     tracer(c.mode === 'modif' ? 'CONTRAT MODIFIE' : 'CONTRAT CREE', env.client, (r.ids||[]).join(','));
     if(c.fichier && (r.ids||[]).length) envoyerFicheApres(r.ids, c.fichier);
     AD_MOT_T = 0;
@@ -7888,6 +7912,7 @@ function blocContratFiche(c){
     '<div class="mini">' + (s ? ech(libelleRythme(s)) : 'Rythme inconnu — actualise le tableau.') +
       (s && s.debut ? ' · depuis le ' + ech(jjmmaa(s.debut)) : '') +
       (s && s.fin ? ' · jusqu\'au ' + ech(jjmmaa(s.fin)) : '') + '</div>' +
+    blocLienDevis('serie', id, s ? s.devis : '', c.client) +
     '<div class="mini">En changeant le jour, l\'heure ou la personne ci-dessous, tu choisiras : ce passage seulement, ou tous les suivants.</div>' +
     (s ? '<div class="row" style="gap:8px;margin-top:10px">' +
       '<button class="btn sec sm" style="flex:1" onclick="modifierContrat(\'' + ech(id) + '\',\'' +
@@ -10983,3 +11008,109 @@ function peindreStats(){
   z.innerHTML = h + boutonsRetourStats();
 }
 function boutonsRetourStats(){ return '<button class="btn sec" style="margin-top:8px" onclick="retourTableau()">Retour au tableau</button>'; }
+
+
+/* ====================== v108q — RELIER LES INTERVENTIONS À LEUR DEVIS ======================
+   « Dans À faire il y a plein de contrats à mettre au calendrier qui sont déjà
+   dessus : il faut pouvoir lier chaque contrat/devis à une ou plusieurs
+   interventions du planning. À l'avenir je ne dois pouvoir mettre une
+   intervention que si je la relie à un devis. » */
+function plN(n, un, plu){ return n + ' ' + (n > 1 ? plu : un); }
+function devisObligatoire(){
+  var r = (CFG && CFG.reglages) || {};
+  return !/^O/i.test(String(r.intervention_sans_devis || '').trim());
+}
+var LIEN_Q = {};
+function blocLienDevis(type, id, numero, client){
+  var k = type + '|' + id;
+  if(numero && !LIEN_Q[k + '|edit']){
+    var d = ((TABLEAU||{}).devis||[]).filter(function(x){ return x.numero === numero; })[0];
+    return '<div class="ctDevisChoisi" style="margin-top:8px"><span class="mini" style="margin:0">Devis lié : <b>' +
+      (d ? ligneDevisLie(d) : ech(numero)) + '</b></span>' +
+      '<button type="button" class="btn sec sm" style="width:auto" onclick="LIEN_Q[\'' + ech(k) + '|edit\']=1;rouvrirFiche()">Changer</button></div>';
+  }
+  var q = LIEN_Q[k] === undefined ? String(client || '').split(' — ')[0] : LIEN_Q[k];
+  return '<div style="margin-top:8px"><label>' + (numero ? 'Changer le devis lié' : (type === 'serie' ? 'Relier ce contrat à son devis' : 'Relier cette intervention à son devis')) + '</label>' +
+    '<input type="search" autocomplete="off" placeholder="Nom du client ou n° du devis" value="' + ech(q) + '"' +
+    ' oninput="LIEN_Q[\'' + ech(k) + '\']=this.value;var z=$(\'lien_' + ech(k).replace(/[^A-Za-z0-9]/g,'_') + '\');if(z)z.innerHTML=resultatsLien(\'' + type + '\',\'' + ech(id) + '\',this.value)">' +
+    '<div id="lien_' + ech(k).replace(/[^A-Za-z0-9]/g,'_') + '" class="ctDevisRes">' + resultatsLien(type, id, q) + '</div></div>';
+}
+function resultatsLien(type, id, q){
+  var l = devisCherches(q, {client: ''});
+  if(!l.length) return String(q||'').trim() ? '<div class="mini">Aucun devis ne correspond.</div>' : '';
+  return l.map(function(d){
+    return '<button type="button" class="ctDevisLigne" onclick="lierDevisA(\'' + type + '\',\'' + ech(id) + '\',\'' +
+      String(d.numero).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\', this)">' + ligneDevisLie(d) + '</button>';
+  }).join('');
+}
+function lierDevisA(type, id, numero, btn){
+  var moi = session();
+  if(!moi || !navigator.onLine) return erreur('Relier un devis a besoin du réseau.');
+  if(btn) occuper(btn, 'Liaison…');
+  var env = {action:'lierDevis', nom:moi.nom, code:moi.code, appareil:APPAREIL, numero:numero, forcer:1};
+  env[type === 'serie' ? 'series' : 'chantiers'] = [id];
+  poster(env, 40000).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    var t = TABLEAU || {};
+    if(type === 'serie'){
+      (t.recurrents||[]).forEach(function(x){ if(x.id === id) x.devis = numero; });
+      (t.devis||[]).forEach(function(x){
+        x.series = (x.series||[]).filter(function(i){ return i !== id; });
+        if(x.numero === numero){ x.series.push(id); x.contrat = x.contrat || id; }
+      });
+    } else (t.chantiers||[]).forEach(function(x){ if(x.id === id) x.numero = numero; });
+    delete LIEN_Q[type + '|' + id + '|edit']; delete LIEN_Q[type + '|' + id];
+    AD_MOT_T = 0; AD_MOT = 'Relié au devis ' + numero;
+    rouvrirFiche();
+  });
+}
+/* Depuis la fiche d'un devis : « déjà au planning » → cocher la ou les séries
+   du contrat (celles du même client en premier). */
+var RELIER_OUVERT = '';
+function relierSeriesHtml(d){
+  var t = TABLEAU || {};
+  if(RELIER_OUVERT !== d.numero){
+    return '<button class="btn sec" style="margin-top:10px" onclick="RELIER_OUVERT=\'' +
+      String(d.numero).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\';rouvrirFiche()">' +
+      (d.contrat ? 'Relier d\'autres créneaux du planning' : 'Déjà au planning ? Relier au contrat existant') + '</button>';
+  }
+  var cl = sansAccents(String(d.client||'')).toLowerCase().split(/[\s\-—'’]+/).filter(function(m){ return m.length >= 3; });
+  var auj = isoJour();
+  var l = (t.recurrents||[]).filter(function(s){ return s.actif && (!s.fin || s.fin >= auj); }).map(function(s){
+    var n = sansAccents(String(s.client||'')).toLowerCase();
+    return {s: s, proche: cl.some(function(m){ return n.indexOf(m) >= 0; }) ? 1 : 0};
+  }).sort(function(a, b){ return b.proche - a.proche || (a.s.client < b.s.client ? -1 : 1); });
+  return '<div style="margin-top:12px"><b>Créneaux du planning à relier</b>' +
+    '<div class="mini">Coche ceux de ce contrat (les créneaux du même client sont en haut).</div>' +
+    l.slice(0, 40).map(function(x){
+      var s = x.s, deja = s.devis === d.numero;
+      return '<label class="row" style="gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-weight:400">' +
+        '<input type="checkbox" class="relSer" value="' + ech(s.id) + '"' + (deja ? ' checked' : '') + ' style="width:auto">' +
+        '<span style="flex:1">' + (x.proche ? '★ ' : '') + '<b>' + ech(s.client) + '</b> <span class="mini">' + ech(s.id) + ' · ' + ech(libelleRythme(s)) +
+        (s.devis && !deja ? ' · relié à ' + ech(s.devis) : '') + '</span></span></label>';
+    }).join('') +
+    '<button class="btn" style="margin-top:10px" onclick="relierSeriesDevis(\'' + String(d.numero).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\', this)">Relier les créneaux cochés</button>' +
+    '<button class="btn sec" style="margin-top:8px" onclick="RELIER_OUVERT=\'\';rouvrirFiche()">Fermer</button></div>';
+}
+function relierSeriesDevis(numero, btn){
+  var ids = [].slice.call(document.querySelectorAll('.relSer')).filter(function(x){ return x.checked; }).map(function(x){ return x.value; });
+  if(!ids.length) return erreur('Coche au moins un créneau du planning.');
+  var moi = session();
+  if(!moi || !navigator.onLine) return erreur('Relier un devis a besoin du réseau.');
+  if(btn) occuper(btn, 'Liaison…');
+  poster({action:'lierDevis', nom:moi.nom, code:moi.code, appareil:APPAREIL, numero:numero, series:ids, forcer:1}, 40000).then(function(r){
+    if(btn) libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
+    var t = TABLEAU || {};
+    (t.recurrents||[]).forEach(function(x){ if(ids.indexOf(x.id) >= 0) x.devis = numero; });
+    (t.devis||[]).forEach(function(x){
+      x.series = (x.series||[]).filter(function(i){ return ids.indexOf(i) < 0; });
+      if(x.numero === numero){ x.series = x.series.concat(ids); x.contrat = x.contrat || ids[0]; }
+      if(x.contrat && x.contrat !== 'HISTORIQUE' && ids.indexOf(x.contrat) >= 0 && x.numero !== numero) x.contrat = x.series[0] || (x.historique ? 'HISTORIQUE' : '');
+    });
+    RELIER_OUVERT = '';
+    AD_MOT_T = 0; AD_MOT = plN(ids.length, 'créneau relié', 'créneaux reliés') + ' au devis ' + numero;
+    rouvrirFiche();
+  });
+}

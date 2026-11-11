@@ -1039,7 +1039,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete'];
+                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1098,7 +1098,7 @@ function doPost(e) {
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
          /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
-         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete']
+         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire', 'essaiNotif']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1165,13 +1165,20 @@ function doPost(e) {
        (majChantier_) en écrase une autre. */
     if (d.action === 'planifier') { lock.waitLock(30000); return reponse_(planifierChantier_(d, com)); }
     if (d.action === 'poserDevis') return reponse_(poserAvantSignature_(d, com));
-    if (d.action === 'chantierNeuf') { lock.waitLock(30000); return reponse_(creerChantier_(d, com)); }
+    if (d.action === 'chantierNeuf') {
+      if (!devisObligatoireOk_(d)) return reponse_({ ok: false, sansDevis: true, erreur: 'relie l\'intervention à un devis (champ « Devis lié »)' });
+      lock.waitLock(30000); return reponse_(creerChantier_(d, com));
+    }
+    if (d.action === 'lierDevis') { lock.waitLock(30000); return reponse_(lierDevis_(d, com)); }
     if (d.action === 'lotChantiers') return reponse_(lotChantiers_(d, com));
     if (d.action === 'recurrentNeuf' || d.action === 'recurrentModif' || d.action === 'recurrentStop') {
       /* Le verrou : deux créations en même temps prendraient le même numéro
          de série, et la génération lit CHANTIERS avant d'y écrire. */
       lock.waitLock(30000);
-      if (d.action === 'recurrentNeuf') return reponse_(recurrentNeuf_(d, com));
+      if (d.action === 'recurrentNeuf') {
+        if (!devisObligatoireOk_(d)) return reponse_({ ok: false, sansDevis: true, erreur: 'relie le contrat à son devis (champ « Devis lié »)' });
+        return reponse_(recurrentNeuf_(d, com));
+      }
       if (d.action === 'recurrentModif') return reponse_(recurrentModif_(d, com));
       return reponse_(recurrentStop_(d, com));
     }
@@ -2095,15 +2102,22 @@ function tableauAdmin_() {
   var devis = [], chiffres = { nb: 0, signes: 0, ht: 0, htSigne: 0, mensuelSigne: 0 }, par = {};
   objetsDe_(SH.DEVIS).forEach(function (o) {
     var d = o.DATE ? new Date(o.DATE) : null;
-    if (!d || isNaN(d.getTime()) || d < depuis) return;
+    if (!d || isNaN(d.getTime())) return;
     var st = String(o.STATUT || '').toUpperCase();
+    /* v108q — un devis signé plus ancien que la fenêtre reste dans la liste :
+       c'est à lui qu'on relie les interventions (« Devis lié »). Il ne compte
+       plus dans les chiffres de la période. */
+    var vieux = d < depuis;
+    if (vieux && st !== 'SIGNE') return;
     var ht = Number(o.TOTAL_HT) || 0;
     var mens = Number(o.TOTAL_HT_MENSUEL) || 0;
     var qui = String(o.COMMERCIAL || '').trim() || '(sans nom)';
+    if (!vieux) {
     if (!par[qui]) par[qui] = { nom: qui, nb: 0, signes: 0, ht: 0, htSigne: 0, mensuelSigne: 0 };
     chiffres.nb++; par[qui].nb++;
     chiffres.ht += ht; par[qui].ht += ht;
-    if (st === 'SIGNE') {
+    }
+    if (st === 'SIGNE' && !vieux) {
       chiffres.signes++; par[qui].signes++;
       chiffres.htSigne += ht; par[qui].htSigne += ht;
       chiffres.mensuelSigne += mens; par[qui].mensuelSigne += mens;
@@ -2124,11 +2138,12 @@ function tableauAdmin_() {
       passagesMois: Number(o.PASSAGES_MOIS) || 0,
       mensuel: mens,
       nature: natureOuVide_(o.NATURE),
-      adresse: String(o.ADRESSE || ''), cp: String(o.CP || '')
+      adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''),
+      historique: devisHistorique_(o), ancien: vieux
     });
   });
   devis.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
-  if (devis.length > 300) devis = devis.slice(0, 300);
+  if (devis.length > 400) devis = devis.slice(0, 400);
   perf_('devis');
 
   var hier = new Date(); hier.setDate(hier.getDate() - 30); hier.setHours(0, 0, 0, 0);
@@ -2209,15 +2224,19 @@ function tableauAdmin_() {
 
   /* Le compte ne peut se poser qu'ici : parDevis vient d'être rempli en lisant
      les chantiers, et la liste des devis, elle, a été dressée plus haut. */
-  var contratDe = {};
+  var contratDe = {}, seriesDe = {};
   objetsDe_(SH.RECURRENTS).forEach(function (r) {
     var nd = String(r.DEVIS || '').trim(), id = String(r.ID || '').trim();
     if (nd && id && !contratDe[nd]) contratDe[nd] = id;
+    if (nd && id) (seriesDe[nd] = seriesDe[nd] || []).push(id);
   });
   devis.forEach(function (x) {
     x.poses = parDevis[x.numero] || 0;
     x.aPoser = aPoser[x.numero] || 0;
-    x.contrat = contratDe[x.numero] || '';
+    /* Un contrat repris d'avant l'appli est au calendrier par définition :
+       même sans série reliée, il n'a rien à faire dans « À faire ». */
+    x.contrat = contratDe[x.numero] || (x.historique ? 'HISTORIQUE' : '');
+    x.series = seriesDe[x.numero] || [];
   });
 
   var liste = [];
@@ -2482,10 +2501,8 @@ function creerChantier_(d, com) {
      une facture ». Le devis choisi dans le formulaire est vérifié ici. */
   var numLie = '';
   if (String(d.devis || '').trim()) {
-    lireDevis_().forEach(function (x) {
-      var n = String(x.NUMERO || '').trim(), o = String(x.NUMERO_ORIGINE || '').trim();
-      if (n === String(d.devis).trim() || (o && o === String(d.devis).trim())) numLie = n;
-    });
+    var dvL = devisParNumero_(d.devis);              // v108q : un contrat repris (CTR-…) compte aussi
+    if (dvL) numLie = String(dvL.NUMERO).trim();
     if (!numLie) return { ok: false, erreur: 'le devis ' + d.devis + ' est introuvable' };
   }
 
@@ -4985,13 +5002,13 @@ function recurrentNeuf_(d, com) {
     var dejaR = objetsDe_(SH.RECURRENTS).filter(function (r) {
       return String(r.DEVIS || '').trim() === numDevis;
     })[0];
-    if (dejaR) return { ok: false, erreur: 'ce devis a déjà son contrat (' + String(dejaR.ID).trim() + ')',
+    /* v108q — un contrat peut avoir plusieurs créneaux (lundi + jeudi) : le
+       second se pose sur le même devis quand le gérant l'a confirmé. */
+    if (dejaR && !d.ajoutContrat) return { ok: false, erreur: 'ce devis a déjà son contrat (' + String(dejaR.ID).trim() + ')',
                         existe: String(dejaR.ID).trim() };
-    lireDevis_().forEach(function (x) {
-      var n = String(x.NUMERO || '').trim(), o = String(x.NUMERO_ORIGINE || '').trim();
-      if (n === numDevis || o === numDevis) devisLu = x;
-    });
+    devisLu = devisParNumero_(numDevis);
     if (!devisLu) return { ok: false, erreur: 'devis introuvable' };
+    numDevis = String(devisLu.NUMERO).trim();
     var mens = Number(devisLu.TOTAL_HT_MENSUEL) || Number(devisLu.TOTAL_HT) || 0;
     f.s.DEVIS = numDevis;
     f.s.NOTE = 'Devis ' + numDevis +
@@ -8633,6 +8650,17 @@ function lireDevis_() {
   return out;
 }
 function devisHistorique_(o) { return String(o && o.ORIGINE || '').toUpperCase().trim() === 'HISTORIQUE'; }
+/* Le devis d'un numéro (ou de son numéro d'avant signature), contrats repris compris. */
+function devisParNumero_(num) {
+  num = String(num || '').trim();
+  if (!num) return null;
+  var t = null;
+  objetsDe_(SH.DEVIS).forEach(function (x) {
+    var n = String(x.NUMERO || '').trim(), o = String(x.NUMERO_ORIGINE || '').trim();
+    if (n === num || (o && o === num)) t = x;
+  });
+  return t;
+}
 
 /** Les lignes de prestation, regroupées par numéro de devis. */
 function lignesParDevis_() {
@@ -12139,6 +12167,54 @@ function statsSociete_(d) {
   };
 }
 
+/* v108q — Simon, 11 novembre : « il faut que tu puisses lier chaque
+   contrat/devis à une ou plusieurs interventions du planning ; à l'avenir je
+   ne pourrai mettre une intervention que si je la relie à un devis ».
+   Réglage `intervention_sans_devis` = OUI pour rouvrir la porte. */
+function devisObligatoireOk_(d) {
+  if (String(d.devis || '').trim()) return true;
+  return /^O/i.test(String(lireReglages_().intervention_sans_devis || '').trim());
+}
+/* Relie un devis à des séries (RECURRENTS.DEVIS) et/ou à des interventions
+   (CHANTIERS.NUMERO). numero vide = délier. Une série déjà reliée à un autre
+   devis n'est changée qu'avec forcer. */
+function lierDevis_(d, com) {
+  var num = String(d.numero || '').trim(), dv = null;
+  if (num) {
+    dv = devisParNumero_(num);
+    if (!dv) return { ok: false, erreur: 'le devis ' + num + ' est introuvable' };
+    num = String(dv.NUMERO).trim();
+  }
+  var ss = SpreadsheetApp.getActive(), out = { ok: true, numero: num, series: 0, chantiers: 0, refus: [] };
+  var lier = function (nomOnglet, colId, colNum, ids) {
+    if (!ids || !ids.length) return 0;
+    if (nomOnglet === SH.RECURRENTS) colonneAssuree_(SH.RECURRENTS, 'DEVIS');
+    var sh = ss.getSheetByName(nomOnglet);
+    var v = sh.getDataRange().getValues(), en = v[0].map(function (x) { return String(x).trim(); });
+    var ci = en.indexOf(colId), cn = en.indexOf(colNum), n = 0;
+    if (ci < 0 || cn < 0) return 0;
+    var voulu = {}; ids.forEach(function (x) { voulu[String(x).trim()] = true; });
+    for (var i = 1; i < v.length; i++) {
+      var id = String(v[i][ci] || '').trim();
+      if (!voulu[id]) continue;
+      var avant = String(v[i][cn] || '').trim();
+      if (avant === num) { n++; continue; }
+      if (avant && num && !d.forcer) { out.refus.push(id + ' (déjà relié à ' + avant + ')'); continue; }
+      sh.getRange(i + 1, cn + 1).setValue(num);
+      n++;
+    }
+    return n;
+  };
+  out.series = lier(SH.RECURRENTS, 'ID', 'DEVIS', d.series || []);
+  /* Les passages d'une série restent sans NUMERO (comme ceux que pose
+     genererRecurrents_) : le lien vit sur la série, RECURRENTS.DEVIS. */
+  out.chantiers = lier(SH.CHANTIERS, 'ID', 'NUMERO', d.chantiers || []);
+  tracerServeur_(com ? com.nom : '', num ? 'DEVIS RELIE' : 'DEVIS DELIE',
+                 (num || '—') + ' · séries ' + (d.series || []).join(', ') + ' · interventions ' + (d.chantiers || []).join(', ') +
+                 (out.refus.length ? ' · refusé : ' + out.refus.join(', ') : ''), num, d.appareil || '');
+  return out;
+}
+
 /* Menu 34 — « rajoute en tant que devis signés les contrats récurrents déjà
    en place ». Une ligne DEVIS par contrat de CONTRATS qui n'a pas de devis
    signé dans l'appli : numéro CTR-…, ORIGINE = HISTORIQUE, date = début du
@@ -12148,7 +12224,8 @@ function statsSociete_(d) {
 function reprendreContratsEnDevis() {
   var r = reprendreContratsEnDevis_();
   try {
-    SpreadsheetApp.getUi().alert(r.crees + ' contrat(s) ajouté(s) comme devis signés, ' + r.deja + ' déjà présent(s).' +
+    SpreadsheetApp.getUi().alert(r.crees + ' contrat(s) ajouté(s) comme devis signés, ' + r.deja + ' déjà présent(s), ' +
+      r.relies + ' série(s) du planning reliée(s) à leur devis.' +
       (r.noms.length ? '\n\n' + r.noms.join('\n') : ''));
   } catch (e) {}
   return r;
@@ -12162,11 +12239,17 @@ function reprendreContratsEnDevis_() {
   objetsDe_(SH.RECURRENTS).forEach(function (s) {
     if (String(s.DEVIS || '').trim()) devisDeSerie[String(s.ID || '').trim()] = true;
   });
-  var lignes = [], noms = [], deja = 0, auj = new Date();
+  var lignes = [], noms = [], deja = 0, auj = new Date(), aRelier = [];
   contratsVivants_().forEach(function (c) {
     if (!(c.mensuel > 0)) return;
     var num = 'CTR-' + sansAccent_(c.nom).replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
-    if (pris[num] || c.series.some(function (id) { return devisDeSerie[id]; })) { deja++; return; }
+    var libres = c.series.filter(function (id) { return !devisDeSerie[id]; });
+    if (pris[num] || c.series.some(function (id) { return devisDeSerie[id]; })) {
+      deja++;
+      if (pris[num] && libres.length) aRelier.push({ num: num, ids: libres });   // v108q : la série de ce contrat le porte
+      return;
+    }
+    if (libres.length) aRelier.push({ num: num, ids: libres });
     var debut = c.debut ? new Date(c.debut + 'T12:00:00') : auj;
     var tva = arr2_(c.mensuel * c.tva / 100);
     var v = {
@@ -12190,7 +12273,12 @@ function reprendreContratsEnDevis_() {
     sh.getRange(sh.getLastRow() + 1, 1, lignes.length, en.length).setValues(lignes);
     tracerServeur_('SYSTEME', 'CONTRATS REPRIS EN DEVIS', lignes.length + ' contrat(s) : ' + noms.join(' ; ').slice(0, 400), '', '');
   }
-  return { ok: true, crees: lignes.length, deja: deja, noms: noms };
+  /* Chaque série du contrat porte le numéro CTR : le contrat n'est plus
+     « à mettre au calendrier », et ses passages savent à quel devis ils
+     appartiennent. */
+  var relies = 0;
+  aRelier.forEach(function (a) { relies += lierDevis_({ numero: a.num, series: a.ids }, null).series; });
+  return { ok: true, crees: lignes.length, deja: deja, noms: noms, relies: relies };
 }
 
 /* L'historique complet des factures (export Henrri), collé ou importé dans
