@@ -11168,7 +11168,7 @@ function texteComposeur(type, ton, contrat){
         : 'Je vous transmets ci-dessous le devis correspondant à votre demande.') + '\n\nBelle journée,';
 }
 function ouvrirComposeur(o, quandEnvoyer){
-  COMPO = { o: o, cb: quandEnvoyer, ton: (o.ton === 'tu' || o.ton === 'perso') ? o.ton : 'vous' };
+  COMPO = { o: o, cb: quandEnvoyer, ton: 'vous' };
   var b = $('compoBox');
   if(!b){
     b = document.createElement('div');
@@ -11182,10 +11182,10 @@ function ouvrirComposeur(o, quandEnvoyer){
     '<h2 style="margin-top:0">' + ech(o.titre || 'Envoyer par e-mail') + '</h2>' +
     '<label for="compoA">À</label><input id="compoA" type="email" inputmode="email" autocomplete="off" placeholder="client@exemple.fr" value="' + ech(o.a || '') + '">' +
     '<label for="compoSujet">Objet</label><input id="compoSujet" type="text" value="' + ech(o.sujet || '') + '">' +
-    '<label>Ton du message</label><div class="prOng" style="margin:4px 0 8px">' +
-      '<button type="button" id="compoVous" onclick="tonComposeur(\'vous\')">Vouvoiement</button>' +
-      '<button type="button" id="compoTu" onclick="tonComposeur(\'tu\')">Tutoiement</button>' +
-      '<button type="button" id="compoPerso" onclick="tonComposeur(\'perso\')">Personnalisé</button></div>' +
+    /* v108t — « fais que du vouvoiement, c'est plus simple » : plus de choix
+       de ton, le texte au vous reste modifiable avant l'envoi. */
+    '<label for="compoTexte">Message <span class="mini" style="font-weight:400">(au vous, modifiable)</span></label>' +
+    '<button type="button" class="btn sec sm" style="width:auto;margin:2px 0 8px" onclick="tonComposeur(\'vous\')">Remettre le texte proposé</button>' +
     '<textarea id="compoTexte" rows="9" oninput="if(COMPO && COMPO.ton !== \'perso\'){COMPO.ton=\'perso\';marquerTonComposeur();}">' + ech(texte) + '</textarea>' +
     '<div class="mini">' + (o.type === 'facture' ? 'La facture Pennylane est validée puis jointe en PDF.'
       : (o.signe ? 'Le devis signé est joint en PDF.' : 'Le PDF est joint, et le bouton « Signer le devis en ligne » est ajouté sous ton message.')) +

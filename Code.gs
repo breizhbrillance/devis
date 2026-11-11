@@ -2336,6 +2336,11 @@ function planifierChantier_(d, com) {
                    (pointe ? ' \u00b7 D\u00c9J\u00c0 POINT\u00c9, heures conserv\u00e9es (' +
                              (Number(avant.MINUTES) || 0) + ' min)' : ''),
                    String(avant.NUMERO || ''), d.appareil || '');
+    if (avant.DATE && minuit_(new Date(avant.DATE)) >= minuit_(new Date())) {
+      prevenirSalaries_(nomsQui_(avant.PRESTATAIRE), 'Intervention annulée',
+        String(avant.CLIENT || 'Intervention') + ' — ' + quandLisible_(avant.DATE, avant.HEURE), String(avant.NUMERO || id));
+    }
+    prevenirAdmins_(com, 'Intervention annulée', String(avant.CLIENT || 'Intervention') + ' — ' + quandLisible_(avant.DATE, avant.HEURE), String(avant.NUMERO || id));
     return { ok: true, id: id, statut: 'ANNULE', pointe: pointe };
   }
   /* Rétabli, il reprend le statut que sa date et son salarié lui donnent. */
@@ -2344,6 +2349,9 @@ function planifierChantier_(d, com) {
     majChantier_(id, { STATUT: st });
     tracerServeur_(com ? com.nom : '', 'CHANTIER RETABLI', String(avant.CLIENT || ''),
                    String(avant.NUMERO || ''), d.appareil || '');
+    if (st === 'PLANIFIE') prevenirSalaries_(nomsQui_(avant.PRESTATAIRE), 'Intervention rétablie',
+      String(avant.CLIENT || 'Intervention') + ' — ' + quandLisible_(avant.DATE, avant.HEURE), String(avant.NUMERO || id));
+    prevenirAdmins_(com, 'Intervention rétablie', String(avant.CLIENT || 'Intervention') + ' — ' + quandLisible_(avant.DATE, avant.HEURE), String(avant.NUMERO || id));
     return { ok: true, id: id, statut: st };
   }
 
@@ -2389,6 +2397,21 @@ function planifierChantier_(d, com) {
     });
     if (envois.length) var notifs = bilanNotifs_(envois, notifierLot_(envois), String(avant.NUMERO || id));
   }
+  /* v108t — celui qu'on retire de l'intervention est prévenu aussi, et les
+     autres gérants voient passer chaque changement de date, d'heure ou d'équipe. */
+  var aChange = (v.PRESTATAIRE !== undefined && String(v.PRESTATAIRE || '') !== String(avant.PRESTATAIRE || '')) ||
+                (v.DATE !== undefined && isoJour_(new Date(v.DATE || 0)) !== isoJour_(new Date(avant.DATE || 0))) ||
+                (v.HEURE !== undefined && heureTexte_(v.HEURE) !== heureTexte_(avant.HEURE));
+  if (aChange) {
+    var retires = nomsQui_(avant.PRESTATAIRE).filter(function (n) { return avant.DATE && !quiContient_(quiFinal, n); });
+    if (retires.length) prevenirSalaries_(retires, 'Intervention retirée',
+      String(avant.CLIENT || 'Intervention') + ' — ' + quandLisible_(avant.DATE, avant.HEURE) + ' : ce n\'est plus pour toi.', String(avant.NUMERO || id));
+    prevenirAdmins_(com, avant.DATE ? 'Intervention déplacée' : 'Intervention planifiée',
+      String(avant.CLIENT || 'Intervention') + ' — ' + quandLisible_(dateFinale, v.HEURE !== undefined ? v.HEURE : avant.HEURE) +
+      (String(quiFinal || '').trim() ? ' · ' + quiFinal : ' · sans salarié') +
+      (avant.DATE && !(v.DATE === undefined || isoJour_(new Date(v.DATE || 0)) === isoJour_(new Date(avant.DATE))) ? ' (était le ' + quandLisible_(avant.DATE, avant.HEURE) + ')' : ''),
+      String(avant.NUMERO || id));
+  }
 
   tracerServeur_(com ? com.nom : '', 'CHANTIER PLANIFIE',
                  (v.PRESTATAIRE || quiFinal || '?') + ' \u00b7 ' +
@@ -2420,6 +2443,34 @@ function placementLire_(v) {
   return m ? { date: m[1], heure: m[2] ? ('0' + m[2]).slice(-5) : '' } : null;
 }
 
+/* v108t — Simon, 11 novembre : « quand je déplace une intervention ou autre,
+   les prestataires et les admins sont notifiés ». Les autres gérants (pas
+   celui qui fait le changement) reçoivent un mot à chaque création,
+   déplacement, annulation, modification ou arrêt de contrat. Réglage
+   `notif_admins_planning` = NON pour couper. */
+function prevenirAdmins_(com, titre, texte, ref) {
+  try {
+    if (/^(non|no|0|off)$/i.test(String(lireReglages_().notif_admins_planning || '').trim())) return [];
+    var moi = normNom_(com && com.nom || '');
+    var envois = lireAdmins_().filter(function (a) { return a.nom && normNom_(a.nom) !== moi; })
+      .map(function (a) { return { nom: a.nom, titre: titre, texte: texte + (com && com.nom ? ' · par ' + com.nom : '') }; });
+    if (!envois.length) return [];
+    return bilanNotifs_(envois, notifierLot_(envois), ref || '');
+  } catch (e) { return []; }
+}
+/* Un mot à chacun des salariés nommés (binôme compris), sans jamais casser l'action. */
+function prevenirSalaries_(noms, titre, texte, ref) {
+  try {
+    var envois = (noms || []).filter(String).map(function (n) { return { nom: n, titre: titre, texte: texte }; });
+    if (!envois.length) return [];
+    return bilanNotifs_(envois, notifierLot_(envois), ref || '');
+  } catch (e) { return []; }
+}
+function quandLisible_(date, heure) {
+  var d = date ? new Date(date) : null;
+  var h = heureTexte_(heure);
+  return (d && !isNaN(d.getTime()) ? jourFr_(d) : 'date à caler') + (h ? ' à ' + h : '');
+}
 function bilanNotifs_(envois, res, ref) {
   return envois.map(function (m, i) {
     var r = res[i] || {};
@@ -2541,6 +2592,8 @@ function creerChantier_(d, com) {
       var notifsN = bilanNotifs_(envoisN, notifierLot_(envoisN), id);
     } catch (eN) {}
   }
+  if (v.NATURE !== NATURE_RDV_) prevenirAdmins_(com, 'Nouvelle intervention',
+    client + ' — ' + quandLisible_(date, v.HEURE) + (qui ? ' · ' + qui : ' · à placer'), id);
   return { ok: true, id: id, statut: v.STATUT, notifs: notifsN || [] };
 }
 
@@ -5045,6 +5098,8 @@ function recurrentNeuf_(d, com) {
                 ' · à partir du ' + Utilities.formatDate(f.s.DEBUT, 'Europe/Paris', 'dd/MM'), '');
     } catch (eN) {}
   });
+  prevenirAdmins_(com, 'Nouveau contrat', f.s.CLIENT + ' · à partir du ' + Utilities.formatDate(f.s.DEBUT, 'Europe/Paris', 'dd/MM') +
+    (f.s.PRESTATAIRE ? ' · ' + f.s.PRESTATAIRE : ''), numDevis || ids.join(','));
   return { ok: true, ids: ids, poses: b.poses || 0,
            retires: rattache.retires, relies: rattache.relies };
 }
@@ -5192,6 +5247,11 @@ function recurrentModif_(d, com) {
                  f.s.CLIENT + ' · ' + id + (enPlace ? ' réécrit' : ' → ' + ids.join(', ')) +
                  ' · à partir du ' + isoJour_(depuis) + ' · ' + retires + ' passage(s) reposé(s)',
                  '', d.appareil || '');
+  var equipe = nomsQui_(L.o.PRESTATAIRE).concat(nomsQui_(f.s.PRESTATAIRE).filter(function (n) { return !quiContient_(L.o.PRESTATAIRE, n); }));
+  var quoiM = f.s.CLIENT + ' · à partir du ' + Utilities.formatDate(depuis, 'Europe/Paris', 'dd/MM') +
+    (f.s.HEURE ? ' · ' + heureTexte_(f.s.HEURE) : '') + (f.s.PRESTATAIRE ? ' · ' + f.s.PRESTATAIRE : '');
+  prevenirSalaries_(equipe, 'Contrat modifié', quoiM + ' (regarde ton planning)', id);
+  prevenirAdmins_(com, 'Contrat modifié', quoiM, id);
   return { ok: true, ids: ids, enPlace: enPlace, retires: retires, poses: b.poses || 0 };
 }
 
@@ -5216,6 +5276,9 @@ function recurrentStop_(d, com) {
   tracerServeur_(com ? com.nom : '', 'CONTRAT ARRETE',
                  String(L.o.CLIENT || '') + ' · ' + id + ' · dernier jour ' + isoJour_(veille) +
                  ' · ' + retires + ' passage(s) retiré(s)', '', d.appareil || '');
+  var quoiS = String(L.o.CLIENT || '') + ' · plus de passage à partir du ' + Utilities.formatDate(depuis, 'Europe/Paris', 'dd/MM');
+  prevenirSalaries_(nomsQui_(L.o.PRESTATAIRE), 'Contrat arrêté', quoiS, id);
+  prevenirAdmins_(com, 'Contrat arrêté', quoiS, id);
   return { ok: true, retires: retires, fin: isoJour_(veille) };
 }
 
@@ -7089,7 +7152,7 @@ function envoyerFactureFinale_(r, email, client, numDevis, ctx, devis, mail, reg
     return { envoye: false, finalisee: true, motif: 'PDF introuvable' };
   }
   var contrat = !!(ctx && (ctx.mois || ctx.contrat));
-  var tu = mail && mail.ton ? /^tu$/i.test(mail.ton) : String(devis && devis.TON_MAIL || '').toUpperCase() === 'TU';
+  var tu = false;   // v108t — « que du vouvoiement, c'est plus simple »
   var texte = (mail && String(mail.texte || '').trim()) || texteFacture_(contrat, tu, reg);
   var sujet = (mail && String(mail.sujet || '').trim()) ||
     ('Votre facture ' + (numero ? 'n° ' + numero + ' ' : '') + '— ' + String(reg.societe_nom || 'BREIZH BRILLANCE'));
