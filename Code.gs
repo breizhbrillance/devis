@@ -1012,6 +1012,142 @@ function config_(com) {
   };
 }
 
+/* ================================================================
+   v108v — RAPIDITÉ
+   ================================================================
+   Simon : « quand je valide un devis ou autre y'a bien 1 minute de latence
+   pour que je vois et les autres voient aussi ». Trois causes : les
+   téléphones ne relisaient le serveur que toutes les deux minutes, le
+   tableau se recalculait en entier (9 à 11 s) à chaque lecture, et rien ne
+   disait aux autres qu'il y avait du neuf.
+   1. Un numéro de version des données, en mémoire du script : toute action
+      qui écrit le change. Les téléphones le demandent toutes les 15 s — un
+      appel minuscule, sans lecture du classeur — et ne rechargent que s'il a
+      bougé.
+   2. Les lectures lourdes (tableau, planning, mes devis, commissions,
+      statistiques) sont gardées en mémoire, sous cette version : tant que
+      rien n'a changé, la réponse part toute faite.
+   3. Pendant une lecture, chaque onglet n'est lu qu'une fois.            */
+var VERSION_CLE_ = 'DONNEES_V';
+var LECTURES_ = ['connexion', 'config', 'journal', 'planning', 'tableau', 'prospects',
+                 'historique', 'facturation', 'mesDevis', 'devisArchive', 'suggestions',
+                 'ficheLire', 'commissions', 'elementsPaie', 'etatNotifs', 'essaiNotif',
+                 'disposSalaries', 'statsSociete'];
+var MEMO_ONGLETS_ = null;          // { nomOnglet: valeurs } pendant une lecture seule
+
+function versionDonnees_() {
+  try {
+    var c = CacheService.getScriptCache(), v = c.get(VERSION_CLE_);
+    if (!v) { v = String(Date.now()); c.put(VERSION_CLE_, v, 21600); }
+    return v;
+  } catch (e) { return '0'; }
+}
+
+/* Ce qui vient d'être écrit est rendu lisible aux autres exécutions tout de
+   suite (flush), puis la version change : les téléphones rechargent. */
+function donneesChangees_() {
+  try { SpreadsheetApp.flush(); } catch (e0) {}
+  nouvelleVersion_();
+}
+function nouvelleVersion_() {
+  try {
+    var c = CacheService.getScriptCache();
+    var v = Math.max(Date.now(), Number(c.get(VERSION_CLE_) || 0) + 1);
+    c.put(VERSION_CLE_, String(v), 21600);
+  } catch (e) {}
+}
+
+/* Une modification faite à la main dans le classeur compte aussi. */
+function onEdit(e) { nouvelleVersion_(); }
+
+function texteJson_(s) {
+  return ContentService.createTextOutput(s).setMimeType(ContentService.MimeType.JSON);
+}
+
+function cleCache_(texte) {
+  var b = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, texte, Utilities.Charset.UTF_8);
+  return 'R' + Utilities.base64EncodeWebSafe(b).replace(/=+$/, '');
+}
+
+function cacheLire_(cle) {
+  try {
+    var c = CacheService.getScriptCache();
+    var n = Number(c.get(cle + 'n') || 0);
+    if (!n) return null;
+    var ks = [];
+    for (var i = 0; i < n; i++) ks.push(cle + 'p' + i);
+    var m = c.getAll(ks), s = '';
+    for (var j = 0; j < n; j++) { if (m[ks[j]] == null) return null; s += m[ks[j]]; }
+    var blob = Utilities.newBlob(Utilities.base64Decode(s), 'application/x-gzip');
+    return Utilities.ungzip(blob).getDataAsString('UTF-8');
+  } catch (e) { return null; }
+}
+
+function cacheEcrire_(cle, json, ttl) {
+  try {
+    var z = Utilities.gzip(Utilities.newBlob(json, 'application/json'));
+    var s = Utilities.base64Encode(z.getBytes());
+    var T = 90000, o = {}, n = Math.ceil(s.length / T);
+    if (n > 20) return false;                        // plus de 1,8 Mo : on ne garde pas
+    for (var i = 0; i < n; i++) o[cle + 'p' + i] = s.substr(i * T, T);
+    var c = CacheService.getScriptCache();
+    c.putAll(o, ttl || 600);
+    c.put(cle + 'n', String(n), ttl || 600);
+    return true;
+  } catch (e) { return false; }
+}
+
+/* La réponse d'une lecture lourde : toute faite si les données n'ont pas
+   bougé depuis, sinon calculée puis gardée. Deux téléphones qui la demandent
+   au même moment : le second attend quelques secondes le calcul du premier
+   plutôt que de refaire le même. */
+function enCache_(quoi, fn) {
+  var v = versionDonnees_();
+  var cle = cleCache_(quoi + '|' + v + '|' + isoJour_(new Date()));
+  var s = cacheLire_(cle);
+  if (s) return texteJson_(s);
+  var c = CacheService.getScriptCache();
+  if (c.get(cle + 'g')) {
+    for (var i = 0; i < 24; i++) {
+      Utilities.sleep(500);
+      s = cacheLire_(cle);
+      if (s) return texteJson_(s);
+      if (!c.get(cle + 'g')) break;
+    }
+  }
+  try { c.put(cle + 'g', '1', 30); } catch (e) {}
+  var obj = fn();
+  var json = JSON.stringify(obj);
+  if (obj && obj.ok !== false) cacheEcrire_(cle, json, 600);
+  try { c.remove(cle + 'g'); } catch (e2) {}
+  return texteJson_(json);
+}
+
+/* Ce qui, dans la demande, change la réponse : tout sauf l'identité. */
+function paramsCache_(d) {
+  var o = {};
+  Object.keys(d || {}).sort().forEach(function (k) {
+    if (k === 'nom' || k === 'code' || k === 'appareil') return;
+    o[k] = d[k];
+  });
+  return JSON.stringify(o);
+}
+
+/* Les listes de personnes, lues à chaque appel pour vérifier le code : gardées
+   en mémoire sous la version des données (une modification à la main du
+   classeur la change, par onEdit). */
+function personnesEnCache_(quoi, fn) {
+  try {
+    var c = CacheService.getScriptCache();
+    var cle = 'P_' + quoi + '_' + versionDonnees_();
+    var s = c.get(cle);
+    if (s) return JSON.parse(s);
+    var l = fn();
+    try { c.put(cle, JSON.stringify(l), 900); } catch (e1) {}
+    return l;
+  } catch (e) { return fn(); }
+}
+
 /** POST {action:'sync', nom, code, devis, pdf(base64)} */
 var PERF_ = null, T0_DOPOST_ = 0;
 function perf_(k) { if (!PERF_) return; var t = Date.now(); PERF_.push(k + ' ' + (t - PERF_.t)); PERF_.t = t; }
@@ -1019,7 +1155,19 @@ function doPost(e) {
   var rel = relaisMigration_();
   if (rel) return relayer_(rel, e, true);
   T0_DOPOST_ = Date.now();
+  /* v108v — la question « y a-t-il du neuf ? », posée toutes les 15 s par
+     chaque téléphone : répondue avant toute lecture du classeur. Le numéro
+     ne dit rien des données elles-mêmes. */
+  var corps0 = (e && e.postData && e.postData.contents) || '';
+  if (corps0.length < 400 && corps0.indexOf('"version"') >= 0) {
+    try {
+      var dv = JSON.parse(corps0);
+      if (dv && dv.action === 'version') return reponse_({ ok: true, v: versionDonnees_() });
+    } catch (eV) {}
+  }
   var lock = LockService.getScriptLock();
+  var aSignaler = false;
+  MEMO_ONGLETS_ = null;
   try {
     var d = JSON.parse(e.postData.contents);
     /* v99 — la page de signature du client : pas de nom ni de code, c'est le
@@ -1027,6 +1175,7 @@ function doPost(e) {
     if (d.action === 'devisPublic') return reponse_(devisPublic_(d));
     if (d.action === 'signerDistance') {
       lock.waitLock(30000);
+      aSignaler = true;
       return reponse_(signerDistance_(d));
     }
     var actions = ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1120,6 +1269,10 @@ function doPost(e) {
       tracerServeur_(com.nom, 'ACTION REFUSEE', d.action, '', d.appareil || '');
       return reponse_({ ok: false, erreur: 'action non autorisée pour ce compte' });
     }
+    /* v108v — une lecture lit chaque onglet une fois ; une écriture, elle,
+       change la version des données en partant (voir finally). */
+    if (LECTURES_.indexOf(d.action) >= 0) MEMO_ONGLETS_ = {};
+    else aSignaler = true;
 
     if (d.action === 'connexion') {
       tracerServeur_(com.nom, 'CONNEXION VALIDEE', com.role, '', d.appareil || '');
@@ -1127,7 +1280,9 @@ function doPost(e) {
                         config: configPour_(com.role, com) });
     }
     if (d.action === 'planning') {
-      return reponse_({ ok: true, chantiers: planningDe_(com.nom) });
+      return enCache_('planning|' + com.nom, function () {
+        return { ok: true, chantiers: planningDe_(com.nom) };
+      });
     }
     if (d.action === 'chantier') return reponse_(enregistrerChantier_(d, com));
     if (d.action === 'ficheLire') return reponse_(lireFiche_(d, com));
@@ -1155,10 +1310,14 @@ function doPost(e) {
     if (d.action === 'tableau') {
       /* v106 — le temps de chaque partie du tableau, au journal d'exécution
          (Apps Script › Exécutions) : pour savoir où passent les secondes. */
-      PERF_ = [String(Date.now() - T0_DOPOST_) + ' ms avant']; PERF_.t = Date.now();
-      var tab = tableauAdmin_();
-      console.log('tableau ' + PERF_.join(' · ') + ' · total ' + (Date.now() - T0_DOPOST_) + ' ms');
-      return reponse_(tab);
+      return enCache_('tableau', function () {
+        PERF_ = [String(Date.now() - T0_DOPOST_) + ' ms avant']; PERF_.t = Date.now();
+        var tab = tableauAdmin_();
+        tab.perf = PERF_.join(' · ') + ' · total ' + (Date.now() - T0_DOPOST_) + ' ms';
+        console.log('tableau ' + tab.perf);
+        PERF_ = null;
+        return tab;
+      });
     }
     /* v105 — l'appli n'attend plus la réponse pour fermer la fiche : deux
        créations peuvent donc partir coup sur coup. Le verrou évite qu'elles
@@ -1212,13 +1371,13 @@ function doPost(e) {
       lock.waitLock(30000);
       return reponse_(facturesDuMois_(d, com));
     }
-    if (d.action === 'mesDevis') return reponse_(mesDevis_(d, com));
-    if (d.action === 'commissions') return reponse_(commissions_(d, com));
+    if (d.action === 'mesDevis') return enCache_('mesDevis|' + com.nom + '|' + paramsCache_(d), function () { return mesDevis_(d, com); });
+    if (d.action === 'commissions') return enCache_('commissions|' + com.nom + '|' + paramsCache_(d), function () { return commissions_(d, com); });
     if (d.action === 'elementsPaie') return reponse_(elementsPaie_(d));
     if (d.action === 'etatNotifs') return reponse_(etatNotifs_());
     if (d.action === 'telClient') return reponse_(telClientPoser_(d, com));
     if (d.action === 'disposSalaries') return reponse_(disposSalaries_(d));
-    if (d.action === 'statsSociete') return reponse_(statsSociete_(d));
+    if (d.action === 'statsSociete') return enCache_('stats|' + paramsCache_(d), function () { return statsSociete_(d); });
     /* v108l — « que je puisse vérifier les notifs sur mon téléphone » : une
        notification d'essai envoyée à soi-même, et la réponse du service. */
     if (d.action === 'essaiNotif') {
@@ -1245,6 +1404,8 @@ function doPost(e) {
   } catch (err) {
     return reponse_({ ok: false, erreur: String(err && err.message || err) });
   } finally {
+    MEMO_ONGLETS_ = null;
+    if (aSignaler) donneesChangees_();
     try { lock.releaseLock(); } catch (e2) {}
   }
 }
@@ -1835,6 +1996,9 @@ function enregistrer_(d, com) {
     return enL.map(function (h) { return vl.hasOwnProperty(h) ? vl[h] : ''; });
   });
   if (rows.length) shL.getRange(shL.getLastRow() + 1, 1, rows.length, enL.length).setValues(rows);
+  /* v108v — le devis est au classeur : les autres le voient dès maintenant,
+     sans attendre l'envoi du courriel et de sa pièce jointe. */
+  donneesChangees_();
 
   // e-mails
   try {
@@ -2085,10 +2249,19 @@ function enregistrerStatut_(d, com) {
    tomber en rade de réseau. */
 
 /** Lit un onglet et renvoie ses lignes sous forme d'objets nommés. */
+/* v108v — tout l'onglet, en-tête compris ; null s'il est absent ou vide.
+   Pendant une lecture seule, lu une fois et gardé pour la suite de l'appel. */
+function valeursOnglet_(nom) {
+  if (MEMO_ONGLETS_ && MEMO_ONGLETS_.hasOwnProperty(nom)) return MEMO_ONGLETS_[nom];
+  var sh = SpreadsheetApp.getActive().getSheetByName(nom), v = null;
+  if (sh && sh.getLastRow() >= 2) v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  if (MEMO_ONGLETS_) MEMO_ONGLETS_[nom] = v;
+  return v;
+}
+
 function objetsDe_(nom) {
-  var sh = SpreadsheetApp.getActive().getSheetByName(nom);
-  if (!sh || sh.getLastRow() < 2) return [];
-  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var v = valeursOnglet_(nom);
+  if (!v || v.length < 2) return [];
   var en = v[0].map(function (x) { return String(x).trim(); });
   var out = [];
   for (var i = 1; i < v.length; i++) {
@@ -5590,11 +5763,11 @@ function purgerJournal() {
 /* ========================== LECTURES ========================== */
 
 function lireReglages_() {
-  var sh = SpreadsheetApp.getActive().getSheetByName(SH.REGLAGES);
   var out = {};
-  if (!sh || sh.getLastRow() < 2) return out;
-  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
-    if (String(r[0]).trim()) out[String(r[0]).trim()] = r[1];
+  var v = valeursOnglet_(SH.REGLAGES);
+  if (!v) return out;
+  v.slice(1).forEach(function (r) {
+    if (String(r[0]).trim()) out[String(r[0]).trim()] = r.length > 1 ? r[1] : '';
   });
   return out;
 }
@@ -5643,7 +5816,8 @@ function naturesCatalogue_(v) {
 }
 
 /* Les agents actifs. Même forme que lireCommerciaux_, autre population. */
-function lirePrestataires_() {
+function lirePrestataires_() { return personnesEnCache_('S', lirePrestataires_Brut_); }
+function lirePrestataires_Brut_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.PRESTATAIRES);
   if (!sh || sh.getLastRow() < 2) return [];
   return sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues()
@@ -5683,7 +5857,8 @@ function trouverPersonne_(nom) {
 }
 
 /* Les comptes d'administration actifs. */
-function lireAdmins_() {
+function lireAdmins_() { return personnesEnCache_('A', lireAdmins_Brut_); }
+function lireAdmins_Brut_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.ADMINS);
   if (!sh || sh.getLastRow() < 2) return [];
   var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
@@ -5699,7 +5874,8 @@ function lireAdmins_() {
     });
 }
 
-function lireCommerciaux_() {
+function lireCommerciaux_() { return personnesEnCache_('C', lireCommerciaux_Brut_); }
+function lireCommerciaux_Brut_() {
   var sh = SpreadsheetApp.getActive().getSheetByName(SH.COMMERCIAUX);
   if (!sh || sh.getLastRow() < 2) return [];
   var en = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
@@ -7975,7 +8151,7 @@ function preparationAutomatique() {
   }
   try { relancerPointages_(new Date()); } catch (e3) {
     tracerServeur_('SYSTEME', 'RELANCE POINTAGE EN ECHEC', String(e3 && e3.message || e3).slice(0, 200), '', '');
-  } finally { lock.releaseLock(); }
+  } finally { donneesChangees_(); lock.releaseLock(); }
 }
 
 /* ================================================================
@@ -8796,9 +8972,8 @@ var ENTETES_FACTURER_ = [
 
 /** Lit l'onglet DEVIS sous forme d'objets, colonnes désignées par leur nom. */
 function lireDevis_() {
-  var sh = SpreadsheetApp.getActive().getSheetByName(SH.DEVIS);
-  if (!sh || sh.getLastRow() < 2) return [];
-  var v = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var v = valeursOnglet_(SH.DEVIS);
+  if (!v || v.length < 2) return [];
   var en = v[0].map(function (x) { return String(x).trim(); });
   var out = [];
   for (var i = 1; i < v.length; i++) {

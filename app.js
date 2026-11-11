@@ -297,6 +297,12 @@ window.addEventListener('load', function(){
   window.addEventListener('online', function(){ etatReseau(); synchroniser(false); rafraichirConfig(); });
   window.addEventListener('offline', etatReseau);
   setInterval(function(){ if(navigator.onLine) synchroniser(false); }, 120000);
+  /* v108v — « y a-t-il du neuf au bureau ? » toutes les 15 s, et tout de suite
+     quand l'appli revient au premier plan. */
+  setInterval(sondeVersion, 15000);
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) sondeVersion(); });
+  window.addEventListener('online', sondeVersion);
+  setTimeout(sondeVersion, 4000);
 
   /* Filet de sécurité pour l'écran d'accueil d'un téléphone : l'application est
      mise en veille puis reprise sans être rechargée. Si elle revient sur l'écran
@@ -3722,6 +3728,38 @@ function etatReseau(nb, msg, classe){
 }
 
 var SYNC = false;
+/* ================================================================
+   v108v — RAPIDITÉ
+   Simon : « quand je valide un devis ou autre y'a bien 1 minute de latence
+   pour que je vois et les autres voient aussi ». Le serveur tient un numéro
+   de version des données, changé à chaque écriture. L'appli le demande
+   toutes les 15 s (un appel de quelques octets) et ne recharge ce qui est à
+   l'écran que s'il a bougé. Ce qui vient d'être fait par un autre apparaît
+   donc en quelques secondes, sans recharger pour rien le reste du temps.
+   ================================================================ */
+var V_SERVEUR = '', V_EN_COURS = false;
+function sondeVersion(){
+  if(V_EN_COURS || document.hidden || !navigator.onLine || !session()) return;
+  V_EN_COURS = true;
+  poster({action:'version'}, 10000).then(function(r){
+    V_EN_COURS = false;
+    if(!r || !r.ok || !r.v) return;
+    var avant = V_SERVEUR;
+    V_SERVEUR = String(r.v);
+    if(avant && avant !== V_SERVEUR) donneesServeurChangees();
+  }, function(){ V_EN_COURS = false; });
+}
+function donneesServeurChangees(){
+  if(!session() || !navigator.onLine) return;
+  if(estAdmin()){
+    if(!RELIRE_T) chargerTableau();
+    if(ECRAN_VU === 'eAd1' && (AD_ONGLET === 'devis' || AD_ONGLET === 'aujourdhui')) chargerCommissions(true);
+    return;
+  }
+  if(ECRAN_VU === 'eAg1') chargerPlanning();
+  if(ECRAN_VU === 'e6') chargerArchive(0);
+}
+
 function synchroniser(manuel, btn){
   // Un agent n'a pas de devis à envoyer : pour lui, se synchroniser veut dire
   // remonter ses pointages et rafraîchir son planning.
@@ -3761,6 +3799,9 @@ function synchroniser(manuel, btn){
       SYNC = false; if(btn) libere(btn);
       etatReseau(); if(ETAPE===6) rendreHistorique(); majEtatDernier(); majEcranPhotos(); purger();
       envoyerJournal();
+      /* v108v — le devis vient d'arriver au bureau : on le montre tout de
+         suite, sans attendre la prochaine relecture. */
+      if(estAdmin()) chargerTableau(); else if(ETAPE===6) chargerArchive(0);
     }, function(){ SYNC = false; if(btn) libere(btn); etatReseau(); majEcranPhotos(); envoyerJournal(); });
   }, function(){ SYNC = false; if(btn) libere(btn); });
 }
