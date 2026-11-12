@@ -1712,6 +1712,11 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
     var pj = d.pdf ? [Utilities.newBlob(Utilities.base64Decode(d.pdf), 'application/pdf',
       d.nomFichier || ('Devis ' + numeroFichier_(numero) + '.pdf'))] : [];
     var mpR = mailPerso_(d, c);
+    if (d.envoyerClient && mpR.a && !d.apercu) {     // v108w — PDF relu d'abord
+      tracerServeur_(devis.commercial || com.nom, 'ENVOI CLIENT BLOQUE',
+                     'révisé — PDF non relu avant l\'envoi — mail non parti à ' + mpR.a, numero, d.appareil || '');
+      d.envoyerClient = false;
+    }
     if (d.envoyerClient && mpR.a) {
       envoyerMail_({
         to: mpR.a, cc: copie.join(','),
@@ -2007,6 +2012,14 @@ function enregistrer_(d, com) {
     if (com.email) copie.push(com.email);
     if (reg.email_copie) copie.push(String(reg.email_copie));
     var mp = mailPerso_(d, c);
+    /* v108w — « fais en sorte que je sois obligé de voir le devis en PDF avant
+       de l'envoyer » : un devis dont le PDF n'a pas été relu dans l'appli ne
+       part pas au client (une appli pas à jour le demanderait encore). */
+    if (d.envoyerClient && mp.a && !d.apercu) {
+      tracerServeur_(devis.commercial || com.nom, 'ENVOI CLIENT BLOQUE',
+                     'PDF non relu avant l\'envoi — mail non parti à ' + mp.a, devis.numero, d.appareil || '');
+      d.envoyerClient = false;
+    }
     if (d.envoyerClient && mp.a) {
       envoyerMail_({
         to: mp.a, cc: copie.join(','),
@@ -6316,6 +6329,16 @@ function controlerTarifs_(devis, reg, communes) {
   var tauxPermis = [pourcentReglage_(reg.majoration_tres_sale)]
     .filter(function (x) { return x > 0; });
   var majorations = 0;
+  /* v108w — « il faut juste pas afficher la majoration et facturer plus cher
+     chaque ligne, pour que ça se lisse » (Simon, devis Gastineau). Sur un site
+     très sale, l'appli à jour relève chaque prix du catalogue du taux, au
+     dix-millième, sans ligne à part. Un devis venu d'une appli plus ancienne
+     porte encore la ligne : il est contrôlé comme avant. */
+  var tauxEtat = 0;
+  if (etatSite_(devis.etatSite) === 'TRES_SALE' && natureDevis_(devis.nature) !== 'ENTRETIEN' &&
+      !lignes.some(function (l) { return String(l.reference || '').trim() === REF_MAJORATION_; })) {
+    tauxEtat = tauxPermis.length ? tauxPermis[0] : 0;
+  }
 
   var ecarts = [];
   lignes.forEach(function (l, i) {
@@ -6347,9 +6370,11 @@ function controlerTarifs_(devis, reg, communes) {
       ecarts.push(rang + ' : hors catalogue');
     } else {
       var attendu = prixAttendu_(puCatalogue_(p, lignes), tauxKm, reg), recu = Number(l.pu) || 0;
+      if (tauxEtat > 0) attendu = Math.round(attendu * (1 + tauxEtat / 100) * 10000) / 10000;
       if (Math.abs(attendu - recu) > 0.005) {
         ecarts.push(rang + ' : prix ' + recu + ' au lieu de ' + attendu +
-                    (tauxKm > 0 ? ' (éloignement compris)' : ''));
+                    (tauxKm > 0 ? ' (éloignement compris)' : '') +
+                    (tauxEtat > 0 ? ' (site très sale +' + tauxEtat + ' % compris)' : ''));
       }
       /* Chaque prestation dit dans quelles natures elle se vend. Les vitrages
          ne se mêlent pas à un entretien : ils ne passent pas à la même
@@ -8255,6 +8280,11 @@ function lienSignatureAppli_(d, com) {
      `envoyer`, le bureau envoie lui-même le mail du devis (texte de Simon,
      PDF joint, bouton « Signer le devis en ligne »), copie au commercial. */
   if (d.envoyer) {
+    /* v108w — le PDF doit avoir été relu dans l'appli juste avant. */
+    if (!d.apercu) {
+      tracerServeur_(com.nom, 'ENVOI CLIENT BLOQUE', 'PDF non relu avant l\'envoi', vrai, d.appareil || '');
+      return { ok: false, erreur: 'Relis d\'abord le PDF du devis : ouvre « Envoyer le devis par e-mail » depuis l\'appli à jour (ferme-la et rouvre-la si ce message revient).' };
+    }
     var a = String(d.email || cible.EMAIL || '').trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) {
       return { ok: false, sansEmail: true, erreur: 'Pas d\'adresse e-mail valable pour ce client : indique-la.' };

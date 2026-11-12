@@ -1413,6 +1413,15 @@
   <div class="mini" id="poAide" style="padding:0 14px 12px;margin:0;text-align:center">
     Télécharge le devis sur cet appareil, l'imprime ou l'envoie.
   </div>
+  <!-- v108w — relecture obligatoire avant l'envoi au client : le bouton
+       d'envoi ne s'ouvre qu'une fois le devis affiché et parcouru jusqu'en bas. -->
+  <div class="so-f hide" id="poGate">
+    <button class="btn sec" style="flex:1" onclick="fermerPdf()">Corriger</button>
+    <button class="btn" id="poGateOk" style="flex:1.8" onclick="apercuValide()" disabled>Fais défiler jusqu'en bas</button>
+  </div>
+  <div class="mini hide" id="poGateAide" style="padding:0 14px 12px;margin:0;text-align:center">
+    Relis tout le devis avant qu'il parte au client : lignes, quantités, prix, total.
+  </div>
 </div>
 
 <div id="sigOverlay" class="hide">
@@ -1696,11 +1705,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=108v"></script>
-<script src="jspdf.umd.min.js?v=108v"></script>
-<script src="police.js?v=108v"></script>
-<script src="logo.js?v=108v"></script>
-<script src="pdf.js?v=108v"></script>
-<script src="app.js?v=108v"></script>
+<script src="config.js?v=108w"></script>
+<script src="jspdf.umd.min.js?v=108w"></script>
+<script src="police.js?v=108w"></script>
+<script src="logo.js?v=108w"></script>
+<script src="pdf.js?v=108w"></script>
+<script src="app.js?v=108w"></script>
 </body>
 </html>

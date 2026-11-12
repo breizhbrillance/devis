@@ -2405,7 +2405,11 @@ function ligneMajoration(){
   if(m <= 0) return null;
   return {categorie:'État des lieux',
           designation:'Majoration pour état des lieux (+' + nb(pct) + ' %)',
-          detail:'', qte:1, unite:'forfait', pu:m,
+          /* v108w — le devis Gastineau : 270,38 € tout seul sous une ligne
+             à 270 €, on croyait à un doublon. La ligne dit sur quoi elle porte. */
+          detail: nb(pct) + ' % de ' + eur(base) + ' HT de prestations' +
+                  (LIGNES.some(estLigneLibre) ? ' (hors lignes libres)' : ''),
+          qte:1, unite:'forfait', pu:m,
           rem:REMISE.valeur, remMuet:REMISE.muet,
           tva:LIGNES[0].tva, type:'PONCTUEL', reference:REF_MAJ};
 }
@@ -2567,14 +2571,43 @@ function lignesDevis(){
      oublié de le faire ne doit pas envoyer un prix périmé. */
   majPrixComplement();
   var taux = tauxSupKm();
-  var ls = LIGNES.map(function(l){
-    if(!taux || estLigneLibre(l)) return l;
+  /* v108w — « il faut juste pas afficher la majoration et facturer plus cher
+     chaque ligne, pour que ça se lisse » (Simon, après le devis Gastineau) :
+     sur un site très sale, plus de ligne « Majoration pour état des lieux ».
+     Chaque prix du catalogue est relevé du taux, au dix-millième comme le
+     reste du devis ; une ligne libre garde son prix, décidé sur place. Le
+     prix d'avant est gardé sur la ligne (puAvantEtat) pour qu'une
+     modification ne relève pas une seconde fois. */
+  var pctE = taux ? 0 : majorationPct();
+  return LIGNES.map(function(l){
+    if(estLigneLibre(l) || (!taux && !pctE)) return l;
     var c = {}; for(var k in l){ if(l.hasOwnProperty(k)) c[k] = l[k]; }
-    c.pu = prixAvecKm(l.pu, taux);
+    if(taux) c.pu = prixAvecKm(l.pu, taux);
+    else { c.puAvantEtat = Number(l.pu) || 0; c.pu = prixAvecEtat(l.pu, pctE); }
     return c;
   });
-  var m = ligneMajoration();
-  return m ? ls.concat([m]) : ls;
+}
+function prixAvecEtat(pu, pct){
+  return Math.round((Number(pu) || 0) * (1 + (Number(pct) || 0) / 100) * 10000) / 10000;
+}
+/* À la reprise d'un devis pour le modifier : on repart des prix d'avant le
+   relèvement « site très sale » — lignesDevis les relève de nouveau à
+   l'enregistrement. Un ancien devis, qui portait la ligne à part, a des prix
+   du catalogue : rien à faire (sansMajoration a retiré la ligne). */
+function retirerEtatDesPrix(lignesBrutes, etatSite, pctNote){
+  if(etatSite !== 'TRES_SALE') return;
+  if((lignesBrutes || []).some(function(l){ return String((l && l.reference) || '') === REF_MAJ; })) return;
+  var pct = Number(pctNote) || pctReglage('majoration_tres_sale');
+  if(!(pct > 0)) return;
+  LIGNES.forEach(function(l){
+    if(estLigneLibre(l)) return;
+    if(l.puAvantEtat !== undefined && l.puAvantEtat !== null && l.puAvantEtat !== ''){
+      l.pu = Number(l.puAvantEtat) || 0;
+    } else {
+      l.pu = Math.round((Number(l.pu) || 0) / (1 + pct / 100) * 10000) / 10000;
+    }
+    delete l.puAvantEtat;
+  });
 }
 /* Les prestations seules : la majoration, elle, se recalcule. */
 function sansMajoration(ls){
@@ -2900,6 +2933,7 @@ function enregistrerModification(b, envoi, moi, secours, devis, pdf64){
       V_TYPE = ''; V_MOTIF = '';
       montrerTermine();
       synchroniser(false);
+      if(ENVOI_APRES_ENR){ ENVOI_APRES_ENR = false; setTimeout(function(){ signatureDistanceFin(null); }, 300); }
     });
   }, function(e){
     debloquer(b, secours);
@@ -3054,7 +3088,7 @@ function majCadreMail(){
     ? 'Envoyer le devis signé au client par e-mail' : 'Envoyer le devis au client pour signature à distance';
   if($('mEnvoi')) $('mEnvoi').textContent = (MAIL_MODE === 'ecran'
     ? 'Il reçoit sa copie signée en PDF. ' : 'Il le lit et le signe en ligne, depuis son téléphone ou son ordinateur. ') +
-    'Part au retour du réseau si tu es hors connexion.';
+    'Le PDF s\'ouvre à relire juste après l\'enregistrement : le mail ne part qu\'une fois relu.';
 }
 function redessiner(dataUrl){
   var img = new Image();
@@ -3375,10 +3409,15 @@ function enregistrer(){
   if(!LIGNES.length) return erreur('Ajoute au moins une prestation.');
   if(TYPE === 'PRO' && !val('cSociete')) return erreur('Indique la raison sociale du client.');
   if(TYPE !== 'PRO' && !val('cContact')) return erreur('Indique le nom du client.');
-  var envoi = $('fEnvoi').checked;
+  var veutEnvoyer = $('fEnvoi').checked;
   var mailPerso = mailClient();
-  if(envoi && !(mailPerso && mailPerso.a)) return erreur('Pas d\'e-mail client : décoche l\'envoi ou renseigne l\'adresse.');
-  if(envoi && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mailPerso.a)) return erreur('L\'adresse e-mail du client a l\'air fausse.');
+  if(veutEnvoyer && !(mailPerso && mailPerso.a)) return erreur('Pas d\'e-mail client : décoche l\'envoi ou renseigne l\'adresse.');
+  if(veutEnvoyer && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mailPerso.a)) return erreur('L\'adresse e-mail du client a l\'air fausse.');
+  /* v108w — plus d'envoi automatique à l'enregistrement : le devis
+     s'enregistre, puis son PDF s'ouvre à relire, et c'est seulement après
+     qu'on écrit le mail et qu'il part. */
+  var envoi = false;
+  ENVOI_APRES_ENR = veutEnvoyer;
   var moi = session();
   if(!moi) return erreur('Identifie-toi d\'abord.');
 
@@ -3434,6 +3473,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       client: client,
       lignes: lignesDevis(),
       etatSite: majorationPct() ? ETAT : 'NORMAL',   // ce que le commercial a constaté
+      majorationPct: majorationPct(),                // v108w — fondu dans les prix, noté ici
       objet: val('fObjet'),
       dateSouhaitee: val('fDate'),   // c'est elle qui sert à planifier
       /* v108e — interne : jamais imprimé, jamais dans le mail au client. */
@@ -3488,6 +3528,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       V_TYPE = ''; V_MOTIF = '';
       montrerTermine();
       synchroniser(false);
+      if(ENVOI_APRES_ENR){ ENVOI_APRES_ENR = false; setTimeout(function(){ signatureDistanceFin(null); }, 300); }
     }, function(e){
       debloquer(b, secours);
       tracer('ERREUR ENREGISTREMENT', String(e && e.message || e));
@@ -3598,7 +3639,9 @@ function ouvrirPdf(enr){
   if(!enr || !enr.pdf) return erreur('Le PDF de ce devis n\'est pas disponible sur cet appareil.');
   erreur('');
   PDF_VU = enr;
-  $('poNum').textContent = enr.numero + (estSigne(enr) ? ' · signé' : '');
+  var gate = !!(APERCU && APERCU.numero === enr.numero);
+  if(!gate) APERCU = null;
+  $('poNum').textContent = enr.numero + (estSigne(enr) ? ' · signé' : '') + (gate ? ' · à relire avant l\'envoi' : '');
   $('poPages').innerHTML = '<div class="empty">Ouverture du devis…</div>';
   $('pdfOverlay').classList.remove('hide');
   var partageOk = partageFichierPossible();
@@ -3606,13 +3649,95 @@ function ouvrirPdf(enr){
   $('poAide').textContent = partageOk
     ? 'Enregistre le devis dans Fichiers, l\'imprime ou l\'envoie.'
     : 'Partager enregistre ou envoie le fichier.';
-  tracer('PDF AFFICHE', enr.nomFichier || '', enr.numero);
-  dessinerPdf(enr).catch(function(e){
+  /* v108w — en relecture avant envoi : seuls « Corriger » et l'envoi. */
+  var fBas = document.querySelector('#pdfOverlay .so-f:not(#poGate)');
+  if(fBas) fBas.classList.toggle('hide', gate);
+  $('poAide').classList.toggle('hide', gate);
+  $('poGate').classList.toggle('hide', !gate);
+  $('poGateAide').classList.toggle('hide', !gate);
+  majBoutonApercu();
+  tracer(gate ? 'PDF RELU AVANT ENVOI — OUVERT' : 'PDF AFFICHE', enr.nomFichier || '', enr.numero);
+  dessinerPdf(enr).then(function(){
+    if(APERCU && APERCU.numero === enr.numero){ APERCU.dessine = true; apercuDefile(); }
+  }, function(e){
     $('poPages').innerHTML = '<div class="empty">Le devis n\'a pas pu être affiché ici.<br>' +
-      'Utilise « Imprimer ou envoyer » pour l\'ouvrir.</div>';
+      (gate ? 'Sans relecture, il ne peut pas partir au client : ferme et réessaie, ou préviens le bureau.'
+            : 'Utilise « Imprimer ou envoyer » pour l\'ouvrir.') + '</div>';
     tracer('ERREUR VISIONNEUSE', String(e && e.message || e), enr.numero);
   });
 }
+
+/* ====================== v108w — RELIRE LE PDF AVANT L'ENVOI ======================
+   Simon, le 12/11, après le devis Gastineau parti avec une ligne qui n'aurait
+   pas dû y être : « fais en sorte que je sois obligé de voir le devis en PDF
+   avant de l'envoyer ». Tout envoi d'un devis au client passe donc par ici :
+   le PDF s'ouvre — celui de l'appareil, ou celui du bureau s'il n'y est pas —,
+   et le bouton d'envoi ne s'allume qu'une fois toutes les pages affichées et
+   parcourues jusqu'en bas. « Corriger » ou « Fermer » : rien ne part.
+   Le bureau, de son côté, refuse un envoi qui n'est pas passé par là. */
+var APERCU = null;        // { numero, cb, dessine, bas }
+var ENVOI_APRES_ENR = false;
+var APERCU_OK = {};       // numéro → heure de la relecture, joint à l'envoi
+function apercuAvantEnvoi(src, puis, btn){
+  function ouvrir(enr){
+    APERCU = { numero: enr.numero, cb: puis, dessine: false, bas: false };
+    ouvrirPdf(enr);
+  }
+  if(src.enr && src.enr.pdf) return ouvrir(src.enr);
+  var numero = src.numero || (src.enr && src.enr.numero);
+  return enrParNumero(numero).then(function(e){
+    if(e && e.pdf) return ouvrir(e);
+    if(!navigator.onLine) return erreur('Hors connexion : le PDF de ce devis est au bureau, et il faut le relire avant de l\'envoyer. Réessaie avec du réseau.');
+    var moi = session();
+    if(!moi) return;
+    if(btn) occuper(btn, 'Ouverture du PDF…');
+    poster({action:'devisArchive', nom:moi.nom, code:moi.code, appareil:APPAREIL, numero:numero, pdf:1}, 60000)
+      .then(function(r){
+        if(btn) libere(btn);
+        if(!r || !r.ok || !r.pdf) return erreur('Le PDF du devis n\'a pas pu être ouvert : il faut le relire avant de l\'envoyer. ' +
+          String((r && (r.erreurPdf || r.erreur)) || attenteLisible()));
+        ouvrir({numero: numero, pdf: r.pdf, nomFichier: r.nomFichier || ('Devis ' + numero + '.pdf'),
+                devis: {numero: numero, signature: null}});
+      }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
+  });
+}
+function enrParNumero(numero){
+  return DB.tous().then(function(l){
+    var t = null;
+    (l || []).forEach(function(e){
+      if(e && (e.numero === numero || e.numeroOrigine === numero || e.numeroPdf === numero) &&
+         (!t || (e.modifieLe || e.cree || 0) > (t.modifieLe || t.cree || 0))) t = e;
+    });
+    return t;
+  }, function(){ return null; });
+}
+function apercuDefile(){
+  if(!APERCU || !APERCU.dessine) return majBoutonApercu();
+  var z = $('poPages');
+  if(z && z.scrollTop + z.clientHeight >= z.scrollHeight - 60) APERCU.bas = true;
+  majBoutonApercu();
+}
+function majBoutonApercu(){
+  var b = $('poGateOk');
+  if(!b) return;
+  var pret = !!(APERCU && APERCU.dessine && APERCU.bas);
+  b.disabled = !pret;
+  b.textContent = !APERCU || !APERCU.dessine ? 'Affichage du devis…'
+    : (pret ? 'J\'ai relu — passer à l\'envoi' : 'Fais défiler jusqu\'en bas');
+}
+function apercuValide(){
+  if(!APERCU || !APERCU.dessine || !APERCU.bas) return;
+  var a = APERCU;
+  APERCU_OK[a.numero] = Date.now();
+  tracer('PDF RELU AVANT ENVOI', 'relu jusqu\'en bas', a.numero);
+  APERCU = null;
+  fermerPdf();
+  if(a.cb) a.cb();
+}
+(function(){
+  function brancher(){ var z = $('poPages'); if(z) z.addEventListener('scroll', apercuDefile, {passive: true}); }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brancher); else brancher();
+})();
 
 function dessinerPdf(enr){
   return chargerLecteur().then(function(lib){
@@ -3645,6 +3770,8 @@ function dessinerPdf(enr){
 }
 
 function fermerPdf(){
+  if(APERCU) tracer('PDF RELU AVANT ENVOI — ABANDON', 'fermé sans envoyer', APERCU.numero);
+  APERCU = null;
   $('pdfOverlay').classList.add('hide');
   $('poPages').innerHTML = '';
   if(PDF_URL){ try{ URL.revokeObjectURL(PDF_URL); }catch(e){} PDF_URL = null; }
@@ -3887,7 +4014,7 @@ function envoyerDevis(enr){
     headers:{'Content-Type':'text/plain;charset=utf-8'},  // évite la requête preflight
     body: JSON.stringify({
       action:'sync', id:enr.id, nom:enr.nom, code:enr.code, appareil:enr.appareil,
-      envoyerClient:enr.envoyerClient, mail:enr.mail || null, devis:enr.devis, pdf:enr.pdf, nomFichier:enr.nomFichier,
+      envoyerClient:enr.envoyerClient, apercu:enr.apercuVu || 0, mail:enr.mail || null, devis:enr.devis, pdf:enr.pdf, nomFichier:enr.nomFichier,
       revision: !!enr.revision
     })
   })
@@ -4224,6 +4351,7 @@ function ouvrirModificationEnr(e, horsAppareil){
     majNature();
     majKm();
     retirerKmDesPrix();
+    retirerEtatDesPrix(d.lignes, d.etatSite, d.majorationPct);
     ETAT = (d.etatSite === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';
     ORIGINE = (d.origine === 'ENTRANT') ? 'ENTRANT' : 'PROSPECTION';
     LIEU = (d.lieuSignature === 'AGENCE') ? 'AGENCE' : 'CLIENT';
@@ -4627,7 +4755,8 @@ function envoyerLienSignature(numero, btn, email, zid, mail){
   if(!moi) return;
   if(!navigator.onLine) return erreur('Hors connexion : le lien part du bureau, réessaie avec du réseau.');
   occuper(btn, 'Envoi…');
-  var env = {action:'lienSignature', numero:numero, envoyer:1, nom:moi.nom, code:moi.code, appareil:APPAREIL};
+  var env = {action:'lienSignature', numero:numero, envoyer:1, nom:moi.nom, code:moi.code, appareil:APPAREIL,
+             apercu: APERCU_OK[numero] || 0};
   if(email) env.email = email;
   if(mail && mail.texte){ env.mail = mail; if(!email && mail.a) env.email = mail.a; }
   poster(env).then(function(r){
@@ -4663,19 +4792,49 @@ function envoyerLienSignature(numero, btn, email, zid, mail){
 function signatureDistanceFin(btn){
   var e = DERNIER;
   if(!e) return;
+  apercuAvantEnvoi({enr: e}, function(){ signatureDistanceFinSuite(btn); }, btn);
+}
+function signatureDistanceFinSuite(btn){
+  var e = DERNIER;
+  if(!e) return;
   /* v108s — d'abord le texte : vous, tu ou personnalisé. */
   var cli = (e.devis || {}).client || {};
   ouvrirComposeur({
     type: 'devis', titre: 'Envoyer le devis par e-mail',
     a: String(((e.mail || {}).a) || cli.email || '').trim(),
     sujet: ((e.mail || {}).sujet) || sujetDevisPour((e.devis || {}).nature),
+    texte: (e.mail || {}).texte || '',
     ton: (e.mail || {}).ton || 'vous',
     signe: !!((e.devis || {}).signature)
   }, function(m){
-    if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, m.a, 'lienSigFin', m);
-    e.mail = { a: m.a, sujet: m.sujet, texte: m.texte, ton: m.ton };
-    signatureDistanceFinMail(btn, m.a);
+    DB.get(e.id).then(function(x){
+      if(x && x.devis) e = DERNIER = x;
+      if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, m.a, 'lienSigFin', m);
+      /* v108w — avec du réseau, on attend que le devis soit au bureau puis le
+         bureau envoie le mail : marquer l'enregistrement pendant qu'une
+         synchronisation l'envoie se perdait (elle réécrit sa propre copie). */
+      if(navigator.onLine) return envoyerQuandAuBureau(e, btn, m);
+      e.mail = { a: m.a, sujet: m.sujet, texte: m.texte, ton: m.ton };
+      signatureDistanceFinMail(btn, m.a);
+    });
   });
+}
+function envoyerQuandAuBureau(e, btn, m){
+  var z = $('lienSigFin');
+  if(z) z.innerHTML = '<div class="mini" style="margin-top:10px">Le devis arrive au bureau, puis le mail part à ' + ech(m.a) + '…</div>';
+  var debut = Date.now();
+  synchroniser(false);
+  (function attendre(){
+    DB.get(e.id).then(function(x){
+      if(x && x.statut === 'envoye'){ DERNIER = x; return envoyerLienSignature(x.numero, btn, m.a, 'lienSigFin', m); }
+      if(Date.now() - debut > 120000){
+        if(z) z.innerHTML = '';
+        return erreur('Le devis n\'est pas encore arrivé au bureau : le mail n\'est pas parti. Réessaie « Envoyer le devis par e-mail » dans un instant.');
+      }
+      if(!SYNC) synchroniser(false);
+      setTimeout(attendre, 2000);
+    }, function(){ setTimeout(attendre, 2000); });
+  })();
 }
 function signatureDistanceFinAncien(btn){
   var e = DERNIER;
@@ -4697,6 +4856,7 @@ function signatureDistanceFinMail(btn, a){
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) return erreur('Adresse e-mail invalide.');
   if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, a, 'lienSigFin');
   e.envoyerClient = true;
+  e.apercuVu = APERCU_OK[e.numero] || 0;
   e.mail = e.mail && typeof e.mail === 'object' ? e.mail : {};
   e.mail.a = a;
   if(e.devis && e.mail.texte) e.devis.mail = e.mail;
@@ -11267,6 +11427,9 @@ function erreurComposeur(t){
 }
 /* Fiche d'un devis (gérant ou commercial) : « Envoyer le devis par e-mail ». */
 function composerDevisMail(numero, btn){
+  apercuAvantEnvoi({numero: numero}, function(){ composerDevisMailSuite(numero, btn); }, btn);
+}
+function composerDevisMailSuite(numero, btn){
   var t = TABLEAU || {};
   var d = DEVIS_VUS[numero] || (t.devis || []).filter(function(x){ return x.numero === numero; })[0] ||
           (ARCH || []).filter(function(x){ return x.numero === numero; })[0] || {};
