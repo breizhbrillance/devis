@@ -213,6 +213,8 @@
   .tot span:first-child{color:var(--mut)}
   .ok{background:var(--acc-f);border:1px solid var(--acc-b);color:var(--acc-t);border-radius:10px;padding:16px;text-align:center}
   .err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:10px;padding:12px;margin-bottom:12px;font-size:14px}
+  .noteInt{background:#fffbeb;border:1px solid #fcd34d;color:#78350f;border-radius:10px;padding:12px;font-size:14px}
+  html.sombre .noteInt{background:#2d2410;color:#fcd34d;border-color:#5c4a1a}
   .hist{padding:12px 0;border-bottom:1px solid var(--line)}
   .hist .i{min-width:0}
   .hist .acts{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap}
@@ -1071,6 +1073,12 @@
       </div>
       <div class="mini">Visible uniquement par nous : n'apparaît ni sur le devis ni dans le
         mail au client. Il est proposé en premier quand on place l'intervention au planning.</div>
+      <!-- v108x — « quand je dois poser un devis signé, faut bien que je voie la
+           note interne que le client ne voit pas ». -->
+      <label>Note interne — le client ne la voit pas (facultatif)</label>
+      <textarea id="fNoteInterne" rows="3" placeholder="Accès, clés, interlocuteur, ce qui a été promis de vive voix…"></textarea>
+      <div class="mini">Pour le bureau seulement : elle ne s'imprime pas et ne part pas au client.
+        Elle s'affiche quand on pose l'intervention au planning.</div>
       <label>Précision sur le délai (facultatif)</label>
       <input id="fDelai" placeholder="Sur deux jours, de préférence en fin de semaine">
       <label>Précisions / conditions particulières</label>
@@ -1081,11 +1089,11 @@
       <label>Nom du signataire</label>
       <input id="fSignataire" placeholder="Nom et qualité">
       <div class="mini">S'imprime sous le cadre de signature du devis.</div>
+      <!-- v108x — plus de signature ni d'envoi avant l'enregistrement : une fois
+           enregistré, « Voir le devis » → « Faire signer » ou « Envoyer ». -->
       <div id="sigVide">
-        <div class="mini" style="margin:12px 0 8px">Le client signe sur place, à l'écran — ou il reçoit le devis
-          par e-mail et le signe à distance, depuis son téléphone ou son ordinateur :</div>
-        <button class="btn sec" onclick="ouvrirSignature()">Signature à l'écran</button>
-        <button class="btn sec" style="margin-top:8px" onclick="choisirSignatureDistance()">✉️ Envoyer pour signature à distance</button>
+        <div class="mini" style="margin:12px 0 0">Signature et envoi au client : une fois le devis enregistré,
+          dans « Voir le devis ».</div>
       </div>
       <div id="sigFaite" class="hide">
         <img id="sigApercu" alt="Signature du client"
@@ -1106,7 +1114,7 @@
          distance » : ce cadre n'apparaît qu'après un choix. Signature à
          l'écran → le devis signé part par e-mail (coché d'office) ;
          signature à distance → le mail porte le bouton « Signer en ligne ». -->
-    <div class="card hide" id="cMail">
+    <div class="card hide" id="cMail" data-v108x="jamais affiché">
       <label style="display:flex;gap:10px;align-items:center;margin:0">
         <input type="checkbox" id="fEnvoi" style="width:20px;height:20px;flex:none" onchange="majMailClient()">
         <span style="color:var(--txt);font-size:15px" id="lEnvoi">Envoyer le devis au client par e-mail</span>
@@ -1405,21 +1413,20 @@
        « Imprimer » dans l'application ne ferait que doubler ce que l'iPhone
        propose déjà. Il n'apparaît donc que là où cette feuille n'existe pas,
        c'est-à-dire sur un ordinateur. -->
-  <div class="so-f">
-    <button class="btn sec hide" id="poImpr" style="flex:1" onclick="imprimerVu()">Imprimer</button>
-    <button class="btn sec" id="poTel" style="flex:1" onclick="telechargerVu(this)">Télécharger</button>
-    <button class="btn" style="flex:1.2" onclick="partagerVu(this)">Partager</button>
+  <!-- v108x — « tout se fait une fois qu'il est enregistré » : on ouvre le
+       devis, on le relit, et c'est ici — et seulement ici — qu'on l'envoie au
+       client ou qu'on le fait signer. Le bouton d'envoi s'allume quand le devis
+       a été parcouru jusqu'en bas. -->
+  <div class="so-f" id="poActions" style="flex-direction:column;gap:8px">
+    <button class="btn" id="poEnv" onclick="apercuValide()" disabled>Fais défiler jusqu'en bas pour l'envoyer</button>
+    <button class="btn sec hide" id="poSig" onclick="signerDepuisPdf(this)">Faire signer le client sur ce téléphone</button>
+  </div>
+  <div class="so-f" style="margin-top:8px">
+    <button class="btn sec sm hide" id="poImpr" style="flex:1" onclick="imprimerVu()">Imprimer</button>
+    <button class="btn sec sm" id="poTel" style="flex:1" onclick="telechargerVu(this)">Télécharger</button>
+    <button class="btn sec sm" style="flex:1" onclick="partagerVu(this)">Partager</button>
   </div>
   <div class="mini" id="poAide" style="padding:0 14px 12px;margin:0;text-align:center">
-    Télécharge le devis sur cet appareil, l'imprime ou l'envoie.
-  </div>
-  <!-- v108w — relecture obligatoire avant l'envoi au client : le bouton
-       d'envoi ne s'ouvre qu'une fois le devis affiché et parcouru jusqu'en bas. -->
-  <div class="so-f hide" id="poGate">
-    <button class="btn sec" style="flex:1" onclick="fermerPdf()">Corriger</button>
-    <button class="btn" id="poGateOk" style="flex:1.8" onclick="apercuValide()" disabled>Fais défiler jusqu'en bas</button>
-  </div>
-  <div class="mini hide" id="poGateAide" style="padding:0 14px 12px;margin:0;text-align:center">
     Relis tout le devis avant qu'il parte au client : lignes, quantités, prix, total.
   </div>
 </div>
@@ -1705,11 +1712,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=108w"></script>
-<script src="jspdf.umd.min.js?v=108w"></script>
-<script src="police.js?v=108w"></script>
-<script src="logo.js?v=108w"></script>
-<script src="pdf.js?v=108w"></script>
-<script src="app.js?v=108w"></script>
+<script src="config.js?v=108x"></script>
+<script src="jspdf.umd.min.js?v=108x"></script>
+<script src="police.js?v=108x"></script>
+<script src="logo.js?v=108x"></script>
+<script src="pdf.js?v=108x"></script>
+<script src="app.js?v=108x"></script>
 </body>
 </html>

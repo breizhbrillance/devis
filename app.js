@@ -864,14 +864,11 @@ function peindreBlocSignature(){
       'Envoyer le devis signé</button></div>';
     return;
   }
-  z.innerHTML = '<button class="btn" onclick="ouvrirSignatureDevis(\'' + ech(DERNIER.id) +
-    '\', this)">Faire signer le client</button>' +
-    '<div class="mini">Le client signe sur le téléphone. Le PDF est refait avec sa ' +
-    'signature et remplace le précédent — pas de photo du papier à prendre.</div>' +
-    /* v108f — pour tous les devis, particulier comme professionnel. */
-    (DERNIER.envoyerClient && ((DERNIER.mail || {}).a)
-      ? '<div class="mini" style="margin-top:10px">Envoyé pour signature à distance à ' + ech(DERNIER.mail.a) + '.</div>'
-      : '<button class="btn sec" style="margin-top:10px" onclick="signatureDistanceFin(this)">Envoyer le devis par e-mail</button>') +
+  /* v108x — Simon : « y'a trop de possibilités de l'envoyer partout […] je
+     vais voir dans Voir le devis et j'enverrai par là-bas ». L'écran de fin
+     ne propose plus rien : signer et envoyer se font dans « Voir le devis ». */
+  z.innerHTML = '<div class="mini" style="margin-top:0">Pour le faire signer ou l\'envoyer au client : ' +
+    '« Voir le devis », relis-le, puis choisis en bas.</div>' +
     '<div id="lienSigFin" class="mini" style="word-break:break-all"></div>';
 }
 
@@ -3083,7 +3080,10 @@ var MAIL_MODE = '';      // '' (pas encore choisi) | 'ecran' (signé sur place) 
 function majCadreMail(){
   var z = $('cMail');
   if(!z) return;
-  z.classList.toggle('hide', !MAIL_MODE);
+  /* v108x — l'envoi ne se fait plus avant l'enregistrement. */
+  z.classList.add('hide');
+  if($('fEnvoi')) $('fEnvoi').checked = false;
+  return;
   if($('lEnvoi')) $('lEnvoi').textContent = MAIL_MODE === 'ecran'
     ? 'Envoyer le devis signé au client par e-mail' : 'Envoyer le devis au client pour signature à distance';
   if($('mEnvoi')) $('mEnvoi').textContent = (MAIL_MODE === 'ecran'
@@ -3257,6 +3257,7 @@ function sauverBrouillon(){
   lsj('brouillon', {client:lireClient(), lignes:LIGNES, objet:val('fObjet'),
                     plus2ans:PLUS2ANS, taux:TAUX, dateSouhaitee:val('fDate'),
                     placement:{date:val('fPlaceDate'), heure:val('fPlaceHeure')},
+                    noteInterne:val('fNoteInterne'),
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
                     nature:NATURE, sansContrat:SANS_CONTRAT, passages:PASSAGES, etat:ETAT, engagement:ENGAGEMENT,
@@ -3310,6 +3311,7 @@ function restaurer(b){
   $('fDate').value = b.dateSouhaitee||'';
   if($('fPlaceDate')) $('fPlaceDate').value = (b.placement && b.placement.date) || '';
   if($('fPlaceHeure')) $('fPlaceHeure').value = (b.placement && b.placement.heure) || '';
+  if($('fNoteInterne')) $('fNoteInterne').value = b.noteInterne || '';
   $('fDelai').value = b.delai||'';
   PLUS2ANS = (b.plus2ans === true || b.plus2ans === false) ? b.plus2ans : null;
   TAUX = b.taux || null;
@@ -3478,6 +3480,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       dateSouhaitee: val('fDate'),   // c'est elle qui sert à planifier
       /* v108e — interne : jamais imprimé, jamais dans le mail au client. */
       placement: (val('fPlaceDate') || val('fPlaceHeure')) ? {date: val('fPlaceDate'), heure: val('fPlaceHeure')} : null,
+      noteInterne: val('fNoteInterne'),               // v108x — pour le bureau seulement
       delai: val('fDelai'),          // la phrase pour le client, rien de plus
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
       nature: NATURE || 'CHANTIER',   // ENTRETIEN | VITRERIE | FACADE | CHANTIER | REMISE
@@ -3527,6 +3530,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       TERMINE_RETOUR = 0;
       V_TYPE = ''; V_MOTIF = '';
       montrerTermine();
+      devisEnVol(devis);
       synchroniser(false);
       if(ENVOI_APRES_ENR){ ENVOI_APRES_ENR = false; setTimeout(function(){ signatureDistanceFin(null); }, 300); }
     }, function(e){
@@ -3639,9 +3643,10 @@ function ouvrirPdf(enr){
   if(!enr || !enr.pdf) return erreur('Le PDF de ce devis n\'est pas disponible sur cet appareil.');
   erreur('');
   PDF_VU = enr;
-  var gate = !!(APERCU && APERCU.numero === enr.numero);
-  if(!gate) APERCU = null;
-  $('poNum').textContent = enr.numero + (estSigne(enr) ? ' · signé' : '') + (gate ? ' · à relire avant l\'envoi' : '');
+  /* v108x — l'envoi au client se fait d'ici, et seulement d'ici. */
+  var gate = !!(enr.numero && !estSigne(enr) && enr.devis);
+  APERCU = gate ? { numero: enr.numero, enr: enr, dessine: false, bas: false } : null;
+  $('poNum').textContent = enr.numero + (estSigne(enr) ? ' · signé' : '');
   $('poPages').innerHTML = '<div class="empty">Ouverture du devis…</div>';
   $('pdfOverlay').classList.remove('hide');
   var partageOk = partageFichierPossible();
@@ -3649,20 +3654,17 @@ function ouvrirPdf(enr){
   $('poAide').textContent = partageOk
     ? 'Enregistre le devis dans Fichiers, l\'imprime ou l\'envoie.'
     : 'Partager enregistre ou envoie le fichier.';
-  /* v108w — en relecture avant envoi : seuls « Corriger » et l'envoi. */
-  var fBas = document.querySelector('#pdfOverlay .so-f:not(#poGate)');
-  if(fBas) fBas.classList.toggle('hide', gate);
-  $('poAide').classList.toggle('hide', gate);
-  $('poGate').classList.toggle('hide', !gate);
-  $('poGateAide').classList.toggle('hide', !gate);
+  $('poEnv').classList.toggle('hide', !gate);
+  $('poSig').classList.toggle('hide', !(gate && enr.id && !String(enr.id).match(/^bureau-/)));
+  $('poAide').classList.toggle('hide', !gate);
   majBoutonApercu();
-  tracer(gate ? 'PDF RELU AVANT ENVOI — OUVERT' : 'PDF AFFICHE', enr.nomFichier || '', enr.numero);
+  tracer('PDF AFFICHE', enr.nomFichier || '', enr.numero);
   dessinerPdf(enr).then(function(){
     if(APERCU && APERCU.numero === enr.numero){ APERCU.dessine = true; apercuDefile(); }
   }, function(e){
     $('poPages').innerHTML = '<div class="empty">Le devis n\'a pas pu être affiché ici.<br>' +
       (gate ? 'Sans relecture, il ne peut pas partir au client : ferme et réessaie, ou préviens le bureau.'
-            : 'Utilise « Imprimer ou envoyer » pour l\'ouvrir.') + '</div>';
+            : 'Utilise « Télécharger » pour l\'ouvrir.') + '</div>';
     tracer('ERREUR VISIONNEUSE', String(e && e.message || e), enr.numero);
   });
 }
@@ -3679,10 +3681,7 @@ var APERCU = null;        // { numero, cb, dessine, bas }
 var ENVOI_APRES_ENR = false;
 var APERCU_OK = {};       // numéro → heure de la relecture, joint à l'envoi
 function apercuAvantEnvoi(src, puis, btn){
-  function ouvrir(enr){
-    APERCU = { numero: enr.numero, cb: puis, dessine: false, bas: false };
-    ouvrirPdf(enr);
-  }
+  function ouvrir(enr){ ouvrirPdf(enr); }
   if(src.enr && src.enr.pdf) return ouvrir(src.enr);
   var numero = src.numero || (src.enr && src.enr.numero);
   return enrParNumero(numero).then(function(e){
@@ -3696,7 +3695,7 @@ function apercuAvantEnvoi(src, puis, btn){
         if(btn) libere(btn);
         if(!r || !r.ok || !r.pdf) return erreur('Le PDF du devis n\'a pas pu être ouvert : il faut le relire avant de l\'envoyer. ' +
           String((r && (r.erreurPdf || r.erreur)) || attenteLisible()));
-        ouvrir({numero: numero, pdf: r.pdf, nomFichier: r.nomFichier || ('Devis ' + numero + '.pdf'),
+        ouvrir({id: 'bureau-' + numero, numero: numero, pdf: r.pdf, nomFichier: r.nomFichier || ('Devis ' + numero + '.pdf'),
                 devis: {numero: numero, signature: null}});
       }, function(){ if(btn) libere(btn); erreur(attenteLisible()); });
   });
@@ -3718,12 +3717,12 @@ function apercuDefile(){
   majBoutonApercu();
 }
 function majBoutonApercu(){
-  var b = $('poGateOk');
+  var b = $('poEnv');
   if(!b) return;
   var pret = !!(APERCU && APERCU.dessine && APERCU.bas);
   b.disabled = !pret;
   b.textContent = !APERCU || !APERCU.dessine ? 'Affichage du devis…'
-    : (pret ? 'J\'ai relu — passer à l\'envoi' : 'Fais défiler jusqu\'en bas');
+    : (pret ? 'Envoyer au client par e-mail' : 'Fais défiler jusqu\'en bas pour l\'envoyer');
 }
 function apercuValide(){
   if(!APERCU || !APERCU.dessine || !APERCU.bas) return;
@@ -3732,7 +3731,82 @@ function apercuValide(){
   tracer('PDF RELU AVANT ENVOI', 'relu jusqu\'en bas', a.numero);
   APERCU = null;
   fermerPdf();
-  if(a.cb) a.cb();
+  if(a.cb) return a.cb();
+  /* Un devis de cet appareil : il peut ne pas être encore au bureau. */
+  if(a.enr && a.enr.id && !String(a.enr.id).match(/^bureau-/)) return signatureDistanceFinSuite(null, a.enr);
+  composerDevisMailSuite(a.numero, null);
+}
+/* v108x — « quand j'ajoute un devis ça met 45 secondes avant qu'il
+   apparaisse » : sur le téléphone du gérant, le devis qu'il vient
+   d'enregistrer entre dans son tableau tout de suite, marqué « part au
+   bureau ». Il y reste jusqu'à ce que le tableau du bureau le contienne. */
+var DEVIS_EN_VOL = {};
+function devisEnVol(devis){
+  if(!devis || !devis.numero || !estAdmin() || !TABLEAU) return;
+  var c = devis.client || {}, t = devis.totaux || {};
+  DEVIS_EN_VOL[devis.numero] = { quand: Date.now(), d: {
+    numero: devis.numero, date: isoJour(), commercial: devis.commercial || '',
+    client: c.societe || [c.civ, c.contact].filter(Boolean).join(' ') || '—', ville: c.ville || '',
+    ttc: Number(t.ttc) || 0, ht: Number(t.ht) || 0, statut: (devis.signature ? 'SIGNE' : 'REMIS'),
+    motif: '', relance: '', pdf: '', signe: !!devis.signature, preuve: false, note: '',
+    placement: devis.placement || null, noteInterne: devis.noteInterne || '',
+    recurrent: estRecurrent(), passagesMois: Number(devis.passages) || 0,
+    mensuel: estRecurrent() ? (Number(t.ht) || 0) : 0, nature: devis.nature || '',
+    adresse: c.adresse || '', cp: c.cp || '', enVol: true
+  }};
+  appliquerDevisEnVol(TABLEAU);
+  try{ peindreTableau(); }catch(e){}
+}
+function appliquerDevisEnVol(t){
+  if(!t) return;
+  t.devis = t.devis || [];
+  Object.keys(DEVIS_EN_VOL).forEach(function(n){
+    var x = DEVIS_EN_VOL[n];
+    if(t.devis.some(function(d){ return d.numero === n && !d.enVol; }) || Date.now() - x.quand > 600000){
+      delete DEVIS_EN_VOL[n]; return;
+    }
+    if(!t.devis.some(function(d){ return d.numero === n; })) t.devis.unshift(x.d);
+  });
+}
+
+/* v108x — la note interne du devis : jamais au client, toujours sous les
+   yeux de celui qui pose l'intervention. */
+function noteInterneDe(numero){
+  if(!numero) return '';
+  var d = ((TABLEAU || {}).devis || []).filter(function(x){ return x.numero === numero; })[0];
+  return (d && d.noteInterne) || '';
+}
+function noteInterneHtml(t){
+  t = String(t || '').trim();
+  if(!t) return '';
+  return '<div class="noteInt" style="margin-top:10px;text-align:left;white-space:pre-wrap">' +
+    '<b>Note interne</b> <span class="mini" style="color:inherit;opacity:.8">(le client ne la voit pas)</span><br>' +
+    ech(t) + '</div>';
+}
+/* v108x — signer depuis « Voir le devis ». */
+function signerDepuisPdf(btn){
+  var e = PDF_VU;
+  if(!e || !e.id) return;
+  APERCU = null;
+  fermerPdf();
+  ouvrirSignatureDevis(e.id, btn);
+}
+/* Un mot de confirmation, là où l'on est. */
+function annonce(t){
+  var z = $('annonceV108x');
+  if(!z){
+    z = document.createElement('div');
+    z.id = 'annonceV108x';
+    z.className = 'ok';
+    z.style.cssText = 'position:fixed;left:12px;right:12px;bottom:max(16px,env(safe-area-inset-bottom));z-index:90;' +
+      'box-shadow:0 6px 24px rgba(0,0,0,.18);text-align:left;cursor:pointer';
+    z.onclick = function(){ z.classList.add('hide'); };
+    document.body.appendChild(z);
+  }
+  z.textContent = t;
+  z.classList.remove('hide');
+  clearTimeout(z._t);
+  z._t = setTimeout(function(){ z.classList.add('hide'); }, 9000);
 }
 (function(){
   function brancher(){ var z = $('poPages'); if(z) z.addEventListener('scroll', apercuDefile, {passive: true}); }
@@ -3770,7 +3844,6 @@ function dessinerPdf(enr){
 }
 
 function fermerPdf(){
-  if(APERCU) tracer('PDF RELU AVANT ENVOI — ABANDON', 'fermé sans envoyer', APERCU.numero);
   APERCU = null;
   $('pdfOverlay').classList.add('hide');
   $('poPages').innerHTML = '';
@@ -4031,11 +4104,14 @@ function envoyerDevis(enr){
        le devis vient d'être signé et change de numéro. Dans les deux cas c'est
        le sien qui fait foi — le PDF déjà remis au client, lui, garde l'ancien. */
     if(d.numero && d.numero !== enr.numero){
+      delete DEVIS_EN_VOL[enr.numero];
       if(!enr.numeroOrigine || !estNumeroSigne(d.numero)) enr.numeroPdf = enr.numero;
       enr.numero = d.numero; enr.devis.numero = d.numero;
     }
     if(d.numeroOrigine && !enr.numeroOrigine) enr.numeroOrigine = d.numeroOrigine;
-    return DB.put(enr);
+    /* v108x — le devis est au bureau : le tableau se relit tout de suite, sans
+       attendre les photos ni la fin de la synchronisation. */
+    return DB.put(enr).then(function(){ if(estAdmin()) setTimeout(function(){ chargerTableau(); }, 0); });
   })
   .catch(function(e){
     var m = String(e && e.message || e);
@@ -4363,6 +4439,7 @@ function ouvrirModificationEnr(e, horsAppareil){
     $('fDate').value = d.dateSouhaitee || '';
     $('fPlaceDate').value = (d.placement && d.placement.date) || '';
     $('fPlaceHeure').value = (d.placement && d.placement.heure) || '';
+    if($('fNoteInterne')) $('fNoteInterne').value = d.noteInterne || '';
     $('fDelai').value = d.delai || '';
     $('fNotes').value = d.notes || '';
     tracer('DEVIS MODIFIE', 'ouvert pour modification', e.numero);
@@ -4450,6 +4527,7 @@ function enrDepuisArchive(r){
       etatSite: r.etatSite || 'NORMAL', origine: r.origine || 'PROSPECTION',
       lieuSignature: r.lieuSignature || '', objet: r.objet || '', delai: r.delai || '',
       dateSouhaitee: r.dateSouhaitee || '', notes: r.notes || '', placement: r.placement || null,
+      noteInterne: r.noteInterne || '',
       remise: Number(r.remise) || 0, engagement: r.engagement || null,
       totaux: r.totaux || {ht:0, ttc:0}, signature: ''
     }
@@ -4742,7 +4820,7 @@ function blocSignatureDistance(d, ou){
     '<div class="mini" style="margin-top:0">Le client reçoit le devis par e-mail avec le bouton « Signer le devis en ligne ». ' +
     'Il signe au doigt ou à la souris, le devis passe à « signé » tout seul et tu es prévenu.</div>' +
     '<button class="btn" style="margin-top:10px" onclick="composerDevisMail(\'' + n + '\', this)">' +
-      'Envoyer le devis par e-mail</button>' +
+      'Voir le devis et l\'envoyer</button>' +
     '<div id="lienSig" class="mini" style="word-break:break-all"></div></div>';
 }
 
@@ -4773,6 +4851,7 @@ function envoyerLienSignature(numero, btn, email, zid, mail){
     }
     if(!r || !r.ok) return erreur((r && r.erreur) ? String(r.erreur) : attenteLisible());
     erreur('');
+    if(!zone || !zone.offsetParent){ annonce('E-mail envoyé à ' + r.a + ' — devis' + (r.pdf ? ' en pièce jointe' : '') + ' et bouton « Signer le devis en ligne ».'); zone = null; }
     var texte = 'Bonjour' + (r.contact ? ' ' + r.contact : '') + ', voici le devis ' + r.numero +
       ' de BREIZH BRILLANCE. Vous pouvez le lire et le signer en ligne ici : ' + r.url;
     var sms = r.tel ? 'sms:' + String(r.tel).replace(/\s+/g, '') + '?&body=' + encodeURIComponent(texte) : '';
@@ -4790,12 +4869,10 @@ function envoyerLienSignature(numero, btn, email, zid, mail){
    (particulier ou professionnel). Si le devis n'est pas encore au bureau, il
    part avec le mail de signature à son envoi. */
 function signatureDistanceFin(btn){
-  var e = DERNIER;
-  if(!e) return;
-  apercuAvantEnvoi({enr: e}, function(){ signatureDistanceFinSuite(btn); }, btn);
+  if(DERNIER) apercuAvantEnvoi({enr: DERNIER}, null, btn);
 }
-function signatureDistanceFinSuite(btn){
-  var e = DERNIER;
+function signatureDistanceFinSuite(btn, e0){
+  var e = e0 || DERNIER;
   if(!e) return;
   /* v108s — d'abord le texte : vous, tu ou personnalisé. */
   var cli = (e.devis || {}).client || {};
@@ -4808,25 +4885,26 @@ function signatureDistanceFinSuite(btn){
     signe: !!((e.devis || {}).signature)
   }, function(m){
     DB.get(e.id).then(function(x){
-      if(x && x.devis) e = DERNIER = x;
+      if(x && x.devis){ if(DERNIER && DERNIER.id === x.id) DERNIER = x; e = x; }
       if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, m.a, 'lienSigFin', m);
       /* v108w — avec du réseau, on attend que le devis soit au bureau puis le
          bureau envoie le mail : marquer l'enregistrement pendant qu'une
          synchronisation l'envoie se perdait (elle réécrit sa propre copie). */
       if(navigator.onLine) return envoyerQuandAuBureau(e, btn, m);
       e.mail = { a: m.a, sujet: m.sujet, texte: m.texte, ton: m.ton };
-      signatureDistanceFinMail(btn, m.a);
+      signatureDistanceFinMail(btn, m.a, e);
     });
   });
 }
 function envoyerQuandAuBureau(e, btn, m){
   var z = $('lienSigFin');
-  if(z) z.innerHTML = '<div class="mini" style="margin-top:10px">Le devis arrive au bureau, puis le mail part à ' + ech(m.a) + '…</div>';
+  if(z && z.offsetParent) z.innerHTML = '<div class="mini" style="margin-top:10px">Le devis arrive au bureau, puis le mail part à ' + ech(m.a) + '…</div>';
+  else annonce('Le devis arrive au bureau, puis le mail part à ' + m.a + '…');
   var debut = Date.now();
   synchroniser(false);
   (function attendre(){
     DB.get(e.id).then(function(x){
-      if(x && x.statut === 'envoye'){ DERNIER = x; return envoyerLienSignature(x.numero, btn, m.a, 'lienSigFin', m); }
+      if(x && x.statut === 'envoye'){ if(DERNIER && DERNIER.id === x.id) DERNIER = x; return envoyerLienSignature(x.numero, btn, m.a, 'lienSigFin', m); }
       if(Date.now() - debut > 120000){
         if(z) z.innerHTML = '';
         return erreur('Le devis n\'est pas encore arrivé au bureau : le mail n\'est pas parti. Réessaie « Envoyer le devis par e-mail » dans un instant.');
@@ -4850,8 +4928,8 @@ function signatureDistanceFinAncien(btn){
   }
   signatureDistanceFinMail(btn, a);
 }
-function signatureDistanceFinMail(btn, a){
-  var e = DERNIER;
+function signatureDistanceFinMail(btn, a, e0){
+  var e = e0 || DERNIER;
   a = String(a || val('sigMail') || '').trim();
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)) return erreur('Adresse e-mail invalide.');
   if(e.statut === 'envoye') return envoyerLienSignature(e.numero, btn, a, 'lienSigFin');
@@ -4862,8 +4940,9 @@ function signatureDistanceFinMail(btn, a){
   if(e.devis && e.mail.texte) e.devis.mail = e.mail;
   DB.put(e).then(function(){
     var z = $('lienSigFin');
-    if(z) z.innerHTML = '<div class="ok" style="text-align:left;margin-top:10px"><b>Le devis part à ' + ech(a) +
+    if(z && z.offsetParent) z.innerHTML = '<div class="ok" style="text-align:left;margin-top:10px"><b>Le devis part à ' + ech(a) +
       '</b><div class="mini" style="color:inherit;opacity:.85">Avec le bouton « Signer le devis en ligne », dès qu\'il arrive au bureau.</div></div>';
+    else annonce('Le devis part à ' + a + ' dès qu\'il arrive au bureau (hors connexion pour l\'instant).');
     synchroniser(false);
   });
 }
@@ -5920,6 +5999,7 @@ function chargerTableau(btn){
     // s'affiche quand même.
     try{ lsj('tableau', d); }catch(e){}
     appliquerEnVol(TABLEAU);
+    appliquerDevisEnVol(TABLEAU);
     erreur('');
     peindreTableau();
     if(AD_FICHE) rouvrirFiche();
@@ -6927,6 +7007,7 @@ function peindreFicheDevis(d){
       (d.note ? '<div class="mini" style="margin-top:8px">Note du commercial : ' + ech(d.note) + '</div>' : '') +
       (d.placement && d.placement.date ? '<div class="mini" style="margin-top:8px">Placement suggéré (interne) : <b>' +
         ech(jjmmaa(d.placement.date)) + (d.placement.heure ? ' à ' + ech(d.placement.heure) : '') + '</b></div>' : '') +
+      noteInterneHtml(d.noteInterne) +
       (d.pdf ? '<a class="btn sec" style="display:block;text-align:center;margin-top:12px;' +
         'text-decoration:none" href="' + ech(d.pdf) + '" target="_blank" rel="noopener">' +
         'Voir le devis (PDF)</a>' : '<div class="mini" style="margin-top:10px">Aucun PDF archivé.</div>') +
@@ -7251,6 +7332,7 @@ function peindreFicheChantier(c, neuf){
           '<b style="flex:1;font-size:17px">' + ech(c.client||'Chantier') + '</b>' + badgeChantier(c) +
         '</div>' +
         (c.numero ? '<div class="mini" style="margin-top:6px">' + ech(c.numero) + '</div>' : '') +
+        noteInterneHtml(noteInterneDe(c.numero)) +
         (c.arrivee ? '<div class="mini" style="margin-top:8px">Arrivé à ' + heureLisible(c.arrivee) +
           (c.depart ? ', parti à ' + heureLisible(c.depart) + ' · ' + dureeLisible(c.minutes) : '') +
           '</div>' : '') +
@@ -8207,7 +8289,7 @@ function ficheClient(cle){
     '<div class="row" style="gap:8px;margin-top:10px">' +
       (tel ? lien('tel:' + tel, 'Appeler') : '') +
       (c.email ? lien('mailto:' + c.email, 'E-mail') : '') +
-      (adr ? lien('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(adr), 'Itinéraire') : '') +
+      (adr ? '<button class="btn sec sm" style="flex:1" data-adr="' + ech(adr) + '" onclick="choisirGps(this.dataset.adr)">Itinéraire</button>' : '') +
     '</div></div>';
   if(c.contrats.length){
     h += '<div class="card"><h2>Contrats</h2>' + c.contrats.map(function(s){
@@ -8679,13 +8761,63 @@ function ouvrirChantier(id){
   });
 }
 
+/* ====================== v108x — ALLER CHEZ LE CLIENT ======================
+   Simon : « pour les prestataires, quand il clique sur l'adresse du client,
+   il puisse rediriger à Waze ou Google Maps ou Plans ». Un appui sur
+   l'adresse (ou sur « Itinéraire ») ouvre le choix ; l'appli choisie démarre
+   le guidage jusqu'à l'adresse. Plans n'est proposé que sur iPhone/iPad. */
+function adresseComplete(c){
+  return [c && c.adresse, [c && c.cp, c && c.ville].filter(Boolean).join(' ')]
+    .map(function(x){ return String(x || '').trim(); }).filter(Boolean).join(', ');
+}
+function surApple(){
+  return /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent || '') && ('ontouchend' in document || /iPhone|iPad|iPod/.test(navigator.userAgent || ''));
+}
+function liensGps(adr){
+  var q = encodeURIComponent(adr);
+  var l = [
+    { nom: 'Waze', url: 'https://waze.com/ul?q=' + q + '&navigate=yes' },
+    { nom: 'Google Maps', url: 'https://www.google.com/maps/dir/?api=1&destination=' + q + '&travelmode=driving' }
+  ];
+  if(surApple()) l.push({ nom: 'Plans', url: 'https://maps.apple.com/?daddr=' + q + '&dirflg=d' });
+  return l;
+}
+function choisirGps(adr){
+  adr = String(adr || '').trim();
+  if(!adr) return erreur('Pas d\'adresse pour cette intervention : demande-la au bureau.');
+  var z = $('gpsChoix');
+  if(!z){
+    z = document.createElement('div');
+    z.id = 'gpsChoix';
+    z.className = 'hide';
+    z.style.cssText = 'position:fixed;inset:0;z-index:95;background:rgba(15,23,42,.45);display:flex;align-items:flex-end;justify-content:center';
+    z.onclick = function(ev){ if(ev.target === z) z.classList.add('hide'); };
+    document.body.appendChild(z);
+  }
+  z.innerHTML = '<div class="card" style="width:100%;max-width:520px;margin:0;border-radius:16px 16px 0 0;' +
+      'padding-bottom:max(16px,env(safe-area-inset-bottom))">' +
+    '<b>Aller chez le client</b><div class="mini" style="margin:4px 0 12px">' + ech(adr) + '</div>' +
+    liensGps(adr).map(function(x){
+      return '<a class="btn" style="display:block;text-align:center;text-decoration:none;margin-top:8px" href="' + ech(x.url) +
+        '" target="_blank" rel="noopener" onclick="tracer(\'ITINERAIRE\', \'' + x.nom + '\', ' +
+        '(CHANTIER && CHANTIER.client) || \'\'); document.getElementById(\'gpsChoix\').classList.add(\'hide\')">' + x.nom + '</a>';
+    }).join('') +
+    '<button class="btn sec" style="margin-top:10px" onclick="document.getElementById(\'gpsChoix\').classList.add(\'hide\')">Annuler</button>' +
+    '</div>';
+  z.classList.remove('hide');
+}
+function itineraire(){ choisirGps(adresseComplete(CHANTIER)); }
+
 function peindreChantier(){
   var c = CHANTIER;
   if(!c) return;
   $('agClient').textContent = c.client || 'Chantier';
   $('agQuandCh').textContent = jourLisible(c.date) + (c.heure ? ' · ' + c.heure : '');
-  $('agAdresse').innerHTML = ech(c.adresse || '') +
-    ((c.cp || c.ville) ? '<br>' + ech((c.cp||'') + ' ' + (c.ville||'')) : '');
+  $('agAdresse').innerHTML = (c.adresse || c.cp || c.ville)
+    ? '<a href="#" onclick="itineraire();return false" style="color:inherit;text-decoration:underline;text-underline-offset:3px">' +
+        ech(c.adresse || '') + ((c.cp || c.ville) ? '<br>' + ech((c.cp||'') + ' ' + (c.ville||'')) : '') + '</a>' +
+      '<div class="mini" style="margin-top:2px">Appuie sur l\'adresse pour lancer Waze, Google Maps' + (surApple() ? ' ou Plans' : '') + '.</div>'
+    : '';
 
   var fz = $('agFiche');
   if(fz){
@@ -8902,7 +9034,7 @@ function nouveauDevis(){
   GRP = {};
   PHOTO_ID = null;
   cacherSugg();
-  ['cSociete','cSiret','cTva','cCiv','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate','fPlaceDate','fPlaceHeure']
+  ['cSociete','cSiret','cTva','cCiv','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate','fPlaceDate','fPlaceHeure','fNoteInterne']
     .forEach(function(id){ if($(id)) $(id).value=''; });
   $('fEnvoi').checked = false;
   MAIL_MODE = ''; try{ majCadreMail(); }catch(e){}
@@ -11427,7 +11559,7 @@ function erreurComposeur(t){
 }
 /* Fiche d'un devis (gérant ou commercial) : « Envoyer le devis par e-mail ». */
 function composerDevisMail(numero, btn){
-  apercuAvantEnvoi({numero: numero}, function(){ composerDevisMailSuite(numero, btn); }, btn);
+  apercuAvantEnvoi({numero: numero}, null, btn);
 }
 function composerDevisMailSuite(numero, btn){
   var t = TABLEAU || {};

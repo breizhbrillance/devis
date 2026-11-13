@@ -403,7 +403,20 @@ function majStructure() {
   SpreadsheetApp.getUi().alert('Structure à jour.');
 }
 
+/* v108x — « quand j'ajoute un devis ça met 45 secondes » : la vérification
+   des colonnes de tous les onglets (une quinzaine de lectures) se faisait à
+   chaque devis reçu. Elle ne se refait plus qu'une fois toutes les six heures
+   — une colonne manquante est de toute façon ajoutée là où elle sert
+   (colonneAssuree_). */
 function majStructure_() {
+  try {
+    var c = CacheService.getScriptCache();
+    if (c.get('STRUCT_OK_v108x')) return;
+    majStructureVraie_();
+    c.put('STRUCT_OK_v108x', '1', 21600);
+  } catch (e) { majStructureVraie_(); }
+}
+function majStructureVraie_() {
   var ss = SpreadsheetApp.getActive();
   var shD = ss.getSheetByName(SH.DEVIS);
   if (shD && shD.getLastColumn() > 0) {
@@ -1678,9 +1691,11 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
     ENGAGEMENT_MOIS: engagementMois_(devis),
     RECONDUCTION: reconductionDevis_(devis),
     SANS_CONTRAT: devis.sansContrat ? 'OUI' : '',
-    PLACEMENT_SUGGERE: placementTexte_(devis.placement)
+    PLACEMENT_SUGGERE: placementTexte_(devis.placement),
+    NOTE_INTERNE: String(devis.noteInterne || '').trim()
   };
   colonneAssuree_(SH.DEVIS, 'PLACEMENT_SUGGERE');
+  colonneAssuree_(SH.DEVIS, 'NOTE_INTERNE');
   colonneAssuree_(SH.DEVIS, 'ENGAGEMENT_MOIS'); colonneAssuree_(SH.DEVIS, 'RECONDUCTION'); colonneAssuree_(SH.DEVIS, 'SANS_CONTRAT');
   majDevis_(numero, maj);
 
@@ -1854,6 +1869,11 @@ function signerDevisRecu_(ligne, col, d, devis, reg, com) {
 }
 
 function enregistrer_(d, com) {
+  var t0E = Date.now();
+  try { return enregistrerVrai_(d, com); }
+  finally { console.log('sync devis ' + ((d.devis || {}).numero || '') + ' : ' + (Date.now() - t0E) + ' ms (depuis l\'arrivée : ' + (Date.now() - T0_DOPOST_) + ' ms)'); }
+}
+function enregistrerVrai_(d, com) {
   var ss = SpreadsheetApp.getActive();
   var reg = lireReglages_();
   var devis = d.devis;
@@ -1979,8 +1999,13 @@ function enregistrer_(d, com) {
     ENGAGEMENT_MOIS: engagementMois_(devis),
     RECONDUCTION: reconductionDevis_(devis),
     SANS_CONTRAT: devis.sansContrat ? 'OUI' : '',
-    PLACEMENT_SUGGERE: placementTexte_(devis.placement)
+    PLACEMENT_SUGGERE: placementTexte_(devis.placement),
+    NOTE_INTERNE: String(devis.noteInterne || '').trim()     // v108x — jamais au client
   };
+  if (en.indexOf('NOTE_INTERNE') < 0) {
+    colonneAssuree_(SH.DEVIS, 'NOTE_INTERNE');
+    en = shD.getRange(1, 1, 1, shD.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim(); });
+  }
   if (controleTarif) {
     tracerServeur_(devis.commercial || com.nom, 'ECART TARIF', controleTarif,
                    devis.numero, d.appareil || '');
@@ -2323,6 +2348,7 @@ function tableauAdmin_() {
       preuve: String(o.PREUVE_SIGNATURE || '') ? true : false,
       note: String(o.NOTE_COMMERCIAL || ''),
       placement: placementLire_(o.PLACEMENT_SUGGERE),
+      noteInterne: String(o.NOTE_INTERNE || ''),
       /* v93 — de quoi mettre un devis d'entretien au calendrier comme contrat,
          sans retaper le client : le rythme, l'adresse, la nature, le mensuel. */
       recurrent: recurrentDevis_(o.NATURE, o.PASSAGES_MOIS, o.SANS_CONTRAT),
@@ -6558,6 +6584,7 @@ function devisArchive_(d, com) {
        correction deviendrait un second devis. */
     idDevis: String(cible.ID_DEVIS || ''),
     placement: placementLire_(cible.PLACEMENT_SUGGERE),
+    noteInterne: String(cible.NOTE_INTERNE || ''),
     commercial: String(cible.COMMERCIAL || ''),
     statut: String(cible.STATUT || ''),
     signe: String(cible.SIGNE || '').toUpperCase() === 'OUI' || String(cible.STATUT || '').toUpperCase() === 'SIGNE',
@@ -8153,7 +8180,96 @@ function facturerDepuisAppli_(d, com) {
  * (menu 31) : les ponctuels terminés depuis deux heures, et le 3 du mois
  * les contrats du mois écoulé (rattrapage les 4 et 5). Que des brouillons.
  */
+/* ================================================================
+   v108x — RAPPEL DE POINTAGE, 5 MINUTES AVANT
+   ================================================================
+   Simon : « faut mettre un rappel pour les prestataires de bien pointer et
+   dépointer 5 minutes avant le début et la fin de l'intervention ».
+   Toutes les 5 minutes, de 6 h à 22 h : pour chaque intervention du jour,
+   le ou les salariés reçoivent une notification dans les 5 minutes qui
+   précèdent l'heure de début (« Pointe ton arrivée ») si l'arrivée n'est pas
+   pointée, puis dans les 5 minutes qui précèdent la fin prévue (heure +
+   durée prévue, 2 h si rien n'est prévu) si le départ n'est pas pointé.
+   Une seule fois chacun. Le déclencheur s'installe tout seul (voir
+   assurerRappelsPointage_, appelé par la préparation horaire). */
+var STATUTS_SANS_RAPPEL_ = ['ANNULE', 'TERMINE', 'FAIT', 'A PLANIFIER'];
+function rappelsPointageMinute() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+  try { rappelsPointage_(new Date()); }
+  catch (e) { tracerServeur_('SYSTEME', 'RAPPEL POINTAGE EN ECHEC', String(e && e.message || e).slice(0, 200), '', ''); }
+  finally { lock.releaseLock(); }
+}
+function minutesHeure_(x) {
+  if (x instanceof Date) return x.getHours() * 60 + x.getMinutes();
+  var m = String(x || '').match(/(\d{1,2})\s*[:h]\s*(\d{2})?/);
+  return m ? Number(m[1]) * 60 + Number(m[2] || 0) : -1;
+}
+function hhmm_(min) {
+  min = ((Math.round(min) % 1440) + 1440) % 1440;
+  return ('0' + Math.floor(min / 60)).slice(-2) + 'h' + ('0' + (min % 60)).slice(-2);
+}
+function rappelsPointage_(maintenant) {
+  var now = maintenant || new Date();
+  var m = now.getHours() * 60 + now.getMinutes();
+  if (m < 6 * 60 || m >= 22 * 60) return { envoyes: 0 };
+  var reg = lireReglages_();
+  if (String(reg.rappel_pointage || '').toUpperCase().trim() === 'NON') return { envoyes: 0, motif: 'coupé' };
+  var c = notifConfig_();
+  if (!c.app || !c.cle) return { envoyes: 0, motif: 'notifications non connectées' };
+  var iso = isoJour_(now);
+  var props = PropertiesService.getScriptProperties();
+  var cle = 'RAPPELS_PT_' + iso;
+  var deja = {};
+  try { deja = JSON.parse(props.getProperty(cle) || '{}'); } catch (e) { deja = {}; }
+  var envois = [];
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    var id = String(o.ID || '').trim();
+    if (!id) return;
+    if (!(o.DATE instanceof Date) || isoJour_(o.DATE) !== iso) return;
+    var st = String(o.STATUT || '').toUpperCase().trim();
+    if (STATUTS_SANS_RAPPEL_.indexOf(st) >= 0) return;
+    var qui = String(o.PRESTATAIRE || '').trim();
+    if (!qui) return;
+    var debut = minutesHeure_(o.HEURE);
+    if (debut < 0) return;
+    var fin = debut + (Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || 120);
+    var client = String(o.CLIENT || 'Intervention').trim();
+    var arrive = !!String(o.ARRIVEE || '').trim(), parti = !!String(o.DEPART || '').trim();
+    if (!arrive && !deja[id + '|D'] && m >= debut - 5 && m <= debut + 10) {
+      envois.push({ nom: qui, titre: 'Pointe ton arrivée',
+                    texte: client + ' à ' + hhmm_(debut) + ' : appuie sur « Arrivée » dans l\'appli en arrivant.', lien: '' });
+      deja[id + '|D'] = 1;
+    }
+    if (!parti && !deja[id + '|F'] && m >= fin - 5 && m <= fin + 15) {
+      envois.push({ nom: qui, titre: 'Pointe ton départ',
+                    texte: client + ', fin prévue à ' + hhmm_(fin) + ' : appuie sur « Départ » dans l\'appli avant de partir.' +
+                           (arrive ? '' : ' (L\'arrivée n\'est pas pointée non plus.)'), lien: '' });
+      deja[id + '|F'] = 1;
+    }
+  });
+  if (!envois.length) return { envoyes: 0 };
+  var parNom = [];
+  envois.forEach(function (x) {
+    nomsQui_(x.nom).forEach(function (n1) { parNom.push({ nom: n1, titre: x.titre, texte: x.texte, lien: x.lien }); });
+  });
+  try { notifierLot_(parNom); } catch (eN) {}
+  props.setProperty(cle, JSON.stringify(deja));
+  tracerServeur_('SYSTEME', 'RAPPEL POINTAGE', parNom.length + ' rappel(s) : ' +
+                 envois.map(function (x) { return x.titre.replace('Pointe ton ', '') + ' ' + x.nom; }).join(' · ').slice(0, 300), '', '');
+  return { envoyes: parNom.length };
+}
+/* Le déclencheur toutes les 5 minutes, posé s'il manque. */
+function assurerRappelsPointage_() {
+  var ok = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'rappelsPointageMinute'; });
+  if (ok) return false;
+  ScriptApp.newTrigger('rappelsPointageMinute').timeBased().everyMinutes(5).create();
+  tracerServeur_('SYSTEME', 'RAPPEL POINTAGE', 'déclencheur toutes les 5 minutes installé', '', '');
+  return true;
+}
+
 function preparationAutomatique() {
+  try { assurerRappelsPointage_(); } catch (eT) {}
   var lock = LockService.getScriptLock();
   try { lock.waitLock(30000); } catch (e) { return; }
   /* v106 — le rappel de la veille aux clients des chantiers ponctuels. */
