@@ -123,7 +123,10 @@ var ENTETES_CHANTIERS_ = [
   /* v101 — la fiche chantier jointe par le gérant (PDF ou photo) : FICHE porte
      le lien Drive, FICHE_NOM le nom du fichier. Le salarié la lit par l'appli,
      jamais par un lien public : elle porte des codes d'accès et des adresses. */
-  'FICHE', 'FICHE_NOM'
+  'FICHE', 'FICHE_NOM',
+  /* v108y — l'intervention dont celle-ci est la suite (CH-…) : un chantier
+     en plusieurs fois ne se facture qu'une fois tout fait. */
+  'SUITE_DE'
 ];
 
 /* La série récurrente. JOUR vaut LUNDI..DIMANCHE pour les fréquences
@@ -1202,7 +1205,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj'];
+                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj', 'interventionSuite'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1261,7 +1264,7 @@ function doPost(e) {
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
          /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
-         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj']
+         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj', 'interventionSuite']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire', 'essaiNotif']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1338,6 +1341,7 @@ function doPost(e) {
        (majChantier_) en écrase une autre. */
     if (d.action === 'planifier') { lock.waitLock(30000); return reponse_(planifierChantier_(d, com)); }
     if (d.action === 'poserDevis') return reponse_(poserAvantSignature_(d, com));
+    if (d.action === 'interventionSuite') return reponse_(interventionSuite_(d, com));
     if (d.action === 'chantierNeuf') {
       if (!devisObligatoireOk_(d)) return reponse_({ ok: false, sansDevis: true, erreur: 'relie l\'intervention à un devis (champ « Devis lié »)' });
       lock.waitLock(30000); return reponse_(creerChantier_(d, com));
@@ -1692,10 +1696,12 @@ function reviserDevisRecu_(ligne, col, d, devis, reg, com) {
     RECONDUCTION: reconductionDevis_(devis),
     SANS_CONTRAT: devis.sansContrat ? 'OUI' : '',
     PLACEMENT_SUGGERE: placementTexte_(devis.placement),
-    NOTE_INTERNE: String(devis.noteInterne || '').trim()
+    NOTE_INTERNE: String(devis.noteInterne || '').trim(),
+    INTERVENTIONS: Math.max(0, Math.round(Number(devis.interventions) || 0)) || ''
   };
   colonneAssuree_(SH.DEVIS, 'PLACEMENT_SUGGERE');
   colonneAssuree_(SH.DEVIS, 'NOTE_INTERNE');
+  colonneAssuree_(SH.DEVIS, 'INTERVENTIONS');
   colonneAssuree_(SH.DEVIS, 'ENGAGEMENT_MOIS'); colonneAssuree_(SH.DEVIS, 'RECONDUCTION'); colonneAssuree_(SH.DEVIS, 'SANS_CONTRAT');
   majDevis_(numero, maj);
 
@@ -2000,10 +2006,12 @@ function enregistrerVrai_(d, com) {
     RECONDUCTION: reconductionDevis_(devis),
     SANS_CONTRAT: devis.sansContrat ? 'OUI' : '',
     PLACEMENT_SUGGERE: placementTexte_(devis.placement),
-    NOTE_INTERNE: String(devis.noteInterne || '').trim()     // v108x — jamais au client
+    NOTE_INTERNE: String(devis.noteInterne || '').trim(),    // v108x — jamais au client
+    INTERVENTIONS: Math.max(0, Math.round(Number(devis.interventions) || 0)) || ''   // v108y
   };
-  if (en.indexOf('NOTE_INTERNE') < 0) {
+  if (en.indexOf('NOTE_INTERNE') < 0 || en.indexOf('INTERVENTIONS') < 0) {
     colonneAssuree_(SH.DEVIS, 'NOTE_INTERNE');
+    colonneAssuree_(SH.DEVIS, 'INTERVENTIONS');
     en = shD.getRange(1, 1, 1, shD.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim(); });
   }
   if (controleTarif) {
@@ -2415,6 +2423,7 @@ function tableauAdmin_() {
          fiche de dire « contrat récurrent » et de proposer d'en modifier la
          suite. */
       recurrent: String(o.RECURRENT || '').trim(),
+      suiteDe: String(o.SUITE_DE || '').trim(), lot: String(o.LOT || '').trim(),
       fiche: String(o.FICHE || '').trim() ? (String(o.FICHE_NOM || '').trim() || 'Fiche chantier') : '',
       /* Un passage sans date venu d'un férié : le nom du férié et sa date
          d'origine, pour que « À placer » dise pourquoi il est là. */
@@ -2808,6 +2817,74 @@ function creerChantier_(d, com) {
   if (v.NATURE !== NATURE_RDV_) prevenirAdmins_(com, 'Nouvelle intervention',
     client + ' — ' + quandLisible_(date, v.HEURE) + (qui ? ' · ' + qui : ' · à placer'), id);
   return { ok: true, id: id, statut: v.STATUT, notifs: notifsN || [] };
+}
+
+/* ================================================================
+   v108y — UNE INTERVENTION DE PLUS
+   ================================================================
+   Simon, 13 novembre : « pour Roosen y'a une seconde intervention donc ce
+   n'est pas fini, faut que je puisse remettre une date ». Depuis la fiche
+   d'une intervention, « Ajouter une intervention » en pose une nouvelle,
+   à placer, pour le même client, la même adresse, le même devis. Toutes
+   celles d'un même chantier se suivent : SUITE_DE porte l'identifiant de la
+   première, LOT dit « 2/3 ». La facture attend que toutes soient faites —
+   pour un devis, c'était déjà la règle (toutes ses interventions pointées) ;
+   sans devis, le prix lu dans la note de la première vaut pour l'ensemble. */
+function interventionSuite_(d, com) {
+  var id = String(d.id || '').trim();
+  if (!id) return { ok: false, erreur: 'intervention manquante' };
+  colonneAssuree_(SH.CHANTIERS, 'SUITE_DE');
+  var sh = SpreadsheetApp.getActive().getSheetByName(SH.CHANTIERS);
+  var v = sh.getDataRange().getValues();
+  var en = v[0].map(function (x) { return String(x).trim(); });
+  var c = function (k) { return en.indexOf(k); };
+  var iId = c('ID'), iSuite = c('SUITE_DE'), iLot = c('LOT');
+  var ligne = -1;
+  for (var i = 1; i < v.length; i++) if (String(v[i][iId]).trim() === id) { ligne = i; break; }
+  if (ligne < 0) return { ok: false, erreur: 'intervention ' + id + ' introuvable' };
+  var src = v[ligne];
+  if (String(src[c('RECURRENT')] || '').trim()) return { ok: false, erreur: 'c\'est un passage de contrat : le contrat pose déjà les suivants' };
+  var racine = String(src[iSuite] || '').trim() || id;
+  var combien = Math.max(1, Math.min(10, Math.round(Number(d.nb) || 1)));
+  var nouvelles = [];
+  var suivant = prochainNumChantier_(sh, iId);
+  var notePropre = String(src[c('NOTE')] || '').replace(/(\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*€\s*(HT|TTC)?/ig, '').replace(/\s+—\s*\./g, '.').trim();
+  for (var k = 0; k < combien; k++) {
+    var nid = 'CH-' + ('000' + (suivant + k)).slice(-4);
+    var row = en.map(function (h, j) {
+      switch (h) {
+        case 'ID': return nid;
+        case 'DATE': case 'HEURE': case 'PRESTATAIRE': case 'ARRIVEE': case 'DEPART': case 'MINUTES':
+        case 'PRESTATIONS_FAITES': case 'SIGNALEMENT': case 'RECURRENT': case 'AVANT_SIGNATURE': return '';
+        case 'PHOTOS': return 0;
+        case 'STATUT': return 'A PLANIFIER';
+        case 'CREE_LE': return new Date();
+        case 'SUITE_DE': return racine;
+        case 'NOTE': return ('Suite de ' + racine + (notePropre ? ' — ' + notePropre : '')).slice(0, 2000);
+        default: return src[j];
+      }
+    });
+    sh.appendRow(row);
+    nouvelles.push(nid);
+  }
+  /* Les « 1/3, 2/3, 3/3 » de tout le groupe, dans l'ordre des numéros. */
+  v = sh.getDataRange().getValues();
+  var groupe = [];
+  for (var g = 1; g < v.length; g++) {
+    var gid = String(v[g][iId]).trim();
+    if (gid === racine || String(v[g][iSuite] || '').trim() === racine) {
+      if (String(v[g][c('STATUT')] || '').toUpperCase().trim() !== 'ANNULE') groupe.push(g);
+    }
+  }
+  if (iLot >= 0) groupe.forEach(function (g, n) { sh.getRange(g + 1, iLot + 1).setValue((n + 1) + '/' + groupe.length); });
+  tracerServeur_(com ? com.nom : '', 'INTERVENTION AJOUTEE',
+                 String(src[c('CLIENT')] || '') + ' · ' + nouvelles.join(', ') + ' · suite de ' + racine,
+                 String(src[c('NUMERO')] || ''), d.appareil || '');
+  /* Une facture déjà préparée pour la première intervention reste un
+     brouillon : on prévient qu'il attend la dernière. */
+  var facture = (facturesFaites_()[racine] || {})[''];
+  return { ok: true, ids: nouvelles, racine: racine, total: groupe.length,
+           factureDeja: facture ? true : false };
 }
 
 /**
@@ -4451,7 +4528,11 @@ function genererChantiers_(numero) {
      ici. « À faire » propose de le mettre au calendrier ; la fiche du devis
      pré-remplit le rythme, et la série posée remplit le planning. */
   if (recurrent) return 0;
-  var combien = 1;
+  /* v108y — « quand on fait le devis faudrait qu'après je puisse choisir le
+     nombre d'interventions » : un chantier en plusieurs fois pose autant de
+     fiches à placer, la durée partagée entre elles. */
+  var combien = Math.max(1, Math.min(10, Math.round(Number(devis.INTERVENTIONS) || 1)));
+  var nbInterv = combien;
   if (recurrent) {
     combien = Number(String(devis.PASSAGES_MOIS || '').replace(',', '.')) ||
               Number(String(reg.passages_mois_defaut || '4').replace(',', '.')) || 4;
@@ -4469,7 +4550,7 @@ function genererChantiers_(numero) {
      qu'une fiche qui déborde ne tient sur aucun planning. */
   var taux = tauxHorairePlanning_(reg);
   var htTotal = Number(devis.TOTAL_HT) || 0;
-  var minutesPassage = minutesPour_(recurrent && moyenneMois > 0 ? htTotal / moyenneMois : htTotal, taux);
+  var minutesPassage = minutesPour_(recurrent && moyenneMois > 0 ? htTotal / moyenneMois : htTotal / nbInterv, taux);
   var gens = prestatairesPlanning_();
   var journee = 420;                         // 7 h, à défaut de salarié décrit
   gens.forEach(function (g) { if (g.capaciteJour > journee) journee = g.capaciteJour; });
@@ -4510,7 +4591,8 @@ function genererChantiers_(numero) {
         ARRIVEE: '', DEPART: '', MINUTES: '',
         PRESTATIONS_FAITES: '', SIGNALEMENT: '', PHOTOS: 0, NOTE: '',
         CREE_LE: maintenant,
-        DUREE_PREVUE_MIN: lots[p].minutes, LOT: lots[p].lot,
+        DUREE_PREVUE_MIN: lots[p].minutes,
+        LOT: nbInterv > 1 ? (k + 1) + '/' + nbInterv + (lots[p].lot ? ' · jour ' + lots[p].lot : '') : lots[p].lot,
         NATURE: natureOuVide_(devis.NATURE)
       };
       rows.push(en.map(function (h) { return v.hasOwnProperty(h) ? v[h] : ''; }));
@@ -6585,6 +6667,7 @@ function devisArchive_(d, com) {
     idDevis: String(cible.ID_DEVIS || ''),
     placement: placementLire_(cible.PLACEMENT_SUGGERE),
     noteInterne: String(cible.NOTE_INTERNE || ''),
+    interventions: Number(cible.INTERVENTIONS) || 1,
     commercial: String(cible.COMMERCIAL || ''),
     statut: String(cible.STATUT || ''),
     signe: String(cible.SIGNE || '').toUpperCase() === 'OUI' || String(cible.STATUT || '').toUpperCase() === 'SIGNE',
@@ -7700,11 +7783,30 @@ function facturesPonctuels_(com) {
      dont le prix est écrit dans la note (« 690 € HT »). Celles sans prix
      attendent dans l'onglet Factures de l'appli : on n'invente pas un montant. */
   var faites0 = facturesFaites_(), t0 = Date.now();
-  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+  /* v108y — plus de brouillon automatique pour une intervention SANS devis
+     dans l'appli (Roosen, Shampoing Bras immobilier) : la facture part du
+     devis, jamais d'une note. */
+  var tousCh = [];
+  /* v108y — les suites d'une intervention : la facture attend la dernière. */
+  var suites = {};
+  tousCh.forEach(function (o) {
+    var r0 = String(o.SUITE_DE || '').trim();
+    if (r0) (suites[r0] = suites[r0] || []).push(o);
+  });
+  tousCh.forEach(function (o) {
     var id = String(o.ID || '').trim();
     if (!id || String(o.NUMERO || '').trim() || String(o.RECURRENT || '').trim()) return;
+    if (String(o.SUITE_DE || '').trim()) return;
     if (String(o.STATUT || '').toUpperCase().trim() !== 'FAIT') return;
     if ((faites0[id] || {})['']) return;
+    var resteSuites = (suites[id] || []).filter(function (x) {
+      var st = String(x.STATUT || '').toUpperCase().trim();
+      return st !== 'FAIT' && st !== 'ANNULE';
+    });
+    if (resteSuites.length) return;
+    (suites[id] || []).forEach(function (x) {
+      if (x.DEPART && (!o.DEPART || new Date(x.DEPART) > new Date(o.DEPART))) o = Object.assign({}, o, { DEPART: x.DEPART });
+    });
     var dep = o.DEPART ? new Date(o.DEPART) : null;
     if (!dep || isNaN(dep.getTime()) || t0 - dep.getTime() < 2 * 3600 * 1000) return;
     var prix = prixDeNote_(o.NOTE);
@@ -7862,6 +7964,8 @@ function facturationAppli_(periode) {
       (parDevis[num] = parDevis[num] || []).push(o);
       return;
     }
+    /* v108y — la suite d'une intervention se facture avec la première. */
+    if (String(o.SUITE_DE || '').trim()) return;
     var deja = (faites[id] || {})[''];
     var prix = prixDeNote_(o.NOTE);
     /* v108f — un modèle Henrri au montant de la note, ou à défaut le plus
@@ -7877,6 +7981,9 @@ function facturationAppli_(periode) {
       modele: mod ? { source: mod.source, ht: mod.ht, tva: mod.tva, n: mod.lignes.length, date: mod.date,
                       lignes: mod.lignes.slice(0, 12).map(function (l) { return l.designation + ' — ' + l.montant.toFixed(2).replace('.', ',') + ' €'; }) } : null,
       particulier: estParticulier_(o.CLIENT),
+      /* v108y — « pourquoi tu m'as préparé la facture alors que le devis
+         n'est pas dans l'appli » : sans devis, rien ne se facture. */
+      sansDevis: true,
       qui: String(o.PRESTATAIRE || ''), pointe: st === 'FAIT',
       jamaisPlace: st === 'A PLANIFIER' || !String(o.PRESTATAIRE || '').trim(),
       contrat: contratProche_(o.CLIENT, noms),
@@ -8069,6 +8176,10 @@ function facturerIntervention_(d, com) {
   objetsDe_(SH.CHANTIERS).forEach(function (o) { if (String(o.ID || '').trim() === id) ch = o; });
   if (!ch) return { ok: false, erreur: 'Intervention ' + id + ' introuvable.' };
   if ((facturesFaites_()[id] || {})['']) return { ok: false, deja: true, erreur: 'Déjà facturée.' };
+  /* v108y — sans devis dans l'appli, pas de facture : relier d'abord. */
+  var numCh = String(ch.NUMERO || '').trim();
+  if (!numCh || !lireDevis_().some(function (x) { return String(x.NUMERO || '').trim() === numCh; }))
+    return { ok: false, sansDevis: true, erreur: 'Pas de devis dans l\'appli pour cette intervention : relie d\'abord son devis (fiche de l\'intervention).' };
   var ht = Math.round((Number(String(d.ht || '').replace(',', '.')) || 0) * 100) / 100;
   if (!(ht > 0)) return { ok: false, erreur: 'Indique le montant HT.' };
   var tva = d.tva === undefined || d.tva === '' ? (estParticulier_(d.client || ch.CLIENT) ? 10 : 20) : Number(d.tva);

@@ -1064,6 +1064,18 @@
       <div class="mini">Si le client sait quand il veut qu'on vienne, pose la date : elle
         s'imprime sur le devis et sert à poser le chantier sur le planning. Sinon, laisse
         vide — le bureau planifiera à partir du jour de la signature.</div>
+      <!-- v108y — « quand on fait le devis faudrait qu'après je puisse choisir le
+           nombre d'interventions ». -->
+      <div id="blocInterv">
+        <label>Nombre d'interventions</label>
+        <select id="fInterventions">
+          <option value="1">1 intervention</option><option value="2">2 interventions</option>
+          <option value="3">3 interventions</option><option value="4">4 interventions</option>
+          <option value="5">5 interventions</option><option value="6">6 interventions</option>
+        </select>
+        <div class="mini">En combien de fois le chantier se fait. À la signature, autant
+          d'interventions sont à placer au planning ; la facture attend que toutes soient faites.</div>
+      </div>
       <!-- v108e — une précision pour nous seulement : où le commercial verrait
            l'intervention. Elle ne s'imprime pas et ne part pas au client. -->
       <label>Placement suggéré — interne (facultatif)</label>
@@ -1712,11 +1724,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=108x"></script>
-<script src="jspdf.umd.min.js?v=108x"></script>
-<script src="police.js?v=108x"></script>
-<script src="logo.js?v=108x"></script>
-<script src="pdf.js?v=108x"></script>
-<script src="app.js?v=108x"></script>
+<script src="config.js?v=108y"></script>
+<script src="jspdf.umd.min.js?v=108y"></script>
+<script src="police.js?v=108y"></script>
+<script src="logo.js?v=108y"></script>
+<script src="pdf.js?v=108y"></script>
+<script src="app.js?v=108y"></script>
 </body>
 </html>

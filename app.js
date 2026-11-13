@@ -3078,6 +3078,7 @@ function majApercuSignature(){
 }
 var MAIL_MODE = '';      // '' (pas encore choisi) | 'ecran' (signé sur place) | 'distance'
 function majCadreMail(){
+  if($('blocInterv')) $('blocInterv').classList.toggle('hide', estRecurrent());
   var z = $('cMail');
   if(!z) return;
   /* v108x — l'envoi ne se fait plus avant l'enregistrement. */
@@ -3257,7 +3258,7 @@ function sauverBrouillon(){
   lsj('brouillon', {client:lireClient(), lignes:LIGNES, objet:val('fObjet'),
                     plus2ans:PLUS2ANS, taux:TAUX, dateSouhaitee:val('fDate'),
                     placement:{date:val('fPlaceDate'), heure:val('fPlaceHeure')},
-                    noteInterne:val('fNoteInterne'),
+                    noteInterne:val('fNoteInterne'), interventions:val('fInterventions'),
                     delai:val('fDelai'), notes:val('fNotes'),
                     remise:{valeur:REMISE.valeur, muet:REMISE.muet},
                     nature:NATURE, sansContrat:SANS_CONTRAT, passages:PASSAGES, etat:ETAT, engagement:ENGAGEMENT,
@@ -3312,6 +3313,7 @@ function restaurer(b){
   if($('fPlaceDate')) $('fPlaceDate').value = (b.placement && b.placement.date) || '';
   if($('fPlaceHeure')) $('fPlaceHeure').value = (b.placement && b.placement.heure) || '';
   if($('fNoteInterne')) $('fNoteInterne').value = b.noteInterne || '';
+  if($('fInterventions')) $('fInterventions').value = String(b.interventions || 1);
   $('fDelai').value = b.delai||'';
   PLUS2ANS = (b.plus2ans === true || b.plus2ans === false) ? b.plus2ans : null;
   TAUX = b.taux || null;
@@ -3481,6 +3483,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       /* v108e — interne : jamais imprimé, jamais dans le mail au client. */
       placement: (val('fPlaceDate') || val('fPlaceHeure')) ? {date: val('fPlaceDate'), heure: val('fPlaceHeure')} : null,
       noteInterne: val('fNoteInterne'),               // v108x — pour le bureau seulement
+      interventions: estRecurrent() ? 0 : (Number(val('fInterventions')) || 1),   // v108y
       delai: val('fDelai'),          // la phrase pour le client, rien de plus
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
       nature: NATURE || 'CHANTIER',   // ENTRETIEN | VITRERIE | FACADE | CHANTIER | REMISE
@@ -4440,6 +4443,7 @@ function ouvrirModificationEnr(e, horsAppareil){
     $('fPlaceDate').value = (d.placement && d.placement.date) || '';
     $('fPlaceHeure').value = (d.placement && d.placement.heure) || '';
     if($('fNoteInterne')) $('fNoteInterne').value = d.noteInterne || '';
+    if($('fInterventions')) $('fInterventions').value = String(d.interventions || 1);
     $('fDelai').value = d.delai || '';
     $('fNotes').value = d.notes || '';
     tracer('DEVIS MODIFIE', 'ouvert pour modification', e.numero);
@@ -4527,7 +4531,7 @@ function enrDepuisArchive(r){
       etatSite: r.etatSite || 'NORMAL', origine: r.origine || 'PROSPECTION',
       lieuSignature: r.lieuSignature || '', objet: r.objet || '', delai: r.delai || '',
       dateSouhaitee: r.dateSouhaitee || '', notes: r.notes || '', placement: r.placement || null,
-      noteInterne: r.noteInterne || '',
+      noteInterne: r.noteInterne || '', interventions: Number(r.interventions) || 1,
       remise: Number(r.remise) || 0, engagement: r.engagement || null,
       totaux: r.totaux || {ht:0, ttc:0}, signature: ''
     }
@@ -7316,6 +7320,25 @@ var NATURES_CHOIX = [
 /* La fiche d'un chantier, qu'il existe déjà ou qu'on soit en train de le
    créer. Le même formulaire sert aux deux : un chantier posé à la main n'est
    pas d'une autre espèce, il n'a simplement pas de devis derrière lui. */
+function ajouterInterventionAd(id, btn){
+  var moi = session();
+  if(!moi) return;
+  var nb = Number(($('adNbSuite') || {}).value) || 1;
+  occuper(btn, 'Ajout…');
+  poster({action:'interventionSuite', id:id, nb:nb, nom:moi.nom, code:moi.code, appareil:APPAREIL}, 60000).then(function(r){
+    libere(btn);
+    if(!r || !r.ok) return erreur((r && r.erreur) || attenteLisible());
+    var z = $('adSuiteRes');
+    if(z) z.innerHTML = '<div class="ok" style="text-align:left;margin-top:10px"><b>' +
+      (r.ids.length > 1 ? r.ids.length + ' interventions ajoutées' : 'Intervention ajoutée') + '</b> (' + ech(r.ids.join(', ')) +
+      ') — elle' + (r.ids.length > 1 ? 's sont' : ' est') + ' dans « À placer ». Ce chantier compte maintenant ' +
+      r.total + ' interventions.' +
+      (r.factureDeja ? '<div class="mini" style="color:inherit;margin-top:6px">La facture de la première intervention est déjà ' +
+        'en brouillon dans Pennylane : ne l\'envoie qu\'une fois la dernière faite.</div>' : '') + '</div>';
+    chargerTableau();
+  }, function(){ libere(btn); erreur(attenteLisible()); });
+}
+
 function peindreFicheChantier(c, neuf){
   var gens = ((TABLEAU||{}).prestataires||[]);
   var annule = String(c.statut||'').toUpperCase() === 'ANNULE';
@@ -7395,6 +7418,24 @@ function peindreFicheChantier(c, neuf){
         'onclick="' + (neuf ? 'creerLeChantier(this)' : 'enregistrerPlanif(this)') + '">' +
         (neuf ? 'Créer le chantier' : 'Enregistrer') + '</button>' +
     '</div>' +
+
+    /* v108y — « pour Roosen y'a une seconde intervention donc ce n'est pas
+       fini, faut que je puisse remettre une date ». */
+    (neuf || c.recurrent || annule ? '' :
+      '<div class="card">' +
+        '<h2>Le chantier n\'est pas fini ?</h2>' +
+        (c.lot ? '<div class="mini" style="margin-top:0">Intervention ' + ech(c.lot) + '.</div>' : '') +
+        '<div class="mini" style="margin-top:4px">Ajoute une intervention : elle part dans « À placer » avec le même ' +
+          'client, la même adresse et le même devis. La facture attend que toutes soient faites.</div>' +
+        '<div class="row" style="gap:8px;margin-top:10px;align-items:center">' +
+          '<select id="adNbSuite" style="width:auto;flex:0 0 auto">' +
+            [1,2,3,4].map(function(n){ return '<option value="' + n + '">+' + n + '</option>'; }).join('') +
+          '</select>' +
+          '<button class="btn sec" style="flex:1;margin:0" onclick="ajouterInterventionAd(\'' + ech(c.id) + '\', this)">' +
+            'Ajouter une intervention</button>' +
+        '</div>' +
+        '<div id="adSuiteRes"></div>' +
+      '</div>') +
 
     /* Annuler plutôt que supprimer : la ligne reste au classeur, et un passage
        de contrat récurrent annulé ne revient pas à la génération suivante. */
@@ -9036,6 +9077,7 @@ function nouveauDevis(){
   cacherSugg();
   ['cSociete','cSiret','cTva','cCiv','cContact','cTel','cEmail','cAdresse','cCp','cVille','cKm','fSignataire','fNotes','fObjet','fDelai','fDate','fPlaceDate','fPlaceHeure','fNoteInterne']
     .forEach(function(id){ if($(id)) $(id).value=''; });
+  if($('fInterventions')) $('fInterventions').value = '1';
   $('fEnvoi').checked = false;
   MAIL_MODE = ''; try{ majCadreMail(); }catch(e){}
   ['fMailA','fMailObjet','fMailTexte'].forEach(function(id){ if($(id)) $(id).value = ''; });
@@ -10182,8 +10224,10 @@ function listeFacturesAdmin(){
   var cAFaire = c.filter(function(x){ return !x.facturee; });
   var cPrets = cAFaire.filter(function(x){ return !x.manque.length; });
   var totC = cAFaire.reduce(function(s, x){ return s + (x.ht || 0); }, 0);
-  var iAFaire = it.filter(function(x){ return !x.facturee && !x.contrat; });
-  var iContrat = it.filter(function(x){ return !x.facturee && x.contrat; });
+  /* v108y — sans devis dans l'appli : rien à préparer, seulement à relier. */
+  var iSansDevis = it.filter(function(x){ return !x.facturee && x.sansDevis; });
+  var iAFaire = it.filter(function(x){ return !x.facturee && !x.contrat && !x.sansDevis; });
+  var iContrat = it.filter(function(x){ return !x.facturee && x.contrat && !x.sansDevis; });
   var iFaites = it.filter(function(x){ return x.facturee; });
   var totI = iAFaire.reduce(function(s, x){ return s + (Number(x.ht) || 0); }, 0);
 
@@ -10191,8 +10235,8 @@ function listeFacturesAdmin(){
   h += '<div class="card"><b>Ponctuels · ' + ech(moisNom(FACT_MOIS)) + '</b><div class="mini">' +
        iAFaire.length + ' intervention(s) à facturer · ' + eur(totI) + ' HT' +
        (iAFaire.some(function(x){ return !(x.ht > 0); }) ? ' (prix à compléter)' : '') +
-       '<br>Une intervention apparaît ici une fois sa date passée. Avec devis : le prix et le client du devis. ' +
-       'Sans devis : le prix écrit dans la note, à vérifier.</div></div>';
+       '<br>Une intervention apparaît ici une fois sa date passée, avec le prix et le client de son devis. ' +
+       'Sans devis dans l\'appli, pas de facture : relie d\'abord son devis.</div></div>';
 
   /* ---- les interventions ponctuelles ---- */
   if(!iAFaire.length) h += '<div class="card"><div class="mini">Aucune intervention ponctuelle à facturer en ' +
@@ -10203,6 +10247,12 @@ function listeFacturesAdmin(){
          '<div class="card"><div class="mini">Ces interventions portent le nom d\'un client sous contrat. ' +
          'Si elles sont comprises dans son forfait, marque-les « déjà facturée ». Sinon, facture-les ici.</div></div>';
     iContrat.forEach(function(x){ h += carteInter(x); });
+  }
+  if(iSansDevis.length){
+    h += '<h3 class="factTitre">Sans devis dans l\'appli (' + iSansDevis.length + ')</h3>' +
+         '<div class="card"><div class="mini">Pas de facture tant que le devis n\'est pas relié : ouvre l\'intervention et ' +
+         'relie son devis. Si elle est déjà facturée ailleurs, dis-le.</div></div>';
+    iSansDevis.forEach(function(x){ h += carteSansDevis(x); });
   }
   if(iFaites.length) h += dejaFaitesHtml(iFaites);
   return h;
@@ -10243,6 +10293,18 @@ function dejaFaitesHtml(l){
       }).join('') + '</div>';
   }
   return h;
+}
+
+function carteSansDevis(x){
+  var cle = ech(factCle(x)).replace(/'/g,'&#39;');
+  return '<div class="card factSansDevis"><div class="row" style="justify-content:space-between">' +
+    '<b>' + ech(x.client) + '</b><span class="mini">' + ech(dateCourte(x.date)) + '</span></div>' +
+    '<div class="mini">' + ech([x.ville, quiLisible(x.qui)].filter(Boolean).join(' · ')) +
+    (x.note ? '<br>' + ech(x.note) : '') + '</div>' +
+    '<div class="row" style="gap:8px;margin-top:8px">' +
+      '<button class="btn sm" style="flex:2" onclick="ficheChantier(\'' + cle + '\')">Relier son devis</button>' +
+      '<button class="btn sec sm" style="flex:1" onclick="marquerFacturee(\'' + x.type + '\',\'' + cle + '\', this)">Déjà facturée</button>' +
+    '</div></div>';
 }
 
 function carteInter(x){
