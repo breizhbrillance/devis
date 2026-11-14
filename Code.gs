@@ -1354,10 +1354,9 @@ function doPost(e) {
       /* Le verrou : deux créations en même temps prendraient le même numéro
          de série, et la génération lit CHANTIERS avant d'y écrire. */
       lock.waitLock(30000);
-      if (d.action === 'recurrentNeuf') {
-        if (!devisObligatoireOk_(d)) return reponse_({ ok: false, sansDevis: true, erreur: 'relie le contrat à son devis (champ « Devis lié »)' });
-        return reponse_(recurrentNeuf_(d, com));
-      }
+      /* v108zb — « il faut pouvoir créer ce que l'on veut » : plus de devis
+         obligatoire pour une série récurrente non plus. */
+      if (d.action === 'recurrentNeuf') return reponse_(recurrentNeuf_(d, com));
       if (d.action === 'recurrentModif') return reponse_(recurrentModif_(d, com));
       return reponse_(recurrentStop_(d, com));
     }
