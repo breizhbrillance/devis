@@ -1471,8 +1471,13 @@ function majNature(){
 var ORIGINE = 'PROSPECTION';
 var LIEU = 'CLIENT';
 
+/* v108z — « ajoute dans d'où vient-il BNI, c'est un groupe dans lequel je suis ». */
+function origineNorm(v){
+  v = String(v || '').toUpperCase().trim();
+  return (v === 'ENTRANT' || v === 'BNI') ? v : 'PROSPECTION';
+}
 function setOrigine(v){
-  ORIGINE = (v === 'ENTRANT') ? 'ENTRANT' : 'PROSPECTION';
+  ORIGINE = origineNorm(v);
   majOrigine(); sauverBrouillon();
 }
 function setLieu(v){
@@ -1493,6 +1498,7 @@ function majOrigine(){
   };
   b('orPROS', ORIGINE === 'PROSPECTION');
   b('orENTR', ORIGINE === 'ENTRANT');
+  b('orBNI', ORIGINE === 'BNI');
   // Un professionnel n'a pas de droit de rétractation : la question ne se pose pas.
   var bl = $('blocLieu');
   if(bl) bl.classList.toggle('hide', TYPE !== 'PART');
@@ -3318,7 +3324,7 @@ function restaurer(b){
   PLUS2ANS = (b.plus2ans === true || b.plus2ans === false) ? b.plus2ans : null;
   TAUX = b.taux || null;
   majTva();
-  ORIGINE = (b.origine === 'ENTRANT') ? 'ENTRANT' : 'PROSPECTION';
+  ORIGINE = origineNorm(b.origine);
   LIEU = (b.lieu === 'AGENCE') ? 'AGENCE' : 'CLIENT';
   majOrigine();
   $('fNotes').value = b.notes||'';
@@ -3487,7 +3493,7 @@ function enregistrerSuite(b, envoi, moi, secours){
       delai: val('fDelai'),          // la phrase pour le client, rien de plus
       remise: REMISE.valeur,   // et reportée sur chaque ligne, pour que tout concorde
       nature: NATURE || 'CHANTIER',   // ENTRETIEN | VITRERIE | FACADE | CHANTIER | REMISE
-      origine: ORIGINE,                       // 'PROSPECTION' | 'ENTRANT', pour le suivi
+      origine: ORIGINE,                       // 'PROSPECTION' | 'ENTRANT' | 'BNI', pour le suivi
       lieuSignature: TYPE === 'PART' ? LIEU : '',   // commande le formulaire de rétractation
       passages: estRecurrent() ? PASSAGES : 0,
       sansContrat: NATURE === 'ENTRETIEN' && SANS_CONTRAT,
@@ -4432,7 +4438,7 @@ function ouvrirModificationEnr(e, horsAppareil){
     retirerKmDesPrix();
     retirerEtatDesPrix(d.lignes, d.etatSite, d.majorationPct);
     ETAT = (d.etatSite === 'TRES_SALE') ? 'TRES_SALE' : 'NORMAL';
-    ORIGINE = (d.origine === 'ENTRANT') ? 'ENTRANT' : 'PROSPECTION';
+    ORIGINE = origineNorm(d.origine);
     LIEU = (d.lieuSignature === 'AGENCE') ? 'AGENCE' : 'CLIENT';
     majOrigine();
     $('fObjet').value = d.objet || '';
@@ -11358,6 +11364,19 @@ function listeRepartition(titre, l, champ){
       '<b>' + (champ === 'ca' ? eurE(x.ca) : (x.nb ? Math.round(x.signes / x.nb * 100) + ' %' : '—')) + '</b></div>';
   }).join('') + '</div>';
 }
+/* v108z — d'où viennent les clients : devis, signés, taux, chiffre signé. */
+function nomOrigine(v){
+  return ({ PROSPECTION:'Prospection', ENTRANT:'Appel entrant', BNI:'BNI' })[v] || (String(v).charAt(0) + String(v).slice(1).toLowerCase());
+}
+function listeOrigines(l){
+  if(!l || !l.length) return '';
+  return '<div style="margin-top:10px"><b>D\'où viennent les clients</b>' + l.map(function(x){
+    return '<div class="ch"><span>' + ech(nomOrigine(x.nom)) + ' <span class="mini">' + x.nb + ' devis · ' + x.signes + ' signé' + (x.signes > 1 ? 's' : '') +
+      ' · ' + (x.nb ? Math.round(x.signes / x.nb * 100) : 0) + ' %' + (x.mensuel ? ' · ' + eurE(x.mensuel) + '/mois' : '') + '</span></span>' +
+      '<b>' + eurE(x.ca || 0) + '</b></div>';
+  }).join('') + '<div class="mini">Montant = HT des devis signés : ponctuels, et contrats comptés sur 12 mois (comme « Par commercial »).</div></div>';
+}
+
 function peindreStats(){
   var z = $('adFiche'), s = STATS;
   var h = '<div class="row" style="gap:8px;align-items:center;margin-bottom:10px"><div class="mini" style="flex:1">' +
@@ -11410,7 +11429,7 @@ function peindreStats(){
     tuileStat('En attente de réponse', String(D.attente || 0), (D.pipeHt ? eurE(D.pipeHt) + ' ponctuels' : '') + (D.pipeMensuel ? (D.pipeHt ? ' + ' : '') + eurE(D.pipeMensuel) + '/mois' : '')) +
     '</div>' +
     listeRepartition('Par commercial', s.parCommercial, 'ca') +
-    listeRepartition('Par origine', s.parOrigine, 'taux') +
+    listeOrigines(s.parOrigine) +
     listeRepartition('Par type de prestation', s.parNature, 'ca') +
     '<div class="mini" style="margin-top:8px">Devis faits dans l\'appli depuis janvier (essais exclus). Les contrats repris d\'avant l\'appli comptent dans le chiffre, pas dans le taux.</div></div>';
 

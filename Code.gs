@@ -4439,7 +4439,9 @@ function majorableKm_(nature) {
    prospection : un champ vide vient d'un téléphone d'avant la question, et
    c'est bien ce que ses commerciaux faisaient alors. */
 function origineDevis_(v) {
-  return String(v || '').toUpperCase().trim() === 'ENTRANT' ? 'ENTRANT' : 'PROSPECTION';
+  v = String(v || '').toUpperCase().trim();
+  /* v108z : BNI, le groupe d'affaires dont Simon fait partie. */
+  return (v === 'ENTRANT' || v === 'BNI') ? v : 'PROSPECTION';
 }
 
 /* Où le devis a été signé. Vide ou inconnu : chez le client — c'est le cas
@@ -12713,14 +12715,15 @@ function statsSociete_(d) {
     var com = String(o.COMMERCIAL || '').trim() || '—';
     var pc = parCom[com] || (parCom[com] = { nom: com, nb: 0, signes: 0, ca: 0 });
     var orig = String(o.ORIGINE || '').trim().toUpperCase() || 'NON PRÉCISÉE';
-    var po = parOrig[orig] || (parOrig[orig] = { nom: orig, nb: 0, signes: 0 });
+    var po = parOrig[orig] || (parOrig[orig] = { nom: orig, nb: 0, signes: 0, ca: 0, mensuel: 0 });
     var nat = c.contrat ? 'CONTRAT ' + (c.nature || '') : (c.nature || 'AUTRE');
     var pn = parNat[nat] || (parNat[nat] = { nom: nat, nb: 0, signes: 0, ca: 0 });
     pc.nb++; po.nb++; pn.nb++;
     if (dt.slice(0, 7) === moisAuj) { dv.nbMois++; dv.htMois = arr2_(dv.htMois + c.base); }
     if (st === 'SIGNE') {
       dv.signes++; pc.signes++; po.signes++; pn.signes++;
-      pc.ca = arr2_(pc.ca + c.base); pn.ca = arr2_(pn.ca + c.base);
+      pc.ca = arr2_(pc.ca + c.base); pn.ca = arr2_(pn.ca + c.base); po.ca = arr2_(po.ca + c.base);
+      if (c.contrat) po.mensuel = arr2_(po.mensuel + (c.mensuel || 0));
       if (ds.slice(0, 7) === moisAuj) dv.signesMois++;
       if (c.contrat) { dv.mensuelSigne = arr2_(dv.mensuelSigne + (c.mensuel || 0)); dv.nbContratsSignes++; }
       else { dv.htPonctuelSigne = arr2_(dv.htPonctuelSigne + c.base); dv.nbPonctuelSigne++; }
