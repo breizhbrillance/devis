@@ -1342,10 +1342,10 @@ function doPost(e) {
     if (d.action === 'planifier') { lock.waitLock(30000); return reponse_(planifierChantier_(d, com)); }
     if (d.action === 'poserDevis') return reponse_(poserAvantSignature_(d, com));
     if (d.action === 'interventionSuite') return reponse_(interventionSuite_(d, com));
-    if (d.action === 'chantierNeuf') {
-      if (!devisObligatoireOk_(d)) return reponse_({ ok: false, sansDevis: true, erreur: 'relie l\'intervention à un devis (champ « Devis lié »)' });
-      lock.waitLock(30000); return reponse_(creerChantier_(d, com));
-    }
+    /* v108z — « retire le fait de devoir lier un devis quand je veux ajouter
+       une intervention, car j'ai fait des devis à l'époque » : le devis reste
+       obligatoire pour un contrat, plus pour une intervention ponctuelle. */
+    if (d.action === 'chantierNeuf') { lock.waitLock(30000); return reponse_(creerChantier_(d, com)); }
     if (d.action === 'lierDevis') { lock.waitLock(30000); return reponse_(lierDevis_(d, com)); }
     if (d.action === 'envoyerFacture') { lock.waitLock(30000); return reponse_(envoyerFactureMain_(d, com)); }
     if (d.action === 'contratsMaj') { lock.waitLock(30000); return reponse_(contratsMaj_(d, com)); }

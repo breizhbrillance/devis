@@ -8003,13 +8003,12 @@ function peindreContrat(){
   '</div>' +
 
   ((c.mode === 'neuf' && !c.devis) || c.mode === 'modif'
-    ? '<div class="card"><label for="ct_devisQ">Devis lié' + (devisObligatoire() && c.mode === 'neuf' ? ' (obligatoire)' : '') + '</label>' + blocDevisLie(c) +
+    ? '<div class="card"><label for="ct_devisQ">Devis lié' + (devisObligatoire() && c.mode === 'neuf' ? ' (obligatoire pour un contrat)' : '') + '</label>' + blocDevisLie(c) +
       '<div class="mini">' + (c.devisLie
         ? (c.mode === 'modif' ? 'Le contrat est relié à ce devis.' : 'L\'intervention sera rattachée à ce devis (prix, facture).')
-        : (devisObligatoire()
-            ? '<span style="color:var(--warn)">Choisis le devis (ou le contrat CTR-…) de ce client : sans devis, l\'intervention ne peut pas être créée.</span>'
-            : '<span style="color:var(--warn)">Sans devis, la facture reprendra le prix écrit dans la description ' +
-              '(par exemple « 235 € HT »).</span>')) + '</div></div>'
+        : '<span style="color:var(--warn)">' + (devisObligatoire() && c.mode === 'neuf' ? 'Pour un contrat, choisis son devis (ou le contrat CTR-…). ' : '') +
+            'Une intervention sans devis dans l\'appli peut être créée, mais l\'appli ne prépare pas sa facture : ' +
+            'elle apparaîtra sous « Sans devis » dans l\'onglet Factures.</span>') + '</div></div>'
     : '') +
   '<div class="card">' +
     ch('adresse', 'Où ?', c.adresse, 'type="text" placeholder="Adresse"') +
@@ -8064,8 +8063,9 @@ function enregistrerContrat(btn){
      minutesDe(c.fin) <= minutesDe(c.heure)) return erreur('La fin tombe avant le début.');
   if(c.jusquA && c.jusquA < c.date) return erreur('« Jusqu\'au » tombe avant le premier passage.');
   /* v108q — « je ne dois pouvoir mettre une intervention que si je la relie à un devis ». */
-  if(c.mode === 'neuf' && !c.devis && !c.devisLie && devisObligatoire())
-    return erreur('Relie d\'abord cette intervention à son devis (champ « Devis lié » : tape le nom du client).');
+  /* v108z : obligatoire seulement pour un contrat ; une intervention ponctuelle peut s'en passer. */
+  if(c.mode === 'neuf' && c.rec !== 'JAMAIS' && !c.devis && !c.devisLie && devisObligatoire())
+    return erreur('Relie d\'abord ce contrat à son devis (champ « Devis lié » : tape le nom du client).');
 
   /* Jamais : c'est un chantier ponctuel, le chemin de toujours. */
   if(c.mode === 'neuf' && c.rec === 'JAMAIS'){
