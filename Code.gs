@@ -1300,7 +1300,10 @@ function doPost(e) {
         return { ok: true, chantiers: planningDe_(com.nom) };
       });
     }
-    if (d.action === 'chantier') return reponse_(enregistrerChantier_(d, com));
+    /* v108zc — un pointage à la fois : deux envois croisés (une arrivée
+       renvoyée en retard par un réseau faible et le départ) se lisaient la
+       même ligne et le dernier remettait « EN COURS » par-dessus « FAIT ». */
+    if (d.action === 'chantier') { lock.waitLock(30000); return reponse_(enregistrerChantier_(d, com)); }
     if (d.action === 'ficheLire') return reponse_(lireFiche_(d, com));
     if (d.action === 'aFaireRemise') return reponse_(remiseAFaire_(com, d));
     if (d.action === 'recurrentRenouveler') { lock.waitLock(30000); return reponse_(recurrentRenouveler_(d, com)); }
@@ -5741,16 +5744,25 @@ function enregistrerChantier_(d, personne) {
   }
 
   var v = {}, actions = [];
+  /* v108zc — « ils peuvent dire qu'ils arrivent mais n'ont pas moyen de mettre
+     je pars, le chantier reste en cours à l'infini ». Une arrivée renvoyée en
+     retard ne remplace plus l'arrivée déjà notée et ne fait plus redescendre
+     un chantier terminé à « EN COURS » : le départ, une fois là, l'emporte. */
+  var arrDeja = actuel.ARRIVEE ? new Date(actuel.ARRIVEE) : null;
+  if (arrDeja && isNaN(arrDeja.getTime())) arrDeja = null;
+  var depDeja = actuel.DEPART ? new Date(actuel.DEPART) : null;
+  if (depDeja && isNaN(depDeja.getTime())) depDeja = null;
 
   if (d.arrivee) {
-    v.ARRIVEE = new Date(Number(d.arrivee));
-    v.STATUT = 'EN COURS';
+    var arrN = new Date(Number(d.arrivee));
+    if (!arrDeja || arrN < arrDeja) v.ARRIVEE = arrN;
+    if (!depDeja && !d.depart) v.STATUT = 'EN COURS';
     actions.push('ARRIVEE');
   }
   if (d.depart) {
     var dep = new Date(Number(d.depart));
     v.DEPART = dep;
-    var arr = v.ARRIVEE || (actuel.ARRIVEE ? new Date(actuel.ARRIVEE) : null);
+    var arr = v.ARRIVEE || arrDeja;
     if (arr) v.MINUTES = Math.max(0, Math.round((dep.getTime() - arr.getTime()) / 60000));
     v.STATUT = 'FAIT';
     actions.push('DEPART');

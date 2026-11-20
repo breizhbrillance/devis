@@ -377,7 +377,7 @@ function peindreLiensTheme(){
   var mot = themeSombre() ? 'mode clair' : 'mode sombre';
   Array.prototype.forEach.call(document.querySelectorAll('.lienTheme'), function(a){ a.textContent = mot; });
   var m = document.querySelector('meta[name="theme-color"]');
-  if(m) m.setAttribute('content', themeSombre() ? '#0a0c10' : (document.body.classList.contains('admin') ? '#B3131B' : '#004C92'));
+  if(m) m.setAttribute('content', themeSombre() ? '#0a0c10' : '#004C92');
 }
 function basculerTheme(){
   var sombre = !themeSombre();
@@ -5531,17 +5531,15 @@ function taches(t){
     ajout('contrat', [d], function(x){ return x.numero; }, 'contrat signé à mettre au calendrier : ' + (d.client || d.numero),
       'ficheDevis(\'' + String(d.numero).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\')', 'warn');
   });
-  ajout('aposer', dv.filter(function(d){ return d.statut === 'SIGNE' && !d.recurrent && !d.ancien && Number(d.aPoser||0) > 0; }),
+  /* v108zc — pas de doublon : un devis dont l'intervention attend déjà dans
+     « À placer » n'est pas recompté en « devis signé pas planifié ». */
+  var dejaAPlacer = {};
+  ch.forEach(function(c){ if(!c.date && c.numero && st(c) !== 'ANNULE') dejaAPlacer[String(c.numero).trim()] = 1; });
+  ajout('aposer', dv.filter(function(d){ return d.statut === 'SIGNE' && !d.recurrent && !d.ancien && Number(d.aPoser||0) > 0 &&
+                                                !dejaAPlacer[String(d.numero || '').trim()]; }),
     function(d){ return d.numero; },
     function(n){ return pl(n,'devis signé','devis signés') + ' dont le travail n\'est pas planifié'; }, 'allerDevis()', 'warn');
-  /* Un devis à relancer : envoyé il y a 10 à 30 jours, sans réponse. */
-  var de = isoJour(new Date(Date.now() - 30*86400000)), a = isoJour(new Date(Date.now() - 10*86400000));
-  ajout('relance', dv.filter(function(d){
-    var s = String(d.statut||'').toUpperCase(), j = String(d.date||'').slice(0,10);
-    return s !== 'SIGNE' && s !== 'REFUSE' && j && j >= de && j <= a &&
-           !/^BREIZH\s*BRILLANCE$/i.test(String(d.client||'').trim());
-  }), function(d){ return d.numero; },
-    function(n){ return 'devis à relancer (envoyé' + (n>1?'s':'') + ' il y a 10 à 30 jours, sans réponse)'; }, 'allerDevis()', '');
+  /* v108zc — « supprime le truc de relance » : plus de ligne « devis à relancer ». */
   /* v108 — les éléments de paie, du 26 au 3 du mois suivant. */
   var jm = new Date().getDate();
   if(estAdmin() && (jm >= 26 || jm <= 3)){
@@ -8886,7 +8884,8 @@ function peindreChantier(){
   // pointage
   var arr = Number(c.arrivee) || 0, dep = Number(c.depart) || 0;
   $('bAgArrive').classList.toggle('hide', !!arr);
-  $('bAgFini').classList.toggle('hide', !arr || !!dep);
+  var finiOk = !!dep && String(c.statut || '').toUpperCase() !== 'EN COURS';
+  $('bAgFini').classList.toggle('hide', !arr || finiOk);
 
   /* Le salarié ne voit ni ses heures de pointage ni sa durée sur place
      (décision de Simon, 11 octobre 2026) : elles partent au classeur et
@@ -8985,7 +8984,9 @@ function pointer(quoi, btn){
     if(c.arrivee) return;
     c.arrivee = t; c.statut = 'EN COURS';
   } else {
-    if(!c.arrivee || c.depart) return;
+    /* v108zc : on peut toujours terminer un chantier resté « EN COURS »,
+       même si une heure de départ traîne déjà dessus. */
+    if(!c.arrivee || (c.depart && String(c.statut || '').toUpperCase() === 'FAIT')) return;
     c.depart = t; c.statut = 'FAIT';
     c.minutes = Math.max(0, Math.round((t - c.arrivee)/60000));
   }
@@ -9046,7 +9047,19 @@ function ouvrirSignalement(){
 
 /* ---- l'envoi différé ---- */
 
+/* v108zc — un seul envoi à la fois. Deux envois en parallèle renvoyaient
+   l'arrivée en double, et la réponse du premier effaçait sur le téléphone le
+   départ appuyé entre-temps. */
+var POUSSE_EN_COURS = null, POUSSE_ENCORE = false;
 function pousserChantiers(){
+  if(POUSSE_EN_COURS){ POUSSE_ENCORE = true; return POUSSE_EN_COURS; }
+  POUSSE_EN_COURS = pousserChantiersVrai().then(function(){
+    POUSSE_EN_COURS = null;
+    if(POUSSE_ENCORE){ POUSSE_ENCORE = false; return pousserChantiers(); }
+  }, function(){ POUSSE_EN_COURS = null; POUSSE_ENCORE = false; });
+  return POUSSE_EN_COURS;
+}
+function pousserChantiersVrai(){
   var moi = session();
   if(!moi || !navigator.onLine) return Promise.resolve();
   return DB.cTous().then(function(l){
@@ -9058,11 +9071,23 @@ function pousserChantiers(){
       return p.then(function(){
         var corps = {action:'chantier', nom:moi.nom, code:moi.code,
                      id:c.id, appareil:APPAREIL};
-        for(var k in c.aEnvoyer){ if(c.aEnvoyer.hasOwnProperty(k)) corps[k] = c.aEnvoyer[k]; }
+        var envoye = {};
+        for(var k in c.aEnvoyer){ if(c.aEnvoyer.hasOwnProperty(k)){ corps[k] = c.aEnvoyer[k]; envoye[k] = JSON.stringify(c.aEnvoyer[k]); } }
         return poster(corps).then(function(d){
           if(!d || !d.ok) return;          // on réessaiera : rien n'est perdu
-          c.aEnvoyer = {};
-          return DB.cPut(c);
+          /* On relit la fiche : ce qui a été appuyé pendant l'envoi (le départ)
+             reste à envoyer, et rien d'autre n'est écrasé. */
+          return DB.cGet(c.id).then(function(cur){
+            cur = cur || c;
+            var reste = {};
+            for(var k2 in (cur.aEnvoyer || {})){
+              if(cur.aEnvoyer.hasOwnProperty(k2) && JSON.stringify(cur.aEnvoyer[k2]) !== envoye[k2]) reste[k2] = cur.aEnvoyer[k2];
+            }
+            cur.aEnvoyer = reste;
+            if(d.statut) cur.statut = (cur.depart ? 'FAIT' : d.statut);
+            if(CHANTIER && CHANTIER.id === cur.id) CHANTIER = cur;
+            return DB.cPut(cur).then(function(){ if(Object.keys(reste).length) POUSSE_ENCORE = true; });
+          });
         }, function(){ /* réseau : on garde pour plus tard */ });
       });
     }, Promise.resolve()).then(function(){ peindrePlanning(); });

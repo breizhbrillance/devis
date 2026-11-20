@@ -40,10 +40,8 @@
      et doit savoir au premier regard lequel il a sous les yeux. Le rouge est
      volontairement plus sombre que celui des messages d'erreur, qui doivent
      rester les plus visibles. */
-  body.admin{
-    --acc:#B3131B; --acc-d:#8A0E14;
-    --acc-f:#FCEBEC; --acc-b:#EDB9BC; --acc-t:#7A0C11;
-  }
+  /* v108zc — « mets l'appli en bleu même pour les admins » : plus de rouge. */
+  body.admin{}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   /* manipulation : le défilement reste normal, mais le double-appui n'agrandit plus.
      C'est l'autre geste de zoom, que le réglage d'affichage ne couvre pas. */
@@ -691,7 +689,7 @@
     --danger:#f87171; --warn:#f0a43a; --ok:#3ccf8e;
     --sub:#15191f; --press:#1c2128}
   /* v108n — « un fond plus sombre et un rouge un peu plus vif ». */
-  html.sombre body.admin{--acc:#e0241b; --acc-d:#b51b14; --acc-f:#2a0c0b; --acc-b:#6e1a16; --acc-t:#ff9d95}
+
   html.sombre header{background:#0a0c10;border-bottom:2px solid var(--acc)}
   html.sombre .btn.sec.on, html.sombre .bsel.on, html.sombre .choix.on b,
   html.sombre .ctAva.on{color:var(--acc-t)}
@@ -1726,11 +1724,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=108zb"></script>
-<script src="jspdf.umd.min.js?v=108zb"></script>
-<script src="police.js?v=108zb"></script>
-<script src="logo.js?v=108zb"></script>
-<script src="pdf.js?v=108zb"></script>
-<script src="app.js?v=108zb"></script>
+<script src="config.js?v=108zc"></script>
+<script src="jspdf.umd.min.js?v=108zc"></script>
+<script src="police.js?v=108zc"></script>
+<script src="logo.js?v=108zc"></script>
+<script src="pdf.js?v=108zc"></script>
+<script src="app.js?v=108zc"></script>
 </body>
 </html>
