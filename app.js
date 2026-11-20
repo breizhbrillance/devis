@@ -10122,6 +10122,12 @@ function facturerAppli(type, cle, btn){
   });
   var env = {action:'facturerAppli', type:type, cle:cle, periode:FACT_MOIS,
              nom:moi.nom, code:moi.code, appareil:APPAREIL};
+  if(type === 'devis'){
+    var gk = $(factId(x || {}) + '_geste');
+    var geste = gk ? Number(String(gk.value || '').replace(',', '.')) || 0 : 0;
+    if(geste < 0){ erreur('Le geste commercial doit être positif.'); return Promise.resolve(false); }
+    if(geste > 0) env.remiseTtc = geste;
+  }
   if(type === 'chantier' && x){
     var c = champsInter(x);
     env.ht = c.ht; env.tva = c.tva; env.libelle = c.libelle;
@@ -10351,6 +10357,9 @@ function carteInter(x){
   if(x.contrat) h += '<div class="mini" style="color:var(--att,#b45309)">Client sous contrat (' + ech(x.contrat) + ').</div>';
   if(x.type === 'devis'){
     h += ligneCh('Devis ' + x.cle, eur(x.ht) + ' HT', true);
+    /* v108zd — un geste accordé après le devis (par mail, au téléphone). */
+    h += '<label for="' + k + '_geste">Geste commercial accordé (€ TTC, facultatif)</label>' +
+         '<input id="' + k + '_geste" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0">';
     if(!x.signe) h += '<div class="mini" style="color:var(--att,#b45309)">Le devis n\'est pas marqué signé.</div>';
   } else {
     h += '<label for="' + k + '_lib">Libellé sur la facture</label>' +

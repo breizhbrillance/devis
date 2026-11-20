@@ -7277,7 +7277,19 @@ function pennylaneBrouillon_(o) {
     })
   };
   if (o.description) corps.pdf_description = String(o.description).slice(0, 5000);
+  if (o.remiseHt > 0) {
+    corps.discount = { type: 'absolute', value: prixApi_(o.remiseHt) };
+    corps.pdf_description = String(corps.pdf_description || '') + ' Geste commercial accordé : ' +
+      String(o.remiseTtc.toFixed(2)).replace('.', ',') + ' € TTC.';
+  }
   var r = pennylaneAppel_('post', '/customer_invoices', corps);
+  if ((!r.ok || !r.data || !r.data.id) && o.remiseHt > 0) {
+    /* Pennylane refuse la remise globale : une ligne « Geste commercial » négative. */
+    delete corps.discount;
+    corps.invoice_lines.push({ label: 'Geste commercial', quantity: 1, raw_currency_unit_price: prixApi_(-o.remiseHt),
+                               unit: 'piece', vat_rate: corps.invoice_lines[0].vat_rate });
+    r = pennylaneAppel_('post', '/customer_invoices', corps);
+  }
   if (!r.ok || !r.data || !r.data.id) throw new Error('facture refusée par Pennylane : ' + r.erreur);
   return { deja: false, facture: r.data, client: client };
 }
@@ -7319,13 +7331,25 @@ function preparerFacturePennylane_(d, com) {
     return (Number(a.ORDRE) || 0) - (Number(b.ORDRE) || 0);
   });
   if (!lignes.length) return { ok: false, erreur: 'Ce devis n\'a aucune ligne de prestation.' };
-  var attendu = 0;
-  lignes.forEach(function (l) { attendu += Number(l.TOTAL_HT) || 0; });
+  var attendu = 0, attenduTtc = 0;
+  lignes.forEach(function (l) { attendu += Number(l.TOTAL_HT) || 0; attenduTtc += (Number(l.TOTAL_HT) || 0) * (1 + (Number(l.TVA) || 0) / 100); });
   attendu = Math.round(attendu * 100) / 100;
+  /* v108zd — « la facture Audren n'est pas bonne, j'avais mis une remise de
+     70 € » (geste de 67,42 € TTC accordé par mail après le devis) : un geste
+     commercial en € TTC, ramené en HT au taux du devis, devient la remise
+     de la facture. */
+  var remTtc = Math.round((Number(String(d.remiseTtc || '').replace(',', '.')) || 0) * 100) / 100;
+  var remHt = 0;
+  if (remTtc > 0) {
+    if (remTtc >= attenduTtc) return { ok: false, erreur: 'Le geste commercial dépasse le montant du devis.' };
+    remHt = Math.round(remTtc / (attenduTtc / attendu) * 100) / 100;
+    attendu = Math.round((attendu - remHt) * 100) / 100;
+  }
 
   var res = null, erreur = '';
   try {
     res = pennylaneBrouillon_({
+      remiseHt: remHt, remiseTtc: remTtc,
       ref: 'BB-' + num,
       client: { nom: String(devis.CLIENT || ''), siren: devis.SIRET_CLIENT, email: devis.EMAIL,
                 adresse: devis.ADRESSE, cp: devis.CP, ville: devis.VILLE,
@@ -8295,7 +8319,7 @@ function facturerDepuisAppli_(d, com) {
     if (r.sautes.length) return { ok: false, deja: true, erreur: r.sautes[0].client + ' : ' + r.sautes[0].motif };
     return { ok: false, erreur: 'Contrat ' + d.cle + ' introuvable ou inactif dans l\'onglet CONTRATS.' };
   }
-  if (d.type === 'devis') return preparerFacturePennylane_({ numero: d.cle, force: true, appareil: d.appareil }, com);
+  if (d.type === 'devis') return preparerFacturePennylane_({ numero: d.cle, force: true, appareil: d.appareil, remiseTtc: d.remiseTtc }, com);
   return facturerIntervention_(d, com);
 }
 
