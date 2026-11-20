@@ -7203,6 +7203,13 @@ function pennylaneClient_(c) {
   }
   var exact = pennylaneListe_('/customers', [{ field: 'name', operator: 'eq', value: nom }], 5);
   if (exact.length) return { id: Number(exact[0].id), neuf: false };
+  /* v108zd — un particulier au nom d'un seul mot est créé « - Audren »
+     (prénom « - ») : on le retrouve sous ce nom, sinon chaque facture
+     refaite créait un nouveau client. */
+  if (c.particulier && !/\s/.test(nom.replace(/^(M\.|MME|MR|MONSIEUR|MADAME)\s+/i, ''))) {
+    var tiret = pennylaneListe_('/customers', [{ field: 'name', operator: 'eq', value: '- ' + nom.replace(/^(M\.|MME|MR|MONSIEUR|MADAME)\s+/i, '') }], 5);
+    if (tiret.length) return { id: Number(tiret[tiret.length - 1].id), neuf: false };
+  }
   /* Le nom sans accents ni casse : « ÉTANCHÉITÉ » au classeur, « ETANCHEITE »
      chez le comptable. On cherche par le premier mot, écrit des deux façons. */
   var debut = nom.split(/\s+/)[0];
