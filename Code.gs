@@ -5560,6 +5560,14 @@ function recurrentModif_(d, com) {
     ids = ids.concat(ecrireSeries_(s, f.jours.slice(1)));
   }
 
+  /* v108zf — réparer un contrat éclaté par l'ancien découpage : il reprend le
+     devis, la fiche, l'engagement et la reconduction d'une autre série du même
+     client (reprendreDe), et sa date d'origine (debutContrat). */
+  if (String(d.reprendreDe || '').trim() || dateIso_(d.debutContrat)) {
+    var rp = reprendreSerie_(id, String(d.reprendreDe || '').trim(), dateIso_(d.debutContrat));
+    if (!rp.ok) return rp;
+  }
+
   var b = genererRecurrents_();
   tracerServeur_(com ? com.nom : '', 'CONTRAT MODIFIE',
                  f.s.CLIENT + ' · ' + id + (enPlace ? ' réécrit' : ' → ' + ids.join(', ')) +
@@ -5571,6 +5579,40 @@ function recurrentModif_(d, com) {
   prevenirSalaries_(equipe, 'Contrat modifié', quoiM + ' (regarde ton planning)', id);
   prevenirAdmins_(com, 'Contrat modifié', quoiM, id);
   return { ok: true, ids: ids, enPlace: enPlace, retires: retires, poses: b.poses || 0 };
+}
+
+/* v108zf — la série id reprend ce que portait la série src (même client) :
+   devis, note, fiche, engagement, reconduction (celle du devis si la source a
+   été close), et la date d'origine du contrat. */
+function reprendreSerie_(id, src, debutContrat) {
+  var L = ligneSerie_(id);
+  if (!L) return { ok: false, erreur: 'contrat introuvable' };
+  ['DEVIS', 'FICHE', 'FICHE_NOM', 'ENGAGEMENT_MOIS', 'RECONDUCTION', 'DEBUT_CONTRAT']
+    .forEach(function (h) { colonneAssuree_(SH.RECURRENTS, h); });
+  L = ligneSerie_(id);
+  if (src) {
+    var S = ligneSerie_(src);
+    if (!S) return { ok: false, erreur: 'contrat ' + src + ' introuvable' };
+    if (normNom_(S.o.CLIENT) !== normNom_(L.o.CLIENT)) return { ok: false, erreur: src + ' n\'est pas le même client' };
+    ['DEVIS', 'NOTE', 'FICHE', 'FICHE_NOM'].forEach(function (h) {
+      if (String(S.o[h] || '').trim()) ecrireCase_(L, h, S.o[h]);
+    });
+    var dv = String(S.o.DEVIS || '').trim() ? devisParNumero_(String(S.o.DEVIS).trim()) : null;
+    var em = Math.round(Number(S.o.ENGAGEMENT_MOIS) || 0) || (dv ? Math.round(Number(dv.ENGAGEMENT_MOIS) || 0) : 0) || (dv ? 12 : 0);
+    if (em) ecrireCase_(L, 'ENGAGEMENT_MOIS', em);
+    var rec = String(S.o.RECONDUCTION || '').toUpperCase().trim();
+    /* Une source close par l'ancien découpage porte « NON » : c'est le devis
+       qui dit la vraie reconduction (tacite par défaut). */
+    if (rec !== 'TACITE') rec = (dv ? String(dv.RECONDUCTION || '').toUpperCase().trim() : '') || 'TACITE';
+    if (rec) ecrireCase_(L, 'RECONDUCTION', rec);
+    L = ligneSerie_(id);
+  }
+  if (debutContrat) {
+    ecrireCase_(L, 'DEBUT_CONTRAT', debutContrat);
+    var m = Math.round(Number(L.o.ENGAGEMENT_MOIS) || 0);
+    if (m) ecrireCase_(L, 'FIN', new Date(debutContrat.getFullYear(), debutContrat.getMonth() + m, debutContrat.getDate() - 1, 12));
+  }
+  return { ok: true };
 }
 
 /** Arrêter un contrat : plus aucun passage à partir de la date donnée. */
