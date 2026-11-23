@@ -5110,6 +5110,8 @@ function recurrentsPourAdmin_() {
       prestataire: String(r.PRESTATAIRE || ''),
       debut: deb && !isNaN(deb.getTime()) ? isoJour_(deb) : '',
       fin: fin && !isNaN(fin.getTime()) ? isoJour_(fin) : '',
+      debutContrat: (function () { var x = r.DEBUT_CONTRAT ? new Date(r.DEBUT_CONTRAT) : null;
+        return x && !isNaN(x.getTime()) ? isoJour_(x) : ''; })(),
       actif: estActif_(r.ACTIF),
       nature: natureOuVide_(r.NATURE),
       prestations: String(r.PRESTATIONS || r.NOTE || ''),
@@ -5469,6 +5471,32 @@ function recurrentModif_(d, com) {
   var id = String(d.id || '').trim();
   var L = ligneSerie_(id);
   if (!L) return { ok: false, erreur: 'contrat introuvable' };
+
+  /* v108zf — une « jusqu'au » restée de l'ancienne série et tombée avant le
+     nouveau premier passage (cas Bois Bâti : FIN = DÉBUT) ne bloque pas la
+     modification : on repart sur l'échéance du contrat, ou sans fin. */
+  var enDate = function (x) {
+    if (x instanceof Date) return isNaN(x.getTime()) ? null : x;
+    if (typeof x === 'number') { var n = new Date(x); return isNaN(n.getTime()) ? null : n; }
+    return dateIso_(String(x || '').slice(0, 10));
+  };
+  var finAncienne = enDate(L.o.FIN);
+  var finForm = String(d.fin || '').trim() ? dateIso_(d.fin) : null;
+  var debForm = dateIso_(d.debut);
+  if (finForm && debForm && minuit_(finForm) < minuit_(debForm) &&
+      (!finAncienne || isoJour_(finAncienne) === isoJour_(finForm))) {
+    var dd = {}; for (var k1 in d) if (d.hasOwnProperty(k1)) dd[k1] = d[k1];
+    var emA = Math.round(Number(L.o.ENGAGEMENT_MOIS) || 0);
+    var ancre = enDate(L.o.DEBUT_CONTRAT || L.o.DEBUT);
+    if (!ancre || minuit_(ancre) > minuit_(debForm)) ancre = debForm;
+    if (emA > 0) {
+      var fe = new Date(ancre.getFullYear(), ancre.getMonth() + emA, ancre.getDate() - 1, 12);
+      while (minuit_(fe) < minuit_(debForm)) fe.setMonth(fe.getMonth() + emA);
+      dd.fin = isoJour_(fe);
+    } else dd.fin = '';
+    d = dd;
+  }
+
   var f = lireFicheRecurrent_(d);
   if (!f.ok) return f;
 
@@ -5483,8 +5511,8 @@ function recurrentModif_(d, com) {
     if (jum) return { ok: false, erreur: 'ce contrat existe déjà (' + jum + ')', existe: jum };
   }
 
-  /* Même rythme et même jour : la nouvelle série reprend sur un vrai passage
-     de l'ancienne. Sans cela, une quinzaine reprise « à partir d'aujourd'hui »
+  /* Même rythme et même jour : la série reprend sur un vrai passage de
+     l'ancienne. Sans cela, une quinzaine reprise « à partir d'aujourd'hui »
      changerait de semaine et le client serait sauté une fois. */
   var memeCadence = f.jours.length === 1 &&
     String(L.o.FREQUENCE || '').toUpperCase().trim() === f.s.FREQUENCE &&
@@ -5500,45 +5528,36 @@ function recurrentModif_(d, com) {
   }
 
   var retires = retirerPassages_(id, depuis), ids;
-  var enPlace = !debutAncien || debutAncien >= minuit_(depuis);
 
-  /* Un passage déjà commencé reste à sa place (retirerPassages_ ne le touche
-     pas). La série neuve ne doit pas en poser un second le même jour : son
-     premier passage est repoussé d'autant. */
-  if (!enPlace) {
-    var gardes = passagesGardes_(id, depuis);
-    for (var g = 0; g < 12; g++) {
-      var essai = {};
-      for (var k0 in f.s) if (f.s.hasOwnProperty(k0)) essai[k0] = f.s[k0];
-      essai.DEBUT = debutNeuf;
-      essai.JOUR = f.jours[0] >= 0 ? JOURS_SEMAINE_[f.jours[0]] : '';
-      var premier = prochainPassage_(essai, debutNeuf);
-      if (!premier || !gardes[isoJour_(premier)]) break;
-      var apres = new Date(premier); apres.setDate(apres.getDate() + 1);
-      debutNeuf = memeCadence ? (prochainPassage_(L.o, apres) || apres) : apres;
-    }
+  /* v108zf — « pourquoi dès que je modifie un contrat ça en recrée un » :
+     modifier, c'est modifier. Le contrat garde son numéro, son devis, sa
+     fiche, son engagement, sa reconduction et ses dates sautées ; seuls le
+     jour, l'heure, la personne, l'adresse… changent. Les passages passés ou
+     commencés restent dans CHANTIERS tels qu'ils ont eu lieu (la génération
+     ne pose qu'à partir d'aujourd'hui et jamais deux fois la même clé), les
+     autres sont reposés au nouveau créneau. La date d'origine du contrat est
+     gardée dans DEBUT_CONTRAT : l'échéance et la reconduction partent d'elle,
+     pas du nouveau premier passage. */
+  var enPlace = true;
+  if (debutAncien && debutAncien < minuit_(debutNeuf) && !String(L.o.DEBUT_CONTRAT || '').trim()) {
+    colonneAssuree_(SH.RECURRENTS, 'DEBUT_CONTRAT');
+    L = ligneSerie_(id);
+    ecrireCase_(L, 'DEBUT_CONTRAT', new Date(debutAncien.getFullYear(), debutAncien.getMonth(), debutAncien.getDate(), 12));
   }
-  if (enPlace) {
-    /* Rien n'a encore eu lieu avant la date : on réécrit la série elle-même. */
-    var s = f.s;
-    s.DEBUT = memeCadence ? debutNeuf : f.s.DEBUT;
-    ['CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES', 'FREQUENCE', 'JOUR_MOIS', 'INTERVALLE', 'HEURE',
-     'DUREE_MIN', 'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF', 'NATURE', 'PRESTATIONS']
-      .forEach(function (k) { ecrireCase_(L, k, s[k]); });
-    ecrireCase_(L, 'JOUR', f.jours[0] >= 0 ? JOURS_SEMAINE_[f.jours[0]] : '');
-    ids = [id];
-    if (f.jours.length > 1) ids = ids.concat(ecrireSeries_(s, f.jours.slice(1)));
-  } else {
-    var veille = new Date(depuis); veille.setDate(veille.getDate() - 1); veille.setHours(12, 0, 0, 0);
-    ecrireCase_(L, 'FIN', veille);
-    /* v108m — l'ancienne série est close : elle ne doit plus jamais être
-       reconduite (sinon elle renaît et double la nouvelle). */
-    ecrireCase_(L, 'RECONDUCTION', 'NON');
-    f.s.DEBUT = debutNeuf;
-    /* Les dates sautées suivent la série : un trou posé exprès ne doit pas se
-       refermer parce qu'on a changé l'heure. */
-    if (String(L.o.EXCLUSIONS || '').trim()) f.s.EXCLUSIONS = L.o.EXCLUSIONS;
-    ids = ecrireSeries_(f.s, f.jours);
+  var s = f.s;
+  s.DEBUT = debutNeuf;
+  ['CLIENT', 'ADRESSE', 'CP', 'VILLE', 'ACCES', 'FREQUENCE', 'JOUR_MOIS', 'INTERVALLE', 'HEURE',
+   'DUREE_MIN', 'PRESTATAIRE', 'DEBUT', 'FIN', 'ACTIF', 'NATURE', 'PRESTATIONS']
+    .forEach(function (k) { ecrireCase_(L, k, s[k]); });
+  ecrireCase_(L, 'JOUR', f.jours[0] >= 0 ? JOURS_SEMAINE_[f.jours[0]] : '');
+  ids = [id];
+  if (f.jours.length > 1) {
+    /* Les créneaux en plus (lundi + jeudi) sont des séries sœurs du même
+       contrat : elles portent le même devis, la même fiche, le même
+       engagement. */
+    ['DEVIS', 'NOTE', 'FICHE', 'FICHE_NOM', 'ENGAGEMENT_MOIS', 'RECONDUCTION', 'EXCLUSIONS', 'DEBUT_CONTRAT']
+      .forEach(function (k) { if (String(L.o[k] || '').trim() && !String(s[k] || '').trim()) s[k] = L.o[k]; });
+    ids = ids.concat(ecrireSeries_(s, f.jours.slice(1)));
   }
 
   var b = genererRecurrents_();
@@ -5563,7 +5582,8 @@ function recurrentStop_(d, com) {
   var depuis = dateIso_(d.aPartirDe) || new Date();
   if (minuit_(depuis) < auj) depuis = new Date(auj);
   var veille = new Date(depuis); veille.setDate(veille.getDate() - 1); veille.setHours(12, 0, 0, 0);
-  var debut = L.o.DEBUT ? minuit_(L.o.DEBUT) : null;
+  var vDeb0 = L.o.DEBUT_CONTRAT || L.o.DEBUT;   // v108zf : un contrat modifié a eu des passages avant son DÉBUT
+  var debut = vDeb0 ? minuit_(vDeb0) : null;
 
   ecrireCase_(L, 'FIN', veille);
   /* v108m — un contrat arrêté n'est plus reconduit. */
@@ -12229,9 +12249,10 @@ function reconduireContrats_() {
     /* v108m — « je veux arrêter le contrat et il revient » : une FIN posée
        avant la fin de la première période d'engagement est un arrêt ou une
        modification, pas une échéance. On ne la reconduit pas. */
-    var cD = en.indexOf('DEBUT');
-    if (cD >= 0 && v[i][cD]) {
-      var deb = minuit_(v[i][cD]);
+    var cD = en.indexOf('DEBUT'), cDC = en.indexOf('DEBUT_CONTRAT');
+    var vDeb = (cDC >= 0 && v[i][cDC]) ? v[i][cDC] : (cD >= 0 ? v[i][cD] : '');   // v108zf
+    if (vDeb) {
+      var deb = minuit_(vDeb);
       if (!isNaN(deb.getTime())) {
         var ech1 = new Date(deb); ech1.setMonth(ech1.getMonth() + mois); ech1.setDate(ech1.getDate() - 4);
         if (fin < ech1) continue;
@@ -12429,10 +12450,10 @@ function commissions_(d, com) {
   var max = Math.round(t.RENOUV_MAX || 0);
   if (max > 0) objetsDe_(SH.RECURRENTS).forEach(function (r) {
     var o = parDevis[String(r.DEVIS || '').trim()];
-    if (!o || !r.DEBUT) return;
+    if (!o || !(r.DEBUT_CONTRAT || r.DEBUT)) return;
     var c = commissionLigne_(o, t);
     if (!c.contrat || !c.tauxR) return;
-    var deb = new Date(r.DEBUT), fin = r.FIN ? new Date(r.FIN) : null;
+    var deb = new Date(r.DEBUT_CONTRAT || r.DEBUT), fin = r.FIN ? new Date(r.FIN) : null;
     if (isNaN(deb.getTime())) return;
     var duree = Math.round(Number(r.ENGAGEMENT_MOIS) || Number(o.ENGAGEMENT_MOIS) || 12);
     for (var k = 1; k <= max; k++) {
@@ -12520,7 +12541,7 @@ function contratsVivants_() {
   objetsDe_(SH.RECURRENTS).forEach(function (r) {
     var id = String(r.ID || '').trim();
     if (!id) return;
-    var s = { id: id, client: String(r.CLIENT || ''), debut: jourDe_(r.DEBUT), fin: jourDe_(r.FIN),
+    var s = { id: id, client: String(r.CLIENT || ''), debut: jourDe_(r.DEBUT_CONTRAT || r.DEBUT), fin: jourDe_(r.FIN),
               actifCol: estActif_(r.ACTIF), freq: String(r.FREQUENCE || '').toUpperCase().trim(),
               duree: Math.round(Number(r.DUREE_MIN) || 60), qui: nomsQui_(r.PRESTATAIRE),
               pm: passagesMoisSerie_(r), nature: natureDevis_(r.NATURE),

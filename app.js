@@ -8262,7 +8262,7 @@ function blocContratFiche(c){
     '<div class="row" style="align-items:center;gap:8px"><span class="ctRond">↻</span>' +
       '<b style="flex:1">Contrat ' + ech(id) + '</b></div>' +
     '<div class="mini">' + (s ? ech(libelleRythme(s)) : 'Rythme inconnu — actualise le tableau.') +
-      (s && s.debut ? ' · depuis le ' + ech(jjmmaa(s.debut)) : '') +
+      (s && (s.debutContrat || s.debut) ? ' · depuis le ' + ech(jjmmaa(s.debutContrat || s.debut)) : '') +
       (s && s.fin ? ' · jusqu\'au ' + ech(jjmmaa(s.fin)) : '') + '</div>' +
     blocLienDevis('serie', id, s ? s.devis : '', c.client) +
     '<div class="mini">En changeant le jour, l\'heure ou la personne ci-dessous, tu choisiras : ce passage seulement, ou tous les suivants.</div>' +
