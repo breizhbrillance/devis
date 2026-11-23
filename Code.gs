@@ -7199,16 +7199,16 @@ function pennylaneClient_(c) {
 
   if (siren.length === 9) {
     var parSiren = pennylaneListe_('/customers', [{ field: 'reg_no', operator: 'eq', value: siren }], 5);
-    if (parSiren.length) return { id: Number(parSiren[0].id), neuf: false };
+    if (parSiren.length) return { id: Number(parSiren[0].id), neuf: false, nom: String(parSiren[0].name || '') };
   }
   var exact = pennylaneListe_('/customers', [{ field: 'name', operator: 'eq', value: nom }], 5);
-  if (exact.length) return { id: Number(exact[0].id), neuf: false };
+  if (exact.length) return { id: Number(exact[0].id), neuf: false, nom: String(exact[0].name || '') };
   /* v108zd — un particulier au nom d'un seul mot est créé « - Audren »
      (prénom « - ») : on le retrouve sous ce nom, sinon chaque facture
      refaite créait un nouveau client. */
   if (c.particulier && !/\s/.test(nom.replace(/^(M\.|MME|MR|MONSIEUR|MADAME)\s+/i, ''))) {
     var tiret = pennylaneListe_('/customers', [{ field: 'name', operator: 'eq', value: '- ' + nom.replace(/^(M\.|MME|MR|MONSIEUR|MADAME)\s+/i, '') }], 5);
-    if (tiret.length) return { id: Number(tiret[tiret.length - 1].id), neuf: false };
+    if (tiret.length) return { id: Number(tiret[tiret.length - 1].id), neuf: false, nom: String(tiret[tiret.length - 1].name || '') };
   }
   /* Le nom sans accents ni casse : « ÉTANCHÉITÉ » au classeur, « ETANCHEITE »
      chez le comptable. On cherche par le premier mot, écrit des deux façons. */
@@ -7221,7 +7221,7 @@ function pennylaneClient_(c) {
       var proches = pennylaneListe_('/customers', [{ field: 'name', operator: 'start_with', value: essais[e] }], 50);
       for (var i = 0; i < proches.length; i++) {
         if (sansAccent_(proches[i].name).replace(/[^A-Z0-9]/g, '') === cible) {
-          return { id: Number(proches[i].id), neuf: false };
+          return { id: Number(proches[i].id), neuf: false, nom: String(proches[i].name || '') };
         }
       }
     }
@@ -7237,9 +7237,18 @@ function pennylaneClient_(c) {
   if (mail) corps.emails = [mail];
   var r;
   if (c.particulier) {
+    /* v108ze — le prénom et le nom du devis, dans le bon ordre : le mot écrit
+       en MAJUSCULES est le nom de famille (« AUDREN Ghislaine » comme
+       « Ghislaine AUDREN ») ; sinon prénom puis nom. */
     var mots = nom.replace(/^(M\.|MME|MR|MONSIEUR|MADAME)\s+/i, '').split(/\s+/);
-    corps.first_name = mots.length > 1 ? mots[0] : '-';
-    corps.last_name = mots.length > 1 ? mots.slice(1).join(' ') : mots[0];
+    var maj = mots.filter(function (m) { return m.length > 1 && m === m.toUpperCase() && /[A-ZÀ-Ý]/.test(m); });
+    if (mots.length > 1 && maj.length && maj.length < mots.length) {
+      corps.last_name = maj.join(' ');
+      corps.first_name = mots.filter(function (m) { return maj.indexOf(m) < 0; }).join(' ');
+    } else {
+      corps.first_name = mots.length > 1 ? mots[0] : '-';
+      corps.last_name = mots.length > 1 ? mots.slice(1).join(' ') : mots[0];
+    }
     r = pennylaneAppel_('post', '/individual_customers', corps);
   } else {
     corps.name = nom;
@@ -7247,7 +7256,7 @@ function pennylaneClient_(c) {
     r = pennylaneAppel_('post', '/company_customers', corps);
   }
   if (!r.ok || !r.data || !r.data.id) throw new Error('création du client refusée : ' + r.erreur);
-  return { id: Number(r.data.id), neuf: true };
+  return { id: Number(r.data.id), neuf: true, nom: corps.name || (corps.first_name + ' ' + corps.last_name) };
 }
 
 /** Le texte de bas de facture : comment payer. */
@@ -7585,13 +7594,31 @@ function finirFacturePennylane_(res, erreur, x) {
     return { ok: false, deja: true, erreur: 'Un brouillon existe déjà dans Pennylane sous la référence de ' +
              x.num + (x.periode ? ' pour ' + moisLisible_(x.periode) : '') + '.', idPennylane: f.id };
   }
+  /* v108ze — « faut bien faire attention que le nom et le prénom des factures
+     correspondent bien à celui du devis » : on compare le nom du client chez
+     Pennylane à celui du devis (sans accents, casse, civilité ni ordre). */
+  var nomPl = res.client && res.client.nom ? String(res.client.nom) : '';
+  var nomDifferent = (nomPl && !memeNomClient_(nomPl, x.client)) ? nomPl : '';
+  if (nomDifferent) tracerServeur_(x.com ? x.com.nom : 'SYSTEME', 'NOM CLIENT DIFFERENT',
+                                   'devis « ' + x.client + ' » / Pennylane « ' + nomPl + ' »', x.num, x.appareil || '');
   tracerServeur_(x.com ? x.com.nom : 'SYSTEME', 'BROUILLON PENNYLANE',
                  x.client + (x.periode ? ' · ' + moisLisible_(x.periode) : '') + ' · ' + nb_(tot.ht || x.attendu) +
                  ' € HT · facture ' + f.id + (ecart ? ' · ÉCART : ' + ecart : '') +
                  (res.client && res.client.neuf ? ' · client créé' : ''), x.num, x.appareil || '');
   return { ok: true, numero: x.num, idPennylane: f.id, idHenrri: f.id, lien: '',
            periode: x.periode, ht: tot.ht || x.attendu, tva: tot.tva, ttc: tot.ttc, ecart: ecart,
-           clientNeuf: !!(res.client && res.client.neuf), idClient: res.client ? res.client.id : '' };
+           clientNeuf: !!(res.client && res.client.neuf), idClient: res.client ? res.client.id : '',
+           nomDifferent: nomDifferent };
+}
+
+/** Deux noms de client désignent-ils la même personne ? (sans accents, casse,
+    civilité, ponctuation ni ordre des mots ; « - Audren » = « Audren »). */
+function memeNomClient_(a, b) {
+  function mots(s) {
+    return sansAccent_(String(s || '')).replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/)
+      .filter(function (m) { return m && ['M', 'MME', 'MR', 'MLLE', 'MONSIEUR', 'MADAME'].indexOf(m) < 0; }).sort().join(' ');
+  }
+  return mots(a) === mots(b);
 }
 
 /* ---------------- les contrats ---------------- */

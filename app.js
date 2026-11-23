@@ -950,6 +950,8 @@ function suivant(){
       if(s && s.length !== 14) return erreur('Un SIRET compte 14 chiffres — laisse le champ vide si tu ne l\'as pas.');
     } else {
       if(!val('cContact')) return erreur('Indique le nom du client.');
+      /* v108ze — la facture reprend le nom du devis : il faut le prénom ET le nom. */
+      if(String(val('cContact')).trim().split(/\s+/).length < 2) return erreur('Indique le prénom et le nom du client (ex. Ghislaine AUDREN) : la facture reprendra exactement ce nom.');
       if(PLUS2ANS === null) return erreur('Indique si le logement a plus de deux ans : c\'est ce qui fixe le taux de TVA.');
     }
     var mauvais = champsDouteux();
@@ -1647,7 +1649,7 @@ function majType(){
   $('chPRO').classList.toggle('on', pro);
   $('chPART').classList.toggle('on', TYPE === 'PART');
   $('blocPro').classList.toggle('hide', !pro);
-  $('lContact').textContent = pro ? 'Interlocuteur' : 'Nom et prénom du client';
+  $('lContact').textContent = pro ? 'Interlocuteur' : 'Prénom et NOM du client (repris sur la facture)';
   $('lAdresse').textContent = pro ? 'Adresse du site à nettoyer' : 'Adresse du logement';
   $('tClient').textContent = pro ? 'Client professionnel' : (TYPE ? 'Client particulier' : 'Client');
   if(TYPE === 'PART'){ $('cSociete').value=''; $('cSiret').value=''; $('cTva').value=''; }
@@ -3419,6 +3421,7 @@ function enregistrer(){
   if(!LIGNES.length) return erreur('Ajoute au moins une prestation.');
   if(TYPE === 'PRO' && !val('cSociete')) return erreur('Indique la raison sociale du client.');
   if(TYPE !== 'PRO' && !val('cContact')) return erreur('Indique le nom du client.');
+  if(TYPE !== 'PRO' && String(val('cContact')).trim().split(/\s+/).length < 2) return erreur('Indique le prénom et le nom du client (ex. Ghislaine AUDREN) : la facture reprendra exactement ce nom.');
   var veutEnvoyer = $('fEnvoi').checked;
   var mailPerso = mailClient();
   if(veutEnvoyer && !(mailPerso && mailPerso.a)) return erreur('Pas d\'e-mail client : décoche l\'envoi ou renseigne l\'adresse.');
@@ -10144,6 +10147,8 @@ function facturerAppli(type, cle, btn){
       erreur('');
       FACT_NOTE = 'Brouillon créé dans Pennylane pour ' + (x ? (x.client || x.contrat) : cle) +
         (d.ht ? ' (' + eur(d.ht) + ' HT)' : '') + (d.ecart ? ' — ' + d.ecart + ', à vérifier.' : '.') +
+        (d.nomDifferent ? ' ATTENTION : dans Pennylane, le client s\'appelle « ' + d.nomDifferent + ' » et non « ' +
+          (x ? (x.client || x.contrat) : cle) + ' » comme sur le devis — corrige la fiche client avant d\'envoyer.' : '') +
         ' Relis-le et envoie-le depuis Pennylane.';
       if(x){ x.facturee = true; x.etat = 'BROUILLON PENNYLANE'; }
       peindreTableau();
