@@ -41,7 +41,7 @@ function poser(series) {
   creer('RECURRENTS', [EN_R].concat((series || []).map(R)));
   creer('CHANTIERS', [EN_C]);
   creer('DEVIS', [['NUMERO', 'DATE', 'COMMERCIAL', 'CLIENT', 'TOTAL_HT', 'STATUT', 'SIGNE']]);
-  creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['societe_nom', 'BREIZH BRILLANCE', '']]);
+  creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['societe_nom', 'BREIZH BRILLANCE', ''], ['recurrents_duree_contrat', 'NON', '']]);
   creer('JOURNAL', [['HORODATAGE', 'MOMENT', 'COMMERCIAL', 'ACTION', 'DETAIL', 'NUMERO',
     'APPAREIL', 'SOURCE']]);
   creer('PRESTATAIRES', [['NOM', 'EMAIL', 'CODE', 'ACTIF', 'TELEPHONE'],
@@ -230,7 +230,7 @@ g = poser2([{ ID: 'R-001', CLIENT: 'HEN A CARS VITRAGES', FREQUENCE: 'MENSUEL', 
   HEURE: '12:15', PRESTATAIRE: 'MAXIME', DEBUT: jour(2026, 10, 6), ACTIF: 'OUI' }]);
 horloge(new Date(2026, 10, 1, 7, 0, 0));
 g = charger(CODE_GS);
-creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['recurrents_semaines', '20', '']]);
+creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['recurrents_semaines', '20', ''], ['recurrents_duree_contrat', 'NON', '']]);
 g.genererRecurrents_();
 T('un mois sur deux depuis octobre : décembre et février, pas novembre ni janvier',
   dates('R-001').join() === '2026-12-06,2027-02-06', dates('R-001'));
@@ -239,14 +239,14 @@ g = poser2([{ ID: 'R-001', CLIENT: 'HERON VITRAGES', FREQUENCE: 'MENSUEL', JOUR:
   INTERVALLE: 2, HEURE: '14:00', PRESTATAIRE: 'MAXIME', DEBUT: jour(2026, 11, 11), ACTIF: 'OUI',
   EXCLUSIONS: '2026-11-11, 2027-01-13' }]);
 g = charger(CODE_GS);
-creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['recurrents_semaines', '30', '']]);
+creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['recurrents_semaines', '30', ''], ['recurrents_duree_contrat', 'NON', '']]);
 g.genererRecurrents_();
 T('le 2e mercredi, un mois sur deux, moins les dates sautées : 10 mars et 12 mai',
   dates('R-001').join() === '2027-03-10,2027-05-12', dates('R-001'));
 g = poser2([{ ID: 'R-001', CLIENT: 'DERNIER', FREQUENCE: 'MENSUEL', JOUR: 'VENDREDI', JOUR_MOIS: 5,
   PRESTATAIRE: 'MAXIME', DEBUT: jour(2026, 11, 1), ACTIF: 'OUI' }]);
 g = charger(CODE_GS);
-creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['recurrents_semaines', '9', '']]);
+creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['recurrents_semaines', '9', ''], ['recurrents_duree_contrat', 'NON', '']]);
 g.genererRecurrents_();
 T('le rang 5 veut dire le dernier vendredi (27 novembre, 25 décembre)',
   dates('R-001').join() === '2026-11-27,2026-12-25', dates('R-001'));

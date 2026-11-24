@@ -53,7 +53,7 @@ function poser(series, chantiers) {
   creer('DEVIS', [['NUMERO', 'DATE', 'COMMERCIAL', 'CLIENT', 'TOTAL_HT', 'STATUT', 'SIGNE']]);
   creer('LIGNES', [['NUMERO', 'ORDRE', 'CATEGORIE', 'REFERENCE', 'DESIGNATION', 'DETAIL',
     'QTE', 'UNITE', 'PU_HT', 'REMISE_PCT', 'TYPE', 'TVA', 'TOTAL_HT']]);
-  creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['societe_nom', 'BREIZH BRILLANCE', '']]);
+  creer('REGLAGES', [['CLE', 'VALEUR', 'NOTE'], ['societe_nom', 'BREIZH BRILLANCE', ''], ['recurrents_duree_contrat', 'NON', '']]);
   creer('JOURNAL', [['HORODATAGE', 'MOMENT', 'COMMERCIAL', 'ACTION', 'DETAIL', 'NUMERO',
     'APPAREIL', 'SOURCE']]);
   creer('PRESTATAIRES', [['NOM', 'EMAIL', 'CODE', 'ACTIF', 'TELEPHONE'],

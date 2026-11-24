@@ -133,7 +133,8 @@ export function charger(chemin){
         return f.replace('dd',p(x.getDate())).replace('MM',p(x.getMonth()+1)).replace('yyyy',x.getFullYear())
                 .replace('HH',p(x.getHours())).replace('mm',p(x.getMinutes())); },
       newBlob:(b,t,n)=>({b,t,n,getName:()=>n}), base64Decode:(s)=>[1,2,3], base64Encode:()=>'x',
-      computeDigest:()=>[1], DigestAlgorithm:{SHA_256:'s'}, Charset:{UTF_8:'u'} },
+      computeDigest:()=>[1], DigestAlgorithm:{SHA_256:'s', MD5:'m'}, Charset:{UTF_8:'u'},
+      base64EncodeWebSafe:()=>'x', gzip:(b)=>({getBytes:()=>[]}), sleep(){} },
     MailApp:{ sendEmail:(a,b,c)=>{ mails.push(typeof a==='object'?a:{to:a,subject:b,body:c}); } },
     ScriptApp:{ getProjectTriggers:()=>[], newTrigger:()=>({timeBased:()=>({atHour(){return this;},everyDays(){return this;},inTimezone(){return this;},create(){}})}), deleteTrigger(){}, getService:()=>({getUrl:()=>'https://exec'}) },
     Session:{ getEffectiveUser:()=>({getEmail:()=>'gerant@test.fr'}), getScriptTimeZone:()=>'Europe/Paris' },
