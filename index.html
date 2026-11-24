@@ -645,6 +645,11 @@
     border-top:0;border-right:0;border-bottom:0;cursor:grab;touch-action:pan-y}
   .calJourne{border-color:var(--acc-b);margin-top:2px}
   @media (min-width:760px){ .calJ{min-height:104px} .calEv{font-size:12px} }
+  /* v108zg — passages de contrat prévus, pas encore posés au classeur. */
+  .calEv.calPrevu{background:transparent;border:1px dashed var(--nT,#9aa3ad);border-left-width:3px;font-weight:500;opacity:.85}
+  .semEv.semPrevu{background:transparent;border:1px dashed var(--nT,#9aa3ad);border-left:4px dashed var(--nT,#9aa3ad);opacity:.85}
+  .card.calPrevuC{border:1px dashed var(--nT,#9aa3ad);background:transparent}
+  html.sombre .calEv.calPrevu, html.sombre .semEv.semPrevu, html.sombre .card.chC.calPrevuC{background:transparent}
 
   /* ====== v95 — AUJOURD'HUI ====== */
   .acTete{padding:4px 2px 2px}
@@ -1724,11 +1729,11 @@
   </div>
 </dialog>
 
-<script src="config.js?v=108zf"></script>
-<script src="jspdf.umd.min.js?v=108zf"></script>
-<script src="police.js?v=108zf"></script>
-<script src="logo.js?v=108zf"></script>
-<script src="pdf.js?v=108zf"></script>
-<script src="app.js?v=108zf"></script>
+<script src="config.js?v=108zg"></script>
+<script src="jspdf.umd.min.js?v=108zg"></script>
+<script src="police.js?v=108zg"></script>
+<script src="logo.js?v=108zg"></script>
+<script src="pdf.js?v=108zg"></script>
+<script src="app.js?v=108zg"></script>
 </body>
 </html>

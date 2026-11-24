@@ -597,6 +597,8 @@ var REGLAGES_DEFAUT_ = [
   ['passages_mois_defaut', '4', 'Contrat mensuel : nombre de passages créés par mois si le devis ne le précise pas'],
   ['recurrents_semaines', '8',
    'Contrats récurrents (onglet ' + 'RECURRENTS' + ') : combien de semaines de planning sont posées devant soi'],
+  ['recurrents_duree_contrat', 'OUI',
+   'Contrats récurrents : OUI = passages posés sur toute la durée du contrat (sa fin, son engagement, sinon un an) ; NON = seulement les semaines ci-dessus'],
   ['pointage_retention_mois', '36', 'Durée de conservation des pointages arrivée/départ, en mois'],
   ['texte_information_agent', 'L\'application enregistre, à chaque utilisation : les connexions, l\'heure d\'arrivée et l\'heure de départ de chaque chantier, les prestations cochées, les photos prises et les signalements.\n\nCes informations servent au suivi des interventions, à la preuve du travail effectué auprès des clients, et au décompte du temps de travail. Elles sont conservées {mois} mois, puis effacées.\n\nConformément au règlement général sur la protection des données, tu peux demander à consulter les informations qui te concernent et faire rectifier une erreur, en écrivant à breizhbrillance@gmail.com.', 'Texte affiché à chaque connexion d\'un agent — {mois} est remplacé par pointage_retention_mois'],
   ['validite_jours', '30', 'Durée de validité du devis en jours'],
@@ -1048,7 +1050,7 @@ var VERSION_CLE_ = 'DONNEES_V';
 var LECTURES_ = ['connexion', 'config', 'journal', 'planning', 'tableau', 'prospects',
                  'historique', 'facturation', 'mesDevis', 'devisArchive', 'suggestions',
                  'ficheLire', 'commissions', 'elementsPaie', 'etatNotifs', 'essaiNotif',
-                 'disposSalaries', 'statsSociete'];
+                 'disposSalaries', 'statsSociete', 'chantiersPeriode'];
 var MEMO_ONGLETS_ = null;          // { nomOnglet: valeurs } pendant une lecture seule
 
 function versionDonnees_() {
@@ -1205,7 +1207,7 @@ function doPost(e) {
                    'poserDevis', 'suggestions', 'lienSignature',
                    'ficheJointe', 'ficheRetirer', 'ficheLire', 'aFaireRemise', 'recurrentRenouveler',
                    'absenceAjouter', 'absenceRetirer', 'commissions',
-                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj', 'interventionSuite'];
+                   'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj', 'interventionSuite', 'chantiersPeriode'];
     if (actions.indexOf(d.action) < 0) return reponse_({ ok: false, erreur: 'action inconnue' });
 
     // Un seul et même refus, que le nom soit inconnu ou le code faux.
@@ -1264,7 +1266,9 @@ function doPost(e) {
          'absenceAjouter', 'absenceRetirer',
          'mesDevis', 'devisArchive', 'commissions',
          /* v108 — les éléments de paie du mois ; v108e — l'état des notifications. */
-         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj', 'interventionSuite']
+         'elementsPaie', 'etatNotifs', 'essaiNotif', 'telClient', 'disposSalaries', 'statsSociete', 'lierDevis', 'envoyerFacture', 'contratsMaj', 'interventionSuite',
+         /* v108zg — le planning d'un mois hors de la fenêtre du tableau. */
+         'chantiersPeriode']
       : agent
         ? ['connexion', 'config', 'photo', 'journal', 'planning', 'chantier', 'ficheLire', 'essaiNotif']
         : ['connexion', 'config', 'sync', 'photo', 'journal', 'statut',
@@ -1337,6 +1341,10 @@ function doPost(e) {
         PERF_ = null;
         return tab;
       });
+    }
+    if (d.action === 'chantiersPeriode') {
+      var du_ = String(d.du || ''), au_ = String(d.au || '');
+      return enCache_('periode|' + du_ + '|' + au_, function () { return chantiersPeriode_(d); });
     }
     /* v105 — l'appli n'attend plus la réponse pour fermer la fiche : deux
        créations peuvent donc partir coup sur coup. Le verrou évite qu'elles
@@ -2406,39 +2414,7 @@ function tableauAdmin_() {
     // Un chantier sans date est justement celui qu'il faut planifier : il doit
     // remonter, sinon l'écran ne sert à rien.
     if (plan && (d < hier || d > loin)) return;
-    chantiers.push({
-      id: String(o.ID), numero: String(o.NUMERO || ''), client: String(o.CLIENT || ''),
-      adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
-      acces: String(o.ACCES || ''),
-      date: plan ? isoJour_(d) : '',
-      heure: heureTexte_(o.HEURE),
-      prestataire: String(o.PRESTATAIRE || ''),
-      statut: String(o.STATUT || 'A PLANIFIER'),
-      arrivee: Number(o.ARRIVEE) || 0, depart: Number(o.DEPART) || 0,
-      minutes: Number(o.MINUTES) || 0,
-      signalement: String(o.SIGNALEMENT || ''), note: String(o.NOTE || ''),
-      nature: natureChantier_(o, natures),
-      /* Seul le gérant le reçoit : le planning du salarié, lui, n'en sait
-         rien et n'a pas à en savoir. */
-      avantSignature: String(o.AVANT_SIGNATURE || '').trim().toUpperCase() === 'OUI',
-      /* La clé du contrat d'où vient le passage : c'est elle qui permet à la
-         fiche de dire « contrat récurrent » et de proposer d'en modifier la
-         suite. */
-      recurrent: String(o.RECURRENT || '').trim(),
-      suiteDe: String(o.SUITE_DE || '').trim(), lot: String(o.LOT || '').trim(),
-      fiche: String(o.FICHE || '').trim() ? (String(o.FICHE_NOM || '').trim() || 'Fiche chantier') : '',
-      /* Un passage sans date venu d'un férié : le nom du férié et sa date
-         d'origine, pour que « À placer » dise pourquoi il est là. */
-      ferie: (!o.DATE && String(o.RECURRENT || '').indexOf('|') > 0)
-        ? (function () { var iso = String(o.RECURRENT).split('|')[1];
-                         var n = nomFerieIso_(iso) || motifAbsence_(calT, iso, o.PRESTATAIRE);
-                         return n ? { nom: n, date: iso } : ''; })()
-        : '',
-      duree: Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || '',
-      /* v108n — « le numéro de chaque client sur chaque intervention ». */
-      tel: (telDe_(o, TELS) || {}).tel || '',
-      contactTel: (telDe_(o, TELS) || {}).contact || ''
-    });
+    chantiers.push(chantierAdmin_(o, d, plan, { natures: natures, calT: calT, TELS: TELS }));
   });
   chantiers.sort(function (a, b) {
     if (!a.date && b.date) return -1;               // à planifier d'abord
@@ -2447,7 +2423,15 @@ function tableauAdmin_() {
   });
   /* v93 : le mois entier se lit dans le calendrier — 300 ne tenait plus avec
      les contrats posés sur huit semaines. */
-  if (chantiers.length > 900) chantiers = chantiers.slice(0, 900);
+  /* v108zg — jusqu'où la liste est complète : au-delà, l'écran demande le
+     mois qu'il montre (chantiersPeriode_). Coupée à 900, la liste s'arrête au
+     jour d'avant le dernier gardé, qui peut n'être qu'à moitié là. */
+  var finFenetre = isoJour_(loin);
+  if (chantiers.length > 900) {
+    chantiers = chantiers.slice(0, 900);
+    var dern = chantiers[chantiers.length - 1].date;
+    if (dern) { var dv = dateIso_(dern); dv.setDate(dv.getDate() - 1); finFenetre = isoJour_(dv); }
+  }
   perf_('chantiers');
 
   /* Le compte ne peut se poser qu'ici : parDevis vient d'être rempli en lisant
@@ -2483,6 +2467,7 @@ function tableauAdmin_() {
 
   return {
     ok: true, maj: new Date().getTime(), fenetre: jours,
+    chantiersDu: isoJour_(hier), chantiersAu: finFenetre,
     chiffres: chiffres, parCommercial: liste,
     devis: devis, chantiers: chantiers,
     prestataires: gensP,
@@ -2501,6 +2486,145 @@ function tableauAdmin_() {
       var h = new Date(); h.setDate(h.getDate() + semainesRecurrents_(reg) * 7);
       return isoJour_(h);
     })()
+  };
+}
+
+/* v108zg — Simon, 24 novembre : « je veux avoir les visuels sur 1 an ou 2 ans
+   sur l'application, là j'ai ajouté des presta en avril et rien ne s'affiche ».
+   Le tableau n'emporte que les chantiers de J-30 à J+90 (sinon il pèserait des
+   mégaoctets à chaque rafraîchissement). Quand le planning montre un mois ou
+   une semaine hors de cette fenêtre, l'appli demande cette période-là :
+   — les vrais chantiers du classeur entre du et au (annulés compris, comme le
+     tableau) ;
+   — les passages prévus des contrats au-delà de ce que la nuit a déjà posé
+     (horizon des réglages, ou FIN du contrat) : le prolongement du rythme,
+     sans ligne dans le classeur. Un contrat à reconduction tacite continue
+     après son échéance ; on s'arrête à deux ans d'aujourd'hui. */
+var PERIODE_JOURS_MAX_ = 62;
+var PREVUS_JOURS_MAX_ = 731;
+
+function chantiersPeriode_(d) {
+  var du = dateIso_(d.du), au = dateIso_(d.au);
+  if (!du || !au) return { ok: false, erreur: 'période illisible' };
+  if (au < du) { var x = du; du = au; au = x; }
+  du = minuit_(du); au = minuit_(au);
+  if ((au - du) / 86400000 > PERIODE_JOURS_MAX_) return { ok: false, erreur: 'période trop longue' };
+  var aujourd = minuit_(new Date());
+  var bas = new Date(aujourd); bas.setFullYear(bas.getFullYear() - 3);
+  var haut = new Date(aujourd); haut.setFullYear(haut.getFullYear() + 3);
+  if (au < bas || du > haut) return { ok: true, du: isoJour_(du), au: isoJour_(au), chantiers: [], prevus: [] };
+
+  var reg = lireReglages_();
+  var ctx = { natures: naturesParDevis_(), calT: calendrier_(reg), TELS: telsClients_() };
+  var chantiers = [], deja = {};
+  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+    if (!String(o.ID || '').trim()) return;
+    var k = String(o.RECURRENT || '').trim();
+    if (k) deja[k] = true;
+    var dt = o.DATE ? new Date(o.DATE) : null;
+    if (!dt || isNaN(dt.getTime())) return;
+    var m = minuit_(dt);
+    if (m < du || m > au) return;
+    chantiers.push(chantierAdmin_(o, dt, true, ctx));
+  });
+  chantiers.sort(function (a, b) {
+    var ka = a.date + (a.heure || '99:99'), kb = b.date + (b.heure || '99:99');
+    return ka < kb ? -1 : (ka > kb ? 1 : 0);
+  });
+
+  /* Les passages prévus : seulement après ce que genererRecurrents_ pose. */
+  var prevus = [];
+  var horizon = new Date(aujourd); horizon.setDate(horizon.getDate() + semainesRecurrents_(reg) * 7);
+  var limite = new Date(aujourd); limite.setDate(limite.getDate() + PREVUS_JOURS_MAX_);
+  objetsDe_(SH.RECURRENTS).forEach(function (r) {
+    var id = String(r.ID || '').trim();
+    if (!id || !estActif_(r.ACTIF)) return;
+    var f = r.FIN ? minuit_(r.FIN) : null;
+    if (f && isNaN(f.getTime())) f = null;
+    var pose = horizonContrat_(r, aujourd, reg);
+    var r2 = {};
+    for (var c in r) if (r.hasOwnProperty(c)) r2[c] = r[c];
+    if (f && prolongeTacite_(r, f)) r2.FIN = '';
+    var d0 = new Date(pose); d0.setDate(d0.getDate() + 1);
+    if (d0 <= aujourd) { d0 = new Date(aujourd); d0.setDate(d0.getDate() + 1); }
+    if (d0 < du) d0 = du;
+    var d1 = au < limite ? au : limite;
+    if (d0 > d1) return;
+    var nature = natureChantier_({ NATURE: r.NATURE, NUMERO: r.DEVIS }, ctx.natures);
+    occurrencesRecurrent_(r2, d0, d1).forEach(function (j) {
+      var cle = id + '|' + isoJour_(j);
+      if (deja[cle]) return;
+      prevus.push({
+        id: 'P|' + cle, prevu: true, recurrent: cle, contrat: id,
+        client: String(r.CLIENT || ''), ville: String(r.VILLE || ''),
+        date: isoJour_(j), heure: heureTexte_(r.HEURE),
+        prestataire: String(r.PRESTATAIRE || ''), nature: nature,
+        duree: Math.round(Number(r.DUREE_MIN) || 0) || '',
+        reconduction: !!(f && minuit_(j) > f)
+      });
+    });
+  });
+  prevus.sort(function (a, b) {
+    var ka = a.date + (a.heure || '99:99'), kb = b.date + (b.heure || '99:99');
+    return ka < kb ? -1 : (ka > kb ? 1 : 0);
+  });
+  return { ok: true, du: isoJour_(du), au: isoJour_(au), chantiers: chantiers, prevus: prevus,
+           pose: isoJour_(horizon) };
+}
+
+/* Un contrat tacite dont la FIN est une échéance (pas un arrêt posé avant la
+   fin de la première période) se prolonge : même règle que reconduireContrats_. */
+function prolongeTacite_(r, fin) {
+  if (String(r.RECONDUCTION || '').toUpperCase().trim() !== 'TACITE') return false;
+  var mois = Math.round(Number(r.ENGAGEMENT_MOIS) || 0);
+  if (mois < 1) return false;
+  var vDeb = r.DEBUT_CONTRAT || r.DEBUT;
+  if (vDeb) {
+    var deb = minuit_(vDeb);
+    if (!isNaN(deb.getTime())) {
+      var ech1 = new Date(deb); ech1.setMonth(ech1.getMonth() + mois); ech1.setDate(ech1.getDate() - 4);
+      if (fin < ech1) return false;
+    }
+  }
+  return true;
+}
+
+/* v108zg — une fiche de chantier telle que l'écran du gérant la lit : sortie de
+   tableauAdmin_ pour servir aussi aux mois lointains (chantiersPeriode_). */
+function chantierAdmin_(o, d, plan, ctx) {
+  var natures = ctx.natures, calT = ctx.calT, TELS = ctx.TELS;
+  return {
+    id: String(o.ID), numero: String(o.NUMERO || ''), client: String(o.CLIENT || ''),
+    adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
+    acces: String(o.ACCES || ''),
+    date: plan ? isoJour_(d) : '',
+    heure: heureTexte_(o.HEURE),
+    prestataire: String(o.PRESTATAIRE || ''),
+    statut: String(o.STATUT || 'A PLANIFIER'),
+    arrivee: Number(o.ARRIVEE) || 0, depart: Number(o.DEPART) || 0,
+    minutes: Number(o.MINUTES) || 0,
+    signalement: String(o.SIGNALEMENT || ''), note: String(o.NOTE || ''),
+    nature: natureChantier_(o, natures),
+    /* Seul le gérant le reçoit : le planning du salarié, lui, n'en sait
+       rien et n'a pas à en savoir. */
+    avantSignature: String(o.AVANT_SIGNATURE || '').trim().toUpperCase() === 'OUI',
+    /* La clé du contrat d'où vient le passage : c'est elle qui permet à la
+       fiche de dire « contrat récurrent » et de proposer d'en modifier la
+       suite. */
+    recurrent: String(o.RECURRENT || '').trim(),
+    suiteDe: String(o.SUITE_DE || '').trim(), lot: String(o.LOT || '').trim(),
+    fiche: String(o.FICHE || '').trim() ? (String(o.FICHE_NOM || '').trim() || 'Fiche chantier') : '',
+    /* Un passage sans date venu d'un férié : le nom du férié et sa date
+       d'origine, pour que « À placer » dise pourquoi il est là. */
+    ferie: (!o.DATE && String(o.RECURRENT || '').indexOf('|') > 0)
+      ? (function () { var iso = String(o.RECURRENT).split('|')[1];
+                       var n = nomFerieIso_(iso) || motifAbsence_(calT, iso, o.PRESTATAIRE);
+                       return n ? { nom: n, date: iso } : ''; })()
+      : '',
+    duree: Math.round(Number(o.DUREE_PREVUE_MIN) || 0) || '',
+    /* v108n — « le numéro de chaque client sur chaque intervention ». */
+    tel: (telDe_(o, TELS) || {}).tel || '',
+    contactTel: (telDe_(o, TELS) || {}).contact || ''
   };
 }
 
@@ -4636,6 +4760,33 @@ function semainesRecurrents_(reg) {
   return Math.round(n);
 }
 
+/* v108zg — Simon, 24 novembre : « fais la programmation des chantiers sur la
+   durée ». Jusqu'où les passages d'un contrat sont posés au classeur :
+   — un contrat qui a une FIN : jusqu'à elle (trois ans au plus) ;
+   — sans FIN mais avec un engagement : jusqu'au bout de l'engagement ;
+   — sans FIN ni engagement : un an devant soi, qui avance chaque nuit.
+   Jamais moins que l'horizon des réglages. */
+function horizonContrat_(r, aujourd, reg) {
+  var horizon = new Date(aujourd); horizon.setDate(horizon.getDate() + semainesRecurrents_(reg) * 7);
+  var plafond = new Date(aujourd); plafond.setFullYear(plafond.getFullYear() + 3);
+  var f = r.FIN ? minuit_(r.FIN) : null;
+  if (f && isNaN(f.getTime())) f = null;
+  var duree = String((reg && reg.recurrents_duree_contrat) || 'OUI').toUpperCase().trim() !== 'NON';
+  if (!f && !duree) return horizon;
+  if (!f) {
+    var mois = Math.round(Number(r.ENGAGEMENT_MOIS) || 0);
+    var vDeb = r.DEBUT_CONTRAT || r.DEBUT;
+    var deb = vDeb ? minuit_(vDeb) : null;
+    if (mois >= 1 && deb && !isNaN(deb.getTime())) {
+      f = new Date(deb); f.setMonth(f.getMonth() + mois); f.setDate(f.getDate() - 1);
+    }
+    var an = new Date(aujourd); an.setFullYear(an.getFullYear() + 1);
+    if (!f || f < an) f = an;
+  }
+  if (f > plafond) f = plafond;
+  return f > horizon ? f : horizon;
+}
+
 /** « jeudi », « JEU », « Jeudi matin » → 4. Rien de reconnu → -1. */
 function jourSemaineNum_(t) {
   var n = normNom_(t);
@@ -4787,13 +4938,7 @@ function genererRecurrents_() {
      date de FIN est posé jusqu'à elle (trois ans au plus) ; sans FIN, on garde
      l'horizon des réglages. La reconduction tacite repousse la FIN, et la
      génération suivante pose l'année d'après. */
-  var plafond = new Date(aujourd); plafond.setFullYear(plafond.getFullYear() + 3);
-  function horizonDe_(r) {
-    var f = r.FIN ? minuit_(r.FIN) : null;
-    if (!f || isNaN(f.getTime())) return horizon;
-    if (f > plafond) f = plafond;
-    return f > horizon ? f : horizon;
-  }
+  function horizonDe_(r) { return horizonContrat_(r, aujourd, reg); }   // v108zg
   series.forEach(function (r) {
     var id = String(r.ID).trim();
     occurrencesRecurrent_(r, aujourd, horizonDe_(r)).forEach(function (d) {

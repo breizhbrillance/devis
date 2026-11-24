@@ -5367,11 +5367,11 @@ function libelleSemaine(lundi){
 /* Le rendu, commun au gérant et au salarié : ce sont les mêmes chantiers, vus
    d'un côté ou de l'autre. « surClic » est le nom de la fonction à appeler
    avec l'identifiant — chacun ouvre sa propre fiche. */
-function semaineHtml(chantiers, surClic, glisser){
+function semaineHtml(chantiers, surClic, glisser, prevus){
   var lundi = semaineVue(), jours = joursDe(lundi), auj = isoJour();
   var par = {};
   jours.forEach(function(j){ par[j] = []; });
-  (chantiers || []).forEach(function(c){
+  (chantiers || []).concat(prevus || []).forEach(function(c){
     var d = String(c.date || '').slice(0,10);
     if(par[d]) par[d].push(c);
   });
@@ -5382,7 +5382,8 @@ function semaineHtml(chantiers, surClic, glisser){
     });
   });
 
-  var total = jours.reduce(function(n, j){ return n + par[j].length; }, 0);
+  var total = jours.reduce(function(n, j){ return n + par[j].filter(function(c){ return !c.prevu; }).length; }, 0);
+  var nbPrevus = (prevus || []).filter(function(c){ return par[String(c.date || '').slice(0,10)]; }).length;
 
   var h = '<div class="semBarre">' +
     '<button class="btn sec sm" onclick="semaineBouger(-1)">◀</button>' +
@@ -5391,9 +5392,12 @@ function semaineHtml(chantiers, surClic, glisser){
     '<button class="btn sec sm" onclick="semaineBouger(1)">▶</button>' +
     '</div>';
 
-  h += '<div class="mini semCompte">' + (total
+  h += '<div class="mini semCompte">' + (glisser && periodeAttendue(jours[0], jours[6])
+    ? 'Chargement de la semaine…'
+    : (total
     ? total + ' chantier' + (total > 1 ? 's' : '') + ' cette semaine'
-    : 'Aucun chantier cette semaine') + '</div>';
+    : 'Aucun chantier cette semaine') +
+    (nbPrevus ? ' · ' + nbPrevus + ' passage' + (nbPrevus > 1 ? 's' : '') + ' de contrat prévu' + (nbPrevus > 1 ? 's' : '') + ' (pointillés)' : '')) + '</div>';
 
   h += '<div class="sem">';
   jours.forEach(function(j, i){
@@ -5410,10 +5414,10 @@ function semaineHtml(chantiers, surClic, glisser){
     } else {
       liste.forEach(function(c){
         var n = natureVue(c.nature);
-        h += '<button class="semEv" ' +
-             (glisser ? 'data-ch="' + ech(String(c.id)) + '" ' : '') +
+        h += '<button class="semEv' + (c.prevu ? ' semPrevu' : '') + '" ' +
+             (glisser && !c.prevu ? 'data-ch="' + ech(String(c.id)) + '" ' : '') +
              (n ? 'style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '"' : '') +
-             ' onclick="' + surClic + '(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\')">' +
+             ' onclick="' + (c.prevu ? 'voirPrevu' : surClic) + '(\'' + ech(String(c.id)).replace(/'/g,'&#39;') + '\')">' +
              (c.heure ? '<b>' + ech(c.heure) + '</b>' : '') +
              '<span>' + ech(c.client || 'Chantier') + '</span>' +
              (c.ville ? '<em>' + ech(c.ville) + '</em>' : '') +
@@ -5742,18 +5746,18 @@ function nomFerie(iso){
   return feriesAn(Number(iso.slice(0, 4)))[iso] || '';
 }
 
-function moisHtml(chantiers, avecBac){
+function moisHtml(chantiers, avecBac, prevus){
   var p = moisVu(), auj = isoJour();
   var premier = p + '-01';
   var lundi = lundiDe(premier);
   var a = Number(p.slice(0,4)), m = Number(p.slice(5,7));
   var dernier = isoJour(new Date(a, m, 0, 12));
-  var par = {}, nbMois = 0;
-  (chantiers || []).forEach(function(c){
+  var par = {}, nbMois = 0, nbPrevus = 0;
+  (chantiers || []).concat(prevus || []).forEach(function(c){
     var d = String(c.date || '').slice(0,10);
     if(!d) return;
     (par[d] = par[d] || []).push(c);
-    if(d.slice(0,7) === p) nbMois++;
+    if(d.slice(0,7) === p){ if(c.prevu) nbPrevus++; else nbMois++; }
   });
   for(var k in par) if(par.hasOwnProperty(k)) par[k].sort(function(x, y){
     var hx = String(x.heure || '99:99'), hy = String(y.heure || '99:99');
@@ -5768,8 +5772,12 @@ function moisHtml(chantiers, avecBac){
     '<button class="btn sec sm semTitre" onclick="moisBouger(0)">' + ech(libelleMoisCal(p)) + '</button>' +
     '<button class="btn sec sm" onclick="moisBouger(1)" aria-label="Mois suivant">▶</button>' +
     '</div>';
-  h += '<div class="mini semCompte">' + (nbMois
-    ? nbMois + ' chantier' + (nbMois > 1 ? 's' : '') + ' ce mois-ci · appuie sur un jour pour l\'ouvrir'
+  h += '<div class="mini semCompte">' + (periodeAttendue(premier, dernier)
+    ? 'Chargement du mois…'
+    : (nbMois || nbPrevus)
+    ? (nbMois ? nbMois + ' chantier' + (nbMois > 1 ? 's' : '') : '') +
+      (nbPrevus ? (nbMois ? ' + ' : '') + nbPrevus + ' passage' + (nbPrevus > 1 ? 's' : '') + ' de contrat prévu' + (nbPrevus > 1 ? 's' : '') + ' (pointillés)' : '') +
+      ' ce mois-ci · appuie sur un jour pour l\'ouvrir'
     : 'Aucun chantier ce mois-ci · appuie sur un jour pour y en poser un') + '</div>';
 
   h += '<div class="cal"><div class="calTete">' +
@@ -5790,7 +5798,7 @@ function moisHtml(chantiers, avecBac){
          (fer ? '<span class="calFerL" title="' + ech(fer) + '">Férié</span>' : '') + etiquetteConge(iso, 'calAbsL');
     l.slice(0, CAL_PAR_CASE).forEach(function(c){
       var n = natureVue(c.nature);
-      h += '<span class="calEv" data-ch="' + ech(String(c.id)) + '"' +
+      h += '<span class="calEv' + (c.prevu ? ' calPrevu' : '') + '"' + (c.prevu ? '' : ' data-ch="' + ech(String(c.id)) + '"') +
            (n ? ' style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '"' : '') + '>' +
            (c.heure ? '<i>' + ech(String(c.heure).replace(':00','h').replace(':','h')) + '</i> ' : '') +
            ech(c.client || 'Chantier') + '</span>';
@@ -5832,14 +5840,141 @@ function journeeHtml(iso, l){
     '<div style="display:flex;align-items:baseline;gap:8px">' +
     '<b style="flex:1;font-size:16px">' + ech(jourLisible(iso)) +
       (nomFerie(iso) ? ' <span class="calFerL">Férié · ' + ech(nomFerie(iso)) + '</span>' : '') + etiquetteConge(iso, 'calAbsL', true) + '</b>' +
-    '<span class="mini">' + (l.length ? l.length + ' chantier' + (l.length > 1 ? 's' : '') : 'rien de prévu') +
+    '<span class="mini">' + (function(){
+      var nv = l.filter(function(c){ return !c.prevu; }).length, np = l.length - nv;
+      return (nv ? nv + ' chantier' + (nv > 1 ? 's' : '') : '') + (np ? (nv ? ' + ' : '') + np + ' prévu' + (np > 1 ? 's' : '') : '') || 'rien de prévu';
+    })() +
     '</span></div>' +
     '<div class="row" style="gap:8px;margin-top:10px">' +
     '<button class="btn sm" style="flex:1" onclick="nouveauChantier(\'' + iso + '\')">+ Nouveau ce jour</button>' +
     '<button class="btn sec sm" style="flex:1" onclick="semaineDuJour(\'' + iso + '\')">Voir la semaine</button>' +
     '</div></div>';
-  l.forEach(function(c){ h += carteChantierAdmin(c); });
+  l.forEach(function(c){ h += c.prevu ? cartePrevu(c) : carteChantierAdmin(c); });
   return h;
+}
+
+/* v108zg — un passage de contrat prévu au-delà de ce que le bureau a déjà
+   posé : il n'a pas encore de ligne au classeur, il en aura une quelques
+   semaines avant sa date. On le montre en pointillé, sans prise. */
+function cartePrevu(c){
+  var n = natureVue(c.nature);
+  return '<div class="card chC calPrevuC"' + (n ? ' style="--nT:' + n.t + ';--nF:' + n.f + ';--nI:' + n.i + '"' : '') + '>' +
+    '<div style="display:flex;align-items:baseline;gap:8px"><b style="flex:1">' + ech(c.client || 'Contrat') + '</b>' +
+    (c.heure ? '<span>' + ech(c.heure) + '</span>' : '') + '</div>' +
+    '<div class="mini">' + ech([c.ville, c.prestataire ? quiLisible(c.prestataire) : ''].filter(Boolean).join(' · ')) + '</div>' +
+    '<div class="mini" style="margin-top:6px">Passage prévu du contrat ' + ech(c.contrat || '') +
+      (c.reconduction ? ', après son échéance (reconduction tacite)' : '') +
+      '. Il sera posé au planning automatiquement à l\'approche de cette date.</div>' +
+    '<button class="btn sec sm" style="margin-top:8px;width:100%" onclick="modifierContrat(\'' +
+      ech(String(c.contrat || '')).replace(/'/g,'&#39;') + '\',\'' + ech(c.date) + '\')">Modifier le contrat à partir de ce jour</button>' +
+    '</div>';
+}
+function voirPrevu(id){
+  var c = prevuParId(id);
+  if(!c) return;
+  annonce('Passage prévu du contrat ' + (c.contrat || '') + ' · ' + (c.client || '') + ' · ' + jourLisible(c.date) +
+          (c.heure ? ' à ' + c.heure : '') + '. Il sera posé au planning automatiquement à l\'approche de cette date.');
+}
+
+/* ---- v108zg — le planning au-delà de la fenêtre du tableau ----
+   Le tableau n'apporte que J-30 à J+90. Le mois ou la semaine regardés en
+   dehors se demandent au bureau (chantiersPeriode) : leurs chantiers rejoignent
+   TABLEAU.chantiers (mêmes objets, pour que fiche et glisser marchent), et les
+   passages prévus des contrats restent à part, en pointillé. */
+var PERIODES = {};            // 'du|au' → { du, au, maj, chantiers, prevus }
+var PERIODE_VOL = {};
+function fenetreTableau(t){
+  if(t && t.chantiersDu && t.chantiersAu) return { du: t.chantiersDu, au: t.chantiersAu };
+  var d = new Date(); d.setDate(d.getDate() - 30);
+  var f = new Date(); f.setDate(f.getDate() + 90);
+  return { du: isoJour(d), au: isoJour(f) };
+}
+function periodeCouvrant(du, au){
+  for(var k in PERIODES) if(PERIODES.hasOwnProperty(k)){
+    var e = PERIODES[k];
+    if(e.du <= du && e.au >= au) return e;
+  }
+  return null;
+}
+/* Vrai tant que la période n'est connue d'aucune façon : ni par le tableau,
+   ni par une réponse déjà reçue. */
+function periodeAttendue(du, au){
+  var t = TABLEAU, f = fenetreTableau(t);
+  if(!t || (du >= f.du && au <= f.au)) return false;
+  return !periodeCouvrant(du, au);
+}
+function prevusEntre(du, au){
+  var e = periodeCouvrant(du, au);
+  if(!e) return [];
+  if(AD_QUI === '(annulés)' || AD_QUI === '(non affectés)') return [];
+  return (e.prevus || []).filter(function(c){
+    return c.date >= du && c.date <= au && (!AD_QUI || aQui(c.prestataire, AD_QUI));
+  });
+}
+function prevuParId(id){
+  for(var k in PERIODES) if(PERIODES.hasOwnProperty(k)){
+    var l = PERIODES[k].prevus || [];
+    for(var i = 0; i < l.length; i++) if(l[i].id === id) return l[i];
+  }
+  return null;
+}
+/* Les chantiers des périodes reçues, ajoutés au tableau s'ils n'y sont pas. */
+function fusionnerPeriodes(t){
+  if(!t || !t.chantiers) return;
+  var ids = {};
+  t.chantiers.forEach(function(x){ ids[x.id] = 1; });
+  for(var k in PERIODES) if(PERIODES.hasOwnProperty(k)){
+    (PERIODES[k].chantiers || []).forEach(function(c){
+      if(ids[c.id]) return;
+      c._periode = true;
+      t.chantiers.push(c); ids[c.id] = 1;
+    });
+  }
+}
+/* Demande la période si le tableau ne la couvre pas, ou si ce qu'on en a date
+   d'avant le dernier rafraîchissement. */
+function assurerPeriode(du, au){
+  var t = TABLEAU, moi = session();
+  if(!t || !moi || !navigator.onLine) return;
+  var f = fenetreTableau(t);
+  if(du >= f.du && au <= f.au) return;
+  var e = periodeCouvrant(du, au);
+  if(e && e.maj === t.maj) return;
+  var cle = du + '|' + au;
+  if(PERIODE_VOL[cle] === t.maj) return;
+  PERIODE_VOL[cle] = t.maj;
+  var maj = t.maj;
+  poster({action:'chantiersPeriode', du:du, au:au, nom:moi.nom, code:moi.code, appareil:APPAREIL}).then(function(d){
+    delete PERIODE_VOL[cle];
+    if(!d || !d.ok) return;
+    /* Une réponse plus récente remplace celles qu'elle recouvre. */
+    for(var k in PERIODES) if(PERIODES.hasOwnProperty(k) && PERIODES[k].du >= du && PERIODES[k].au <= au) delete PERIODES[k];
+    PERIODES[cle] = { du:du, au:au, maj:maj, chantiers:d.chantiers || [], prevus:d.prevus || [] };
+    if(TABLEAU){
+      /* Les fiches reçues remplacent celles de la même période déjà fusionnées. */
+      var neufs = {};
+      (d.chantiers || []).forEach(function(c){ neufs[c.id] = 1; });
+      TABLEAU.chantiers = (TABLEAU.chantiers || []).filter(function(x){
+        return !(x._periode && (neufs[x.id] || (x.date >= du && x.date <= au)));
+      });
+      fusionnerPeriodes(TABLEAU);
+      appliquerEnVol(TABLEAU);
+    }
+    if(ECRAN_VU === 'eAd1' && AD_ONGLET === 'chantiers') peindreTableau();
+  }, function(){ delete PERIODE_VOL[cle]; });
+}
+/* Ce que montre la vue en cours : la grille du mois (six semaines au plus),
+   ou la semaine. */
+function periodeDuMois(){
+  var p = moisVu(), du = lundiDe(p + '-01');
+  var a = Number(p.slice(0,4)), m = Number(p.slice(5,7));
+  var dernier = isoJour(new Date(a, m, 0, 12));
+  var f = new Date(dernier + 'T12:00:00'); f.setDate(f.getDate() + ((7 - f.getDay()) % 7));
+  return { du: du, au: isoJour(f) };
+}
+function periodeDeSemaine(){
+  var l = semaineVue(), f = new Date(l + 'T12:00:00'); f.setDate(f.getDate() + 6);
+  return { du: l, au: isoJour(f) };
 }
 
 /* De la case d'un jour à la semaine qui le contient. */
@@ -6009,6 +6144,7 @@ function chargerTableau(btn){
     // Si l'appareil manque de place, tant pis pour le cache : l'écran, lui,
     // s'affiche quand même.
     try{ lsj('tableau', d); }catch(e){}
+    fusionnerPeriodes(TABLEAU);          // v108zg — les mois lointains déjà vus
     appliquerEnVol(TABLEAU);
     appliquerDevisEnVol(TABLEAU);
     erreur('');
@@ -6179,7 +6315,9 @@ function peindreTableau(){
   /* Le calendrier : le mois, avec le bac de ce qui reste à placer. */
   if(AD_ONGLET === 'chantiers' && AD_VUE === 'mois'){
     /* v95 : un seul planning. Le mois porte le bac de ce qui reste à placer. */
-    $('adListe').innerHTML = bandeauMot() + bandeauAnnuler() + moisHtml(chantiersDuCalendrier(t), false);
+    var pm = periodeDuMois();
+    assurerPeriode(pm.du, pm.au);
+    $('adListe').innerHTML = bandeauMot() + bandeauAnnuler() + moisHtml(chantiersDuCalendrier(t), false, prevusEntre(pm.du, pm.au));
     return;
   }
 
@@ -6196,7 +6334,9 @@ function peindreTableau(){
     $('adListe').innerHTML =
       /* Le gérant déplace ; le salarié regarde. C'est le même tableau de
          semaine, mais on ne lui donne pas de prise. */
-      semaineHtml(vivants, 'ficheChantier', true);
+      semaineHtml(vivants, 'ficheChantier', true, (function(){
+        var ps = periodeDeSemaine(); assurerPeriode(ps.du, ps.au); return prevusEntre(ps.du, ps.au);
+      })());
     $('adListe').innerHTML = bandeauMot() + $('adListe').innerHTML;
     return;
   }
