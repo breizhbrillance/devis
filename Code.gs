@@ -8176,6 +8176,90 @@ function libelleNature_(n) {
        : x === 'CHANTIER' ? 'Nettoyage de fin de chantier' : 'Prestation de nettoyage';
 }
 
+/* v108zh — Simon, 25 novembre : « pour EC Invest tu me mets 2 factures à
+   préparer alors que c'est un seul chantier sur deux jours ». Les deux jours
+   avaient été créés comme deux interventions séparées (CH-0937 « jour 1/2 »,
+   CH-0938 « jour 2/2 »), sans lien SUITE_DE, chacune avec le prix complet du
+   devis dans sa note : l'onglet Factures en montrait deux.
+
+   Les jours d'un même chantier, hors contrat et hors devis de l'appli :
+   — ceux reliés par SUITE_DE (« Ajouter une intervention ») ;
+   — ceux qui portent la même référence de devis dans leur note (« devis
+     I-26-09-48 ») pour le même client ;
+   — ceux dont le client finit par « jour k/N » (ou « (k/N) ») et qui ont, une
+     fois cette mention retirée, le même client et le même prix.
+   Sans l'une de ces marques, deux interventions restent deux factures.
+   Rend { id → { racine, membres: [objets triés par date] } }. */
+var RE_JOUR_N_ = /\s*[-–,]?\s*\(?\s*(?:jour|j\.?|partie|intervention)\s*(\d+)\s*(?:\/|sur)\s*(\d+)\s*\)?\s*$|\s*\(\s*(\d+)\s*\/\s*(\d+)\s*\)\s*$/i;
+
+function clientSansJour_(client) {
+  return String(client || '').replace(RE_JOUR_N_, '').replace(/\s+[-–]\s*$/, '').trim();
+}
+
+function refDevisNote_(note) {
+  var m = String(note || '').match(/devis\s*(?:n[°o.]?\s*)?([A-Z]{0,4}[-\/]?\d{2,4}(?:[-\/ ]\d{1,4}){1,3}[A-Z]?)/i);
+  return m ? m[1].replace(/\s+/g, '').toUpperCase() : '';
+}
+
+function groupesJours_(objs) {
+  var parId = {}, liste = [];
+  objs.forEach(function (o) {
+    var id = String(o.ID || '').trim();
+    if (!id) return;
+    if (String(o.RECURRENT || '').trim()) return;
+    if (String(o.STATUT || '').toUpperCase().trim() === 'ANNULE') return;
+    parId[id] = o; liste.push(o);
+  });
+  var pere = {};
+  var trouve = function (x) { while (pere[x] && pere[x] !== x) x = pere[x]; return x; };
+  var unir = function (a, b) { var ra = trouve(a), rb = trouve(b); if (ra !== rb) pere[rb] = ra; };
+  liste.forEach(function (o) { pere[String(o.ID).trim()] = String(o.ID).trim(); });
+  /* SUITE_DE */
+  liste.forEach(function (o) {
+    var r = String(o.SUITE_DE || '').trim();
+    if (r && parId[r]) unir(r, String(o.ID).trim());
+  });
+  /* même devis cité, ou « jour k/N » avec le même prix */
+  var parCle = {};
+  liste.forEach(function (o) {
+    var base = sansAccent_(clientSansJour_(o.CLIENT)).replace(/[^A-Z0-9]+/g, ' ').trim();
+    if (!base) return;
+    var cles = [];
+    var ref = refDevisNote_(o.NOTE);
+    if (ref) cles.push('R|' + base + '|' + ref);
+    if (RE_JOUR_N_.test(String(o.CLIENT || ''))) {
+      var px = prixDeNote_(o.NOTE);
+      cles.push('J|' + base + '|' + (px ? Math.round(px.ht * 100) : ''));
+    }
+    cles.forEach(function (k) {
+      if (parCle[k]) unir(parCle[k], String(o.ID).trim()); else parCle[k] = String(o.ID).trim();
+    });
+  });
+  var groupes = {};
+  liste.forEach(function (o) {
+    var r = trouve(String(o.ID).trim());
+    (groupes[r] = groupes[r] || []).push(o);
+  });
+  var t = function (o) { var d = o.DATE ? new Date(o.DATE).getTime() : NaN; return isNaN(d) ? 9e15 : d; };
+  var out = {};
+  Object.keys(groupes).forEach(function (r) {
+    var m = groupes[r];
+    if (m.length < 2) return;
+    m.sort(function (a, b) { return t(a) - t(b); });
+    var g = { racine: String(m[0].ID).trim(), membres: m };
+    m.forEach(function (o) { out[String(o.ID).trim()] = g; });
+  });
+  return out;
+}
+
+function quiDesJours_(membres) {
+  var vus = {}, l = [];
+  membres.forEach(function (x) {
+    String(x.PRESTATAIRE || '').split(/\s*,\s*/).forEach(function (n) { n = n.trim(); if (n && !vus[n]) { vus[n] = 1; l.push(n); } });
+  });
+  return l.join(', ');
+}
+
 function facturationAppli_(periode) {
   var mois = String(periode || '').match(/^\d{4}-\d{2}$/) ? periode : moisCourant_();
   var faites = facturesFaites_();
@@ -8226,16 +8310,29 @@ function facturationAppli_(periode) {
   var parDevis = {}, interventions = [];
   var modeles = [];
   try { modeles = modelesFacture_(); } catch (eMo) { modeles = []; }
-  objetsDe_(SH.CHANTIERS).forEach(function (o) {
+  var tousCh = objetsDe_(SH.CHANTIERS);
+  var jours = groupesJours_(tousCh.filter(function (o) {
+    var n = String(o.NUMERO || '').trim();
+    return !(n && devisParNum[n]);
+  }));
+  tousCh.forEach(function (o) {
     var id = String(o.ID || '').trim();
     if (!id) return;
     var st = String(o.STATUT || '').toUpperCase().trim();
     if (st === 'ANNULE') return;
     if (String(o.RECURRENT || '').trim()) return;          // un passage de contrat
     var d = o.DATE ? new Date(o.DATE) : null;
-    if (!d || isNaN(d.getTime()) || moisDe_(d) !== mois || d >= demain) return;
     var num = String(o.NUMERO || '').trim();
     var dv = num ? devisParNum[num] : null;
+    /* v108zh — un chantier sur plusieurs jours : une seule carte, portée par
+       le premier jour, au mois du dernier, une fois le dernier passé. */
+    var gj = dv ? null : jours[id];
+    if (gj) {
+      if (gj.racine !== id) return;
+      var dern = gj.membres[gj.membres.length - 1];
+      d = dern.DATE ? new Date(dern.DATE) : null;
+    }
+    if (!d || isNaN(d.getTime()) || moisDe_(d) !== mois || d >= demain) return;
     if (dv) {
       if (devisEssai_(dv)) return;
       if (recurrentDevis_(dv.NATURE, dv.PASSAGES_MOIS, dv.SANS_CONTRAT)) return;   // facturé par le contrat
@@ -8243,18 +8340,24 @@ function facturationAppli_(periode) {
       return;
     }
     /* v108y — la suite d'une intervention se facture avec la première. */
-    if (String(o.SUITE_DE || '').trim()) return;
+    if (!gj && String(o.SUITE_DE || '').trim()) return;
     var deja = (faites[id] || {})[''];
+    if (gj && !deja) gj.membres.forEach(function (x) { var f = (faites[String(x.ID).trim()] || {})['']; if (f) deja = f; });
     var prix = prixDeNote_(o.NOTE);
     /* v108f — un modèle Henrri au montant de la note, ou à défaut le plus
        récent du client pour préremplir le montant. */
     var mod = modelePour_(o.CLIENT, prix ? prix.ht : 0, modeles) || (prix ? null : modelePour_(o.CLIENT, 0, modeles));
     if (mod && !prix) prix = { ht: mod.ht, lu: '' };
+    var joursTxt = gj ? 'Sur ' + gj.membres.length + ' jours : ' + gj.membres.map(function (x) {
+      var dx = x.DATE ? new Date(x.DATE) : null;
+      return dx && !isNaN(dx.getTime()) ? Utilities.formatDate(dx, Session.getScriptTimeZone(), 'dd/MM') : '?';
+    }).join(', ') + '.' : '';
     interventions.push({
-      cle: id, type: 'chantier', client: String(o.CLIENT || ''), date: isoDe_(d) || '',
+      jours: gj ? gj.membres.map(function (x) { return String(x.ID).trim(); }) : undefined,
+      cle: id, type: 'chantier', client: gj ? clientSansJour_(o.CLIENT) : String(o.CLIENT || ''), date: isoDe_(d) || '',
       adresse: String(o.ADRESSE || ''), cp: String(o.CP || ''), ville: String(o.VILLE || ''),
       nature: String(o.NATURE || ''), libelle: libelleNature_(o.NATURE),
-      note: String(o.NOTE || '').replace(/\s*—?\s*repris de FamilyWall\s*/i, '').trim().slice(0, 200),
+      note: ((joursTxt ? joursTxt + ' ' : '') + String(o.NOTE || '').replace(/\s*—?\s*repris de FamilyWall\s*/i, '').trim()).slice(0, 240),
       ht: prix ? prix.ht : 0, prixLu: prix ? prix.lu : '', tva: mod ? mod.tva : (estParticulier_(o.CLIENT) ? 10 : 20),
       modele: mod ? { source: mod.source, ht: mod.ht, tva: mod.tva, n: mod.lignes.length, date: mod.date,
                       lignes: mod.lignes.slice(0, 12).map(function (l) { return l.designation + ' — ' + l.montant.toFixed(2).replace('.', ',') + ' €'; }) } : null,
@@ -8262,8 +8365,11 @@ function facturationAppli_(periode) {
       /* v108y — « pourquoi tu m'as préparé la facture alors que le devis
          n'est pas dans l'appli » : sans devis, rien ne se facture. */
       sansDevis: true,
-      qui: String(o.PRESTATAIRE || ''), pointe: st === 'FAIT',
-      jamaisPlace: st === 'A PLANIFIER' || !String(o.PRESTATAIRE || '').trim(),
+      qui: gj ? quiDesJours_(gj.membres) : String(o.PRESTATAIRE || ''),
+      pointe: gj ? gj.membres.every(function (x) { return String(x.STATUT || '').toUpperCase().trim() === 'FAIT'; }) : st === 'FAIT',
+      jamaisPlace: gj ? gj.membres.some(function (x) { var s2 = String(x.STATUT || '').toUpperCase().trim();
+                          return s2 === 'A PLANIFIER' || !String(x.PRESTATAIRE || '').trim(); })
+                      : (st === 'A PLANIFIER' || !String(o.PRESTATAIRE || '').trim()),
       contrat: contratProche_(o.CLIENT, noms),
       facturee: !!deja, etat: deja ? String(deja.ETAT || '') : '',
       idPennylane: deja ? String(deja.ID_PENNYLANE || '') : ''
@@ -13096,7 +13202,17 @@ function lierDevis_(d, com) {
   out.series = lier(SH.RECURRENTS, 'ID', 'DEVIS', d.series || []);
   /* Les passages d'une série restent sans NUMERO (comme ceux que pose
      genererRecurrents_) : le lien vit sur la série, RECURRENTS.DEVIS. */
-  out.chantiers = lier(SH.CHANTIERS, 'ID', 'NUMERO', d.chantiers || []);
+  /* v108zh — relier un jour relie les autres jours du même chantier. */
+  var aLier = (d.chantiers || []).slice();
+  if (aLier.length && !d.seul) {
+    var gjs = groupesJours_(objetsDe_(SH.CHANTIERS).filter(function (o) { return !String(o.NUMERO || '').trim() || aLier.indexOf(String(o.ID || '').trim()) >= 0; }));
+    (d.chantiers || []).forEach(function (id) {
+      var g = gjs[String(id).trim()];
+      if (g) g.membres.forEach(function (x) { var i2 = String(x.ID).trim(); if (aLier.indexOf(i2) < 0) aLier.push(i2); });
+    });
+  }
+  out.chantiers = lier(SH.CHANTIERS, 'ID', 'NUMERO', aLier);
+  out.ids = aLier;
   tracerServeur_(com ? com.nom : '', num ? 'DEVIS RELIE' : 'DEVIS DELIE',
                  (num || '—') + ' · séries ' + (d.series || []).join(', ') + ' · interventions ' + (d.chantiers || []).join(', ') +
                  (out.refus.length ? ' · refusé : ' + out.refus.join(', ') : ''), num, d.appareil || '');

@@ -11675,9 +11675,13 @@ function lierDevisA(type, id, numero, btn){
         x.series = (x.series||[]).filter(function(i){ return i !== id; });
         if(x.numero === numero){ x.series.push(id); x.contrat = x.contrat || id; }
       });
-    } else (t.chantiers||[]).forEach(function(x){ if(x.id === id) x.numero = numero; });
+    } else {
+      /* v108zh — le bureau relie aussi les autres jours du même chantier. */
+      var ids = (r.ids && r.ids.length) ? r.ids : [id];
+      (t.chantiers||[]).forEach(function(x){ if(ids.indexOf(x.id) >= 0) x.numero = numero; });
+    }
     delete LIEN_Q[type + '|' + id + '|edit']; delete LIEN_Q[type + '|' + id];
-    AD_MOT_T = 0; AD_MOT = 'Relié au devis ' + numero;
+    AD_MOT_T = 0; AD_MOT = 'Relié au devis ' + numero + (r.ids && r.ids.length > 1 ? ' (' + r.ids.length + ' jours du chantier)' : '');
     rouvrirFiche();
   });
 }
